@@ -1,0 +1,13 @@
+#
+# Fake pin control drivers
+#
+
+config PINCTRL_FAKE
+	tristate "Fake GPIO pin control"
+	depends on GPIOLIB
+	select GPIOLIB_IRQCHIP
+	select PINMUX
+	select GENERIC_PINCONF
+	help
+	  driver for fake GPIO functionality on any system. Based on example
+	  described in Documentation/pinctrl.txt.
