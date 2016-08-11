@@ -3,11 +3,20 @@
 #
 
 config PINCTRL_FAKE
-	tristate "Fake GPIO pin control"
-	depends on GPIOLIB
-	select GPIOLIB_IRQCHIP
+	tristate "Fake pin control device"
 	select PINMUX
 	select GENERIC_PINCONF
 	help
-	  driver for fake GPIO functionality on any system. Based on example
+	  Pin control driver for muxing various fake devices and busses on any
+	  system. Based on example described in Documentation/pinctrl.txt.
+	  
+	  To compile this code as a module, choose M here: the
+	  module will be called pinctrl-fake.
+
+config PINCTRL_FAKE_GPIO
+	boolean "Fake GPIO support"
+	depends on PINCTRL_FAKE && GPIOLIB
+	select GPIOLIB_IRQCHIP
+	help
+	  A driver for fake GPIO functionality on any system. Based on example
 	  described in Documentation/pinctrl.txt.
