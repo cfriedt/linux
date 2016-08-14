@@ -27,7 +27,7 @@ config PINCTRL_FAKE_GPIO_TOGGLER
 	depends on PINCTRL_FAKE_GPIO
 	help
 	  For each GPIO that is exported as a GPIO input via sysfs, the kernel
-	  will periodically toggle the value of the GPIO. User applications
+	  will periodically toggle the value of that GPIO. User applications
 	  can then poll the value of the GPIO via sysfs. If the GPIO is
 	  configured to trigger an interrupt, then user applications can be
 	  notified of the interrupt using the select(2) system call.
@@ -36,3 +36,5 @@ config PINCTRL_FAKE_GPIO_TOGGLER
 
 	  If the kernel is compiled with DEBUGFS, then users may modify the
 	  period of GPIO togglers to any value within 1000 to 10000 milliseconds.
+	  
+	  The default period will be 1000 ms.
