@@ -6,7 +6,6 @@
 #include <linux/gpio/driver.h>
 
 #include "pinctrl-fake.h"
-#include "pinctrl-fake-gpio.h"
 
 /*
 static unsigned pinctrl_fake_gpio_chip_to_index( struct gpio_chip *chip ) {

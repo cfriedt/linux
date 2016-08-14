@@ -20,9 +20,8 @@ struct pinctrl_fake {
 //	void __iomem *regs;
 //	raw_spinlock_t lock;
 //	unsigned intr_lines[16];
-//	const struct chv_community *community;
 //	u32 saved_intmask;
-//	struct chv_pin_context *saved_pin_context;
+//	struct pinctrl_fake_pin_context *saved_pin_context;
 };
 
 #endif // PINCTRL_FAKE_H_

@@ -21,3 +21,18 @@ config PINCTRL_FAKE_GPIO
 	help
 	  A driver for fake GPIO functionality on any system. Based on example
 	  described in Documentation/pinctrl.txt.
+
+config PINCTRL_FAKE_GPIO_TOGGLER
+	boolean "Fake GPIO toggler task"
+	depends on PINCTRL_FAKE_GPIO
+	help
+	  For each GPIO that is exported as a GPIO input via sysfs, the kernel
+	  will periodically toggle the value of the GPIO. User applications
+	  can then poll the value of the GPIO via sysfs. If the GPIO is
+	  configured to trigger an interrupt, then user applications can be
+	  notified of the interrupt using the select(2) system call.
+	  
+	  See Documentation/gpio/sysfs.txt for more information.
+
+	  If the kernel is compiled with DEBUGFS, then users may modify the
+	  period of GPIO togglers to any value within 1000 to 10000 milliseconds.
