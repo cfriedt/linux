@@ -1,20 +1,18 @@
 /*
- // Fake-pinctrl driver
+ * Fake-pinctrl driver
  *
- // Copyright (C) 2016, Christopher Friedt
- // Author: Christopher Friedt <chrisfriedt@gmail.com>
+ * Copyright (C) 2016, Christopher Friedt
+ * Author: Christopher Friedt <chrisfriedt@gmail.com>
  *
- // This program is free software; you can redistribute it and/or modify
- // it under the terms of the GNU General Public License version 2 as
- // published by the Free Software Foundation.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
-#include <linux/gpio.h>
-#include <linux/gpio/driver.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/pinctrl/pinconf.h>
@@ -22,22 +20,6 @@
 #include <linux/platform_device.h>
 
 #include "pinctrl-fake.h"
-
-#ifndef MODULE_NAME
-#define MODULE_NAME "pinctrl-fake"
-#endif
-
-#ifndef _pr_info
-#define _pr_info( fmt, args... ) pr_info( MODULE_NAME ": " fmt, ##args )
-#endif
-
-#ifndef _pr_err
-#define _pr_err( fmt, args... ) pr_err( MODULE_NAME ": " fmt, ##args )
-#endif
-
-#ifndef EXIT_SUCCESS
-#define EXIT_SUCCESS 0
-#endif // EXIT_SUCCESS
 
 /*
  * Example from [1]
@@ -91,38 +73,35 @@ static const struct pinctrl_pin_desc pinctrl_fake_pins[] = {
 		PINCTRL_PIN( 63, "H1" ),
 };
 
+#ifdef CONFIG_PINCTRL_FAKE_GPIO
+
 static const unsigned pinctrl_fake_gpiochip_a_pins[] = { 0, 8, 16, 24, 25, };
 static const unsigned pinctrl_fake_gpiochip_b_pins[] = { 38, 46, 54, 56, 57, 58, 59, 60, 61, 62, 63, };
+
+#define FAKE_GPIO_CHIP( n ) \
+static u8 pinctrl_fake_ ## n ## _values[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
+static u8 pinctrl_fake_ ## n ## _directions[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
+static u8 pinctrl_fake_ ## n ## _irq_types[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
+static struct pinctrl_fake_gpio_chip pinctrl_fake_ ##n = { \
+	.group = #n "_grp",                                    \
+	.npins = ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ),    \
+	.pins = pinctrl_fake_ ## n ## _pins,                   \
+	.values = pinctrl_fake_ ## n ## _values,               \
+	.directions = pinctrl_fake_ ## n ## _directions,       \
+	.irq_types = pinctrl_fake_ ## n ## _irq_types,         \
+};
+
+FAKE_GPIO_CHIP( gpiochip_a );
+FAKE_GPIO_CHIP( gpiochip_b );
+
+#endif // CONFIG_PINCTRL_FAKE_GPIO
+
 static const unsigned pinctrl_fake_spi0_0_pins[]     = { 0, 8, 16, 24, };
 static const unsigned pinctrl_fake_spi0_1_pins[]     = { 38, 24, 54, 62, };
 static const unsigned pinctrl_fake_i2c0_pins[]       = { 24, 25, };
 static const unsigned pinctrl_fake_mmc0_1_pins[]     = { 56, 57, };
 static const unsigned pinctrl_fake_mmc0_2_pins[]     = { 58, 59, };
 static const unsigned pinctrl_fake_mmc0_3_pins[]     = { 60, 61, 62, 63, };
-
-#define CHIP( n ) \
-static u8 pinctrl_fake_ ## n ## _values[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
-static u8 pinctrl_fake_ ## n ## _directions[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
-static u8 pinctrl_fake_ ## n ## _irq_types[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]
-
-CHIP( gpiochip_a );
-CHIP( gpiochip_b );
-
-#define PIN_RANGE( n, c )                                \
-{                                                        \
-	.name = #n "_grp",                                   \
-	.chip = & c,                                         \
-	.npins = ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ),  \
-	.pins = pinctrl_fake_ ## n ## _pins,                 \
-	.values = pinctrl_fake_ ## n ## _values,             \
-	.directions = pinctrl_fake_ ## n ## _directions,     \
-	.irq_types = pinctrl_fake_ ## n ## _irq_types,       \
-}
-
-static const struct pinctrl_fake_gpio_pinrange pinctrl_fake_gpio_pinrange[] = {
-	PIN_RANGE( gpiochip_a, pinctrl_fake.gpiochip[ 0 ] ),
-	PIN_RANGE( gpiochip_b, pinctrl_fake.gpiochip[ 1 ] ),
-};
 
 struct pinctrl_fake_group {
 	const char *name;
@@ -138,8 +117,10 @@ struct pinctrl_fake_group {
 }
 
 static const struct pinctrl_fake_group pinctrl_fake_groups[] = {
+#ifdef CONFIG_PINCTRL_FAKE_GPIO
 	PIN_GROUP( gpiochip_a ),
 	PIN_GROUP( gpiochip_b ),
+#endif // CONFIG_PINCTRL_FAKE_GPIO
 	PIN_GROUP( spi0_0 ),
 	PIN_GROUP( spi0_1 ),
 	PIN_GROUP( i2c0 ),
@@ -303,22 +284,20 @@ static int pinctrl_fake_pinmux_set_mux(struct pinctrl_dev *pctldev, unsigned fun
 {
 	int r;
 
-	struct pinctrl_fake *pctrl = pinctrl_dev_get_drvdata(pctldev);
+//	struct pinctrl_fake *pctrl = pinctrl_dev_get_drvdata(pctldev);
 
 	const struct pinctrl_fake_pmx_func *func;
 	const struct pinctrl_fake_group *grp;
-	unsigned long flags;
+	//unsigned long flags;
 	int i;
 
-	if ( function >= ARRAY_SIZE( pinctrl_fake_pmx_funcs ) || group >= ARRAY_SIZE( pinctrl_fake_groups ) ) {
-		r = -EINVAL;
-		goto out;
-	}
+	BUG_ON( function >= ARRAY_SIZE( pinctrl_fake_pmx_funcs ) );
+	BUG_ON( group >= ARRAY_SIZE( pinctrl_fake_groups ) );
 
 	func = & pinctrl_fake_pmx_funcs[ function ];
 	grp = & pinctrl_fake_groups[ group ];
 
-	raw_spin_lock_irqsave( & pctrl->lock, flags );
+//	raw_spin_lock_irqsave( & pctrl->lock, flags );
 
 	// Check first that the pad is not locked
 /*
@@ -373,11 +352,11 @@ static int pinctrl_fake_pinmux_set_mux(struct pinctrl_dev *pctldev, unsigned fun
 	}
 
 //unlock:
-	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
+//	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 
 	r = EXIT_SUCCESS;
 
-out:
+//out:
 	return r;
 }
 
@@ -579,161 +558,14 @@ static const struct pinconf_ops pinctrl_fake_pinconf_ops = {
 	.pin_config_get = pinctrl_fake_config_get,
 };
 
-static unsigned pinctrl_fake_gpio_chip_to_index( struct gpio_chip *chip ) {
-
-	struct pinctrl_fake *pctrl;
-	unsigned gpio_chip_index;
-
-	pctrl = gpiochip_get_data( chip );
-
-	for( gpio_chip_index = 0; gpio_chip_index < ARRAY_SIZE( pctrl->gpiochip ); gpio_chip_index++ ) {
-		if ( & pctrl->gpiochip[ gpio_chip_index ] == chip ) {
-			break;
-		}
-	}
-	BUG_ON( gpio_chip_index >= ARRAY_SIZE( pctrl->gpiochip ) );
-
-	return gpio_chip_index;
-}
-
-static unsigned pinctrl_fake_gpio_offset_to_pin( struct gpio_chip *chip,
-				       unsigned offset)
-{
-	unsigned pin;
-	unsigned gpio_chip_index;
-	struct pinctrl_fake_gpio_pinrange *range;
-
-	gpio_chip_index = pinctrl_fake_gpio_chip_to_index( chip );
-	range = (struct pinctrl_fake_gpio_pinrange *) & pinctrl_fake_gpio_pinrange[ gpio_chip_index ];
-
-	BUG_ON( offset >= range->npins );
-
-	pin = range->pins[ offset ];
-
-	return pin;
-}
-
-static int pinctrl_fake_gpio_get(struct gpio_chip *chip, unsigned offset)
-{
-	struct pinctrl_fake *pctrl;
-	struct pinctrl_fake_gpio_pinrange *range;
-	unsigned gpio_chip_index;
-	int pin;
-	int value;
-
-	pctrl = gpiochip_get_data(chip);
-	gpio_chip_index = pinctrl_fake_gpio_chip_to_index( chip );
-	range = (struct pinctrl_fake_gpio_pinrange *) & pinctrl_fake_gpio_pinrange[ gpio_chip_index ];
-	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	value = range->values[ offset ];
-
-	dev_dbg( pctrl->dev, "get( %u ) = %u\n", pin, value );
-
-	return value;
-}
-
-static void pinctrl_fake_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
-{
-	struct pinctrl_fake *pctrl;
-	struct pinctrl_fake_gpio_pinrange *range;
-	unsigned gpio_chip_index;
-	int pin;
-
-	pctrl = gpiochip_get_data(chip);
-	gpio_chip_index = pinctrl_fake_gpio_chip_to_index( chip );
-	range = (struct pinctrl_fake_gpio_pinrange *) & pinctrl_fake_gpio_pinrange[ gpio_chip_index ];
-	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	range->values[ offset ] = value;
-
-	dev_dbg( pctrl->dev, "set( %u ) = %u\n", pin, value );
-}
-
-static int pinctrl_fake_gpio_get_direction(struct gpio_chip *chip, unsigned offset)
-{
-	struct pinctrl_fake *pctrl;
-	struct pinctrl_fake_gpio_pinrange *range;
-	unsigned gpio_chip_index;
-	int pin;
-	int direction;
-
-	pctrl = gpiochip_get_data(chip);
-	gpio_chip_index = pinctrl_fake_gpio_chip_to_index( chip );
-	range = (struct pinctrl_fake_gpio_pinrange *) & pinctrl_fake_gpio_pinrange[ gpio_chip_index ];
-	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	direction = range->directions[ offset ];
-
-	dev_dbg( pctrl->dev, "set( %u ) = %u\n", pin, direction );
-
-	return direction;
-}
-
-static int pinctrl_fake_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
-{
-	struct pinctrl_fake *pctrl;
-	struct pinctrl_fake_gpio_pinrange *range;
-	unsigned gpio_chip_index;
-	int pin;
-
-	pctrl = gpiochip_get_data(chip);
-	gpio_chip_index = pinctrl_fake_gpio_chip_to_index( chip );
-	range = (struct pinctrl_fake_gpio_pinrange *) & pinctrl_fake_gpio_pinrange[ gpio_chip_index ];
-	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	range->directions[ offset ] = !!GPIOF_DIR_IN;
-
-	dev_dbg( pctrl->dev, "direction_input( %u )\n", pin );
-
-	return EXIT_SUCCESS;
-}
-
-static int pinctrl_fake_gpio_direction_output(struct gpio_chip *chip, unsigned offset,
-				     int value)
-{
-	struct pinctrl_fake *pctrl;
-	struct pinctrl_fake_gpio_pinrange *range;
-	unsigned gpio_chip_index;
-	int pin;
-
-	pctrl = gpiochip_get_data(chip);
-	gpio_chip_index = pinctrl_fake_gpio_chip_to_index( chip );
-	range = (struct pinctrl_fake_gpio_pinrange *) & pinctrl_fake_gpio_pinrange[ gpio_chip_index ];
-	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	range->directions[ offset ] = !!GPIOF_DIR_OUT;
-
-	dev_dbg( pctrl->dev, "direction_output( %u )\n", pin );
-
-	return EXIT_SUCCESS;
-}
-
 // the 1 pinctrl_fake device
 static struct pinctrl_fake pinctrl_fake = {
-	.gpiochip = {
-		{
-			.owner = THIS_MODULE,
-			.label = "pinctrl-fake-gpiochip-a",
-			.request = gpiochip_generic_request,
-			.free = gpiochip_generic_free,
-			.get_direction = pinctrl_fake_gpio_get_direction,
-			.direction_input = pinctrl_fake_gpio_direction_input,
-			.direction_output = pinctrl_fake_gpio_direction_output,
-			.get = pinctrl_fake_gpio_get,
-			.set = pinctrl_fake_gpio_set,
-			.base = -1,
-			.ngpio = ARRAY_SIZE( pinctrl_fake_gpiochip_a_pins ),
-		},
-		{
-			.owner = THIS_MODULE,
-			.label = "pinctrl-fake-gpiochip-b",
-			.request = gpiochip_generic_request,
-			.free = gpiochip_generic_free,
-			.get_direction = pinctrl_fake_gpio_get_direction,
-			.direction_input = pinctrl_fake_gpio_direction_input,
-			.direction_output = pinctrl_fake_gpio_direction_output,
-			.get = pinctrl_fake_gpio_get,
-			.set = pinctrl_fake_gpio_set,
-			.base = -1,
-			.ngpio = ARRAY_SIZE( pinctrl_fake_gpiochip_b_pins ),
-		},
+#ifdef CONFIG_PINCTRL_FAKE_GPIO
+	.fgpiochip = {
+		& pinctrl_fake_gpiochip_a,
+		& pinctrl_fake_gpiochip_b,
 	},
+#endif // CONFIG_PINCTRL_FAKE_GPIO
 	.pctldesc = {
 		.pins = pinctrl_fake_pins,
 		.npins = ARRAY_SIZE( pinctrl_fake_pins ),
@@ -744,212 +576,18 @@ static struct pinctrl_fake pinctrl_fake = {
 	},
 };
 
-static void pinctrl_fake_gpio_irq_ack(struct irq_data *d)
-{
-	/*
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-	int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, irqd_to_hwirq(d));
-	u32 intr_line;
-
-	raw_spin_lock(&pctrl->lock);
-
-	intr_line = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-	intr_line &= CHV_PADCTRL0_INTSEL_MASK;
-	intr_line >>= CHV_PADCTRL0_INTSEL_SHIFT;
-	pinctrl_fake_writel(BIT(intr_line), pctrl->regs + CHV_INTSTAT);
-
-	raw_spin_unlock(&pctrl->lock);
-	*/
-}
-
-static void pinctrl_fake_gpio_irq_mask_unmask(struct irq_data *d, bool mask)
-{
-	/*
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-	int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, irqd_to_hwirq(d));
-	u32 value, intr_line;
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&pctrl->lock, flags);
-
-	intr_line = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-	intr_line &= CHV_PADCTRL0_INTSEL_MASK;
-	intr_line >>= CHV_PADCTRL0_INTSEL_SHIFT;
-
-	value = readl(pctrl->regs + CHV_INTMASK);
-	if (mask)
-		value &= ~BIT(intr_line);
-	else
-		value |= BIT(intr_line);
-	pinctrl_fake_writel(value, pctrl->regs + CHV_INTMASK);
-
-	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-	*/
-}
-
-static void pinctrl_fake_gpio_irq_mask(struct irq_data *d)
-{
-	pinctrl_fake_gpio_irq_mask_unmask(d, true);
-}
-
-static void pinctrl_fake_gpio_irq_unmask(struct irq_data *d)
-{
-	pinctrl_fake_gpio_irq_mask_unmask(d, false);
-}
-
-static unsigned pinctrl_fake_gpio_irq_startup(struct irq_data *d)
-{
-	/*
-	 // Check if the interrupt has been requested with 0 as triggering
-	 // type. In that case it is assumed that the current values
-	 // programmed to the hardware are used (e.g BIOS configured
-	 // defaults).
-	 //
-	 // In that case ->irq_set_type() will never be called so we need to
-	 // read back the values from hardware now, set correct flow handler
-	 // and update mappings before the interrupt is being used.
-	if (irqd_get_trigger_type(d) == IRQ_TYPE_NONE) {
-		struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-		struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-		unsigned offset = irqd_to_hwirq(d);
-		int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, offset);
-		irq_flow_handler_t handler;
-		unsigned long flags;
-		u32 intsel, value;
-
-		raw_spin_lock_irqsave(&pctrl->lock, flags);
-		intsel = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-		intsel &= CHV_PADCTRL0_INTSEL_MASK;
-		intsel >>= CHV_PADCTRL0_INTSEL_SHIFT;
-
-		value = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL1));
-		if (value & CHV_PADCTRL1_INTWAKECFG_LEVEL)
-			handler = handle_level_irq;
-		else
-			handler = handle_edge_irq;
-
-		if (!pctrl->intr_lines[intsel]) {
-			irq_set_handler_locked(d, handler);
-			pctrl->intr_lines[intsel] = offset;
-		}
-		raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-	}
-
-	pinctrl_fake_gpio_irq_unmask(d);
-	*/
-	return 0;
-}
-
-static int pinctrl_fake_gpio_irq_type(struct irq_data *d, unsigned type)
-{
-	/*
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-	unsigned offset = irqd_to_hwirq(d);
-	int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, offset);
-	unsigned long flags;
-	u32 value;
-
-	raw_spin_lock_irqsave(&pctrl->lock, flags);
-
-	// Pins which can be used as shared interrupt are configured in
-	// BIOS. Driver trusts BIOS configurations and assigns different
-	// handler according to the irq type.
-	//
-	// Driver needs to save the mapping between each pin and
-	// its interrupt line.
-	// 1. If the pin cfg is locked in BIOS:
-	//	Trust BIOS has programmed IntWakeCfg bits correctly,
-	//	driver just needs to save the mapping.
-	// 2. If the pin cfg is not locked in BIOS:
-	//	Driver programs the IntWakeCfg bits and save the mapping.
-	if (!pinctrl_fake_pad_locked(pctrl, pin)) {
-		void __iomem *reg = pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL1);
-
-		value = readl(reg);
-		value &= ~CHV_PADCTRL1_INTWAKECFG_MASK;
-		value &= ~CHV_PADCTRL1_INVRXTX_MASK;
-
-		if (type & IRQ_TYPE_EDGE_BOTH) {
-			if ((type & IRQ_TYPE_EDGE_BOTH) == IRQ_TYPE_EDGE_BOTH)
-				value |= CHV_PADCTRL1_INTWAKECFG_BOTH;
-			else if (type & IRQ_TYPE_EDGE_RISING)
-				value |= CHV_PADCTRL1_INTWAKECFG_RISING;
-			else if (type & IRQ_TYPE_EDGE_FALLING)
-				value |= CHV_PADCTRL1_INTWAKECFG_FALLING;
-		} else if (type & IRQ_TYPE_LEVEL_MASK) {
-			value |= CHV_PADCTRL1_INTWAKECFG_LEVEL;
-			if (type & IRQ_TYPE_LEVEL_LOW)
-				value |= CHV_PADCTRL1_INVRXTX_RXDATA;
-		}
-
-		pinctrl_fake_writel(value, reg);
-	}
-
-	value = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-	value &= CHV_PADCTRL0_INTSEL_MASK;
-	value >>= CHV_PADCTRL0_INTSEL_SHIFT;
-
-	pctrl->intr_lines[value] = offset;
-
-	if (type & IRQ_TYPE_EDGE_BOTH)
-		irq_set_handler_locked(d, handle_edge_irq);
-	else if (type & IRQ_TYPE_LEVEL_MASK)
-		irq_set_handler_locked(d, handle_level_irq);
-
-	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-*/
-	return 0;
-}
-
-static struct irq_chip pinctrl_fake_gpio_irqchip = {
-	.name = "chv-gpio",
-	.irq_startup = pinctrl_fake_gpio_irq_startup,
-	.irq_ack = pinctrl_fake_gpio_irq_ack,
-	.irq_mask = pinctrl_fake_gpio_irq_mask,
-	.irq_unmask = pinctrl_fake_gpio_irq_unmask,
-	.irq_set_type = pinctrl_fake_gpio_irq_type,
-	.flags = IRQCHIP_SKIP_SET_WAKE,
-};
-
-static void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
-{
-	struct gpio_chip *gc = irq_desc_get_handler_data( desc );
-	struct pinctrl_fake *pctrl = gpiochip_get_data( gc );
-	struct irq_chip *chip = irq_desc_get_chip( desc );
-
-	dev_info( pctrl->dev, "irq_handler()\n" );
-/*
-	unsigned long pending;
-	u32 intr_line;
-
-	chained_irq_enter( chip, desc );
-
-	pending = readl( pctrl->regs + CHV_INTSTAT );
-	for_each_set_bit( intr_line, &pending, 16 ) {
-		unsigned irq, offset;
-
-		offset = pctrl->intr_lines[ intr_line ];
-		irq = irq_find_mapping( gc->irqdomain, offset );
-		generic_handle_irq( irq );
-	}
-
-	chained_irq_exit( chip, desc );
-	*/
-}
+#ifdef CONFIG_PINCTRL_FAKE_GPIO
 
 static void pinctrl_fake_gpio_fini( struct pinctrl_fake *pctrl )
 {
 	struct gpio_chip *chip;
 	int i;
 
-	dev_info( pctrl->dev, "pinctrl_fake_gpio_probe()\n" );
+	dev_info( pctrl->dev, "pinctrl_fake_gpio_fini()\n" );
 
-	for( i = 0; i < ARRAY_SIZE( pctrl->gpiochip ); i++ ) {
+	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
 
-		chip = & pctrl->gpiochip[ i ];
+		chip = & pctrl->fgpiochip[ i ]->gpiochip;
 
 		dev_info( pctrl->dev, "calling gpiochip_remove for chip '%s'\n", chip->label );
 		gpiochip_remove( chip );
@@ -959,58 +597,44 @@ static void pinctrl_fake_gpio_fini( struct pinctrl_fake *pctrl )
 
 static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl, int irq )
 {
-	const struct pinctrl_fake_gpio_pinrange *range;
+	struct pinctrl_fake_gpio_chip *fchip;
 	struct gpio_chip *chip;
 	int ret, i;
 
-	dev_info( pctrl->dev, "pinctrl_fake_gpio_probe()\n" );
+	static const char *label[] = {
+		"pinctrl-fake-gpiochip-a",
+		"pinctrl-fake-gpiochip-b",
+	};
 
-	for( i = 0; i < ARRAY_SIZE( pctrl->gpiochip ); i++ ) {
+	dev_info( pctrl->dev, "pinctrl_fake_gpio_init()\n" );
 
-		chip = & pctrl->gpiochip[ i ];
-		range = & pinctrl_fake_gpio_pinrange[ i ];
+	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
 
-		chip->parent = pctrl->dev;
-		dev_info( pctrl->dev, "adding gpiochip with label '%s'\n", chip->label );
+		fchip = pctrl->fgpiochip[ i ];
+		chip = & fchip->gpiochip;
 
-		dev_info( pctrl->dev, "calling gpiochip_add_data()\n" );
-		ret = gpiochip_add_data(chip, pctrl);
-		if ( ret ) {
-			dev_err( pctrl->dev, "failed to register %s\n", chip->label );
-			return ret;
+		dev_info( pctrl->dev, "initializing gpio chip %s\n", label[ i ] );
+
+		ret = pinctrl_fake_gpio_chip_init( pctrl, chip, fchip->npins, label[ i ] );
+		if ( EXIT_SUCCESS != ret ) {
+			dev_err( pctrl->dev, "failed to add gpio chip %s\n", label[ i ] );
+			break;
 		}
-
-		ret = gpiochip_add_pingroup_range( chip, pctrl->pctldev, 0, range->name );
-		if ( ret ) {
-			dev_err( pctrl->dev, "failed to add GPIO pin range %s\n", range->name );
-			goto fail;
-		}
-
-		dev_info( pctrl->dev, "calling gpiochip_irqchip_add()\n" );
-		ret = gpiochip_irqchip_add( chip, &pinctrl_fake_gpio_irqchip, 0,
-				handle_simple_irq, IRQ_TYPE_NONE );
-		if ( ret ) {
-			dev_err( pctrl->dev, "failed to add IRQ chip\n" );
-			goto fail;
-		}
-
-		dev_info( pctrl->dev, "calling gpiochip_set_chained_irqchip()\n" );
-
-		gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, irq,
-					     pinctrl_fake_gpio_irq_handler );
 	}
 
-	dev_info(pctrl->dev, "gpio probe success!\n");
+	if ( EXIT_SUCCESS == ret ) {
+		dev_info(pctrl->dev, "gpio probe success!\n");
+	} else {
+		pinctrl_fake_gpio_fini( pctrl );
+	}
 
-	ret = EXIT_SUCCESS;
-	goto out;
-
-fail:
-	pinctrl_fake_gpio_fini( pctrl );
-
-out:
 	return ret;
 }
+#else
+#define pinctrl_fake_gpio_init(...) EXIT_SUCCESS
+#define pinctrl_fake_gpio_fini(...)
+#endif // CONFIG_PINCTRL_FAKE_GPIO
+
 
 static int pinctrl_fake_probe(struct platform_device *pdev)
 {
@@ -1023,7 +647,7 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 
 	dev_info( & pdev->dev, "pinctrl_fake_probe()\n" );
 
-	raw_spin_lock_init( & pctrl->lock );
+	//raw_spin_lock_init( & pctrl->lock );
 	pctrl->dev = & pdev->dev;
 
 	pctrl->pctldesc.name = dev_name( & pdev->dev );
@@ -1036,14 +660,13 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		dev_err( & pdev->dev, "failed to register pinctrl driver (%d)\n", r );
 		goto out;
 	}
-	dev_info( & pdev->dev, "calling pinctrl_fake_gpio_probe()\n" );
+	dev_info( & pdev->dev, "calling pinctrl_fake_gpio_init()\n" );
 
 	r = pinctrl_fake_gpio_init( pctrl, irq );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( & pdev->dev, "pinctrl_fake_gpio_probe() failed (%d)\n", r );
 		goto unregister_pinctrl;
 	}
-	r = EXIT_SUCCESS;
 
 	platform_set_drvdata(pdev, pctrl);
 

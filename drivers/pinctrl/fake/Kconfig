@@ -15,7 +15,8 @@ config PINCTRL_FAKE
 
 config PINCTRL_FAKE_GPIO
 	boolean "Fake GPIO support"
-	depends on PINCTRL_FAKE && GPIOLIB
+	depends on PINCTRL_FAKE
+	select GPIOLIB
 	select GPIOLIB_IRQCHIP
 	help
 	  A driver for fake GPIO functionality on any system. Based on example
