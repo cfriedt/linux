@@ -2,7 +2,10 @@
 #define PINCTRL_FAKE_GPIO_H_
 
 #include <linux/types.h>
+#include <linux/gpio.h>
 #include <linux/gpio/driver.h>
+#include <linux/workqueue.h>
+#include <linux/list.h>
 
 /**
  * @gpiochip   - gpio chip, for api purposes
@@ -17,15 +20,21 @@
 struct pinctrl_fake_gpio_chip {
 	struct gpio_chip gpiochip;
 	const char *group;
-	unsigned npins;
-	const unsigned *pins;
+	u16 npins;
+	const u16 *pins;
 	u8 *values;
 	u8 *directions;
 	u8 *irq_types;
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+	struct delayed_work toggler_dwork;
+	struct list_head toggler_head;
+#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 };
 
 struct pinctrl_fake;
 
-int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *ch, u16 ngpio, const char *label );
+int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label );
+
+void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip );
 
 #endif /* PINCTRL_FAKE_GPIO_H_ */

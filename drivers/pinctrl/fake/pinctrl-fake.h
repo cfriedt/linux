@@ -8,6 +8,7 @@
 
 #include "pinctrl-fake-misc.h"
 #include "pinctrl-fake-gpio.h"
+#include "pinctrl-fake-gpio-toggler.h"
 
 struct pinctrl_fake {
 	struct device *dev;

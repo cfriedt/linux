@@ -30,7 +30,7 @@ config PINCTRL_FAKE_GPIO_TOGGLER
 	  will periodically toggle the value of that GPIO. User applications
 	  can then poll the value of the GPIO via sysfs. If the GPIO is
 	  configured to trigger an interrupt, then user applications can be
-	  notified of the interrupt using the select(2) system call.
+	  notified of the interrupt using the poll(2) or select(2) system calls.
 	  
 	  See Documentation/gpio/sysfs.txt for more information.
 

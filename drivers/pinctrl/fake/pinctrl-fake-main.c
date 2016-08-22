@@ -581,13 +581,17 @@ static struct pinctrl_fake pinctrl_fake = {
 static void pinctrl_fake_gpio_fini( struct pinctrl_fake *pctrl )
 {
 	struct gpio_chip *chip;
+	struct pinctrl_fake_gpio_chip *fchip;
 	int i;
 
 	dev_info( pctrl->dev, "pinctrl_fake_gpio_fini()\n" );
 
 	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
 
-		chip = & pctrl->fgpiochip[ i ]->gpiochip;
+		fchip = pctrl->fgpiochip[ i ];
+		chip = & fchip->gpiochip;
+
+		pinctrl_fake_gpio_chip_fini( chip );
 
 		dev_info( pctrl->dev, "calling gpiochip_remove for chip '%s'\n", chip->label );
 		gpiochip_remove( chip );
@@ -624,12 +628,11 @@ static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl, int irq )
 
 	if ( EXIT_SUCCESS == ret ) {
 		dev_info(pctrl->dev, "gpio probe success!\n");
-	} else {
-		pinctrl_fake_gpio_fini( pctrl );
 	}
 
 	return ret;
 }
+
 #else
 #define pinctrl_fake_gpio_init(...) EXIT_SUCCESS
 #define pinctrl_fake_gpio_fini(...)

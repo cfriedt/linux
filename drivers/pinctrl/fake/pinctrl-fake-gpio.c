@@ -7,25 +7,6 @@
 
 #include "pinctrl-fake.h"
 
-/*
-static unsigned pinctrl_fake_gpio_chip_to_index( struct gpio_chip *chip ) {
-
-	struct pinctrl_fake *pctrl;
-	unsigned gpio_chip_index;
-
-	pctrl = gpiochip_get_data( chip );
-
-	for( gpio_chip_index = 0; gpio_chip_index < ARRAY_SIZE( pctrl->gpiochip ); gpio_chip_index++ ) {
-		if ( & pctrl->gpiochip[ gpio_chip_index ].gpiochip == chip ) {
-			break;
-		}
-	}
-	BUG_ON( gpio_chip_index >= ARRAY_SIZE( pctrl->gpiochip ) );
-
-	return gpio_chip_index;
-}
-*/
-
 static unsigned pinctrl_fake_gpio_offset_to_pin( struct gpio_chip *chip,
 				       unsigned offset)
 {
@@ -89,7 +70,7 @@ static int pinctrl_fake_gpio_get_direction(struct gpio_chip *chip, unsigned offs
 	return direction;
 }
 
-static int pinctrl_fake_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
+static int pinctrl_fake_gpio_direction_input( struct gpio_chip *chip, unsigned offset )
 {
 	struct pinctrl_fake *pctrl;
 	struct pinctrl_fake_gpio_chip *fchip;
@@ -98,15 +79,18 @@ static int pinctrl_fake_gpio_direction_input(struct gpio_chip *chip, unsigned of
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	fchip->directions[ offset ] = !!GPIOF_DIR_IN;
+	fchip->directions[ offset ] = GPIOF_DIR_IN;
+
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+	pinctrl_fake_gpio_toggler_add( fchip, offset );
+#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 
 	dev_dbg( pctrl->dev, "direction_input( %u )\n", pin );
 
 	return EXIT_SUCCESS;
 }
 
-static int pinctrl_fake_gpio_direction_output(struct gpio_chip *chip, unsigned offset,
-				     int value)
+static int pinctrl_fake_gpio_direction_output( struct gpio_chip *chip, unsigned offset, int value )
 {
 	struct pinctrl_fake *pctrl;
 	struct pinctrl_fake_gpio_chip *fchip;
@@ -115,7 +99,11 @@ static int pinctrl_fake_gpio_direction_output(struct gpio_chip *chip, unsigned o
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
-	fchip->directions[ offset ] = !!GPIOF_DIR_OUT;
+	fchip->directions[ offset ] = GPIOF_DIR_OUT;
+
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+	pinctrl_fake_gpio_toggler_remove( fchip, offset );
+#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 
 	dev_dbg( pctrl->dev, "direction_output( %u )\n", pin );
 
@@ -313,6 +301,8 @@ static void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
 	struct irq_chip *chip = irq_desc_get_chip( desc );
 
 	dev_info( pctrl->dev, "irq_handler()\n" );
+
+	generic_handle_irq( 0 );
 /*
 	unsigned long pending;
 	u32 intr_line;
@@ -345,6 +335,8 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 
+	INIT_LIST_HEAD( & fchip->toggler_head );
+
 	dev_info( pctrl->dev, "calling gpiochip_add_data()\n" );
 	r = gpiochip_add_data( chip, pctrl );
 	if ( EXIT_SUCCESS != r ) {
@@ -370,8 +362,20 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 	dev_info( pctrl->dev, "calling gpiochip_set_chained_irqchip()\n" );
 	gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, 0, pinctrl_fake_gpio_irq_handler );
 
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+	pinctrl_fake_gpio_toggler_init( fchip );
+#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+
 	r = EXIT_SUCCESS;
 
 out:
 	return r;
+}
+
+void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip ) {
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+	struct pinctrl_fake_gpio_chip *fchip;
+	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
+	pinctrl_fake_gpio_toggler_fini( fchip );
+#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 }
