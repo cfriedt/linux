@@ -224,6 +224,8 @@ static unsigned pinctrl_fake_gpio_irq_startup(struct irq_data *d)
 
 static int pinctrl_fake_gpio_irq_type(struct irq_data *d, unsigned type)
 {
+	printk( KERN_INFO "pinctrl-fake: irq_type(): %u\n", type );
+
 	/*
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);

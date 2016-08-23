@@ -171,25 +171,25 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 		case IRQ_TYPE_EDGE_RISING:
 			if ( fchip->values[ toggler->gpio_offset ] ) {
 				should_trigger_interrupt = true;
-				dev_dbg( pctrl->dev, "toggler: triggering EDGE_RISING interrupt\n" );
+				dev_info( pctrl->dev, "toggler: triggering EDGE_RISING interrupt\n" );
 			}
 			break;
 
 		case IRQ_TYPE_EDGE_FALLING:
 			if ( ! fchip->values[ toggler->gpio_offset ] ) {
 				should_trigger_interrupt = true;
-				dev_dbg( pctrl->dev, "toggler: triggering EDGE_FALLING interrupt\n" );
+				dev_info( pctrl->dev, "toggler: triggering EDGE_FALLING interrupt\n" );
 			}
 			break;
 
 		case IRQ_TYPE_EDGE_BOTH:
 			should_trigger_interrupt = true;
-			dev_dbg( pctrl->dev, "toggler: triggering EDGE_FALLING interrupt\n" );
+			dev_info( pctrl->dev, "toggler: triggering EDGE_BOTH interrupt\n" );
 			break;
 
 		case IRQ_TYPE_NONE:
 		default:
-			dev_dbg( pctrl->dev, "toggler: not triggering an interrupt\n" );
+			dev_info( pctrl->dev, "toggler: not triggering an interrupt\n" );
 			break;
 		}
 
