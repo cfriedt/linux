@@ -126,47 +126,52 @@ static const struct gpio_chip pinctrl_fake_gpio_chip_template = {
 
 static void pinctrl_fake_gpio_irq_ack(struct irq_data *d)
 {
-	/*
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-	int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, irqd_to_hwirq(d));
-	u32 intr_line;
+	struct gpio_chip *chip;
+	struct pinctrl_fake_gpio_chip *fchip;
+	struct pinctrl_fake *pctrl;
+	unsigned offset;
+	int pin;
+//	irq_flow_handler_t handler;
+//	unsigned long flags;
+//	u32 intsel, value;
 
-	raw_spin_lock(&pctrl->lock);
+	chip = irq_data_get_irq_chip_data( d );
+	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
+	pctrl = gpiochip_get_data( chip );
+	offset = irqd_to_hwirq( d );
 
-	intr_line = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-	intr_line &= CHV_PADCTRL0_INTSEL_MASK;
-	intr_line >>= CHV_PADCTRL0_INTSEL_SHIFT;
-	pinctrl_fake_writel(BIT(intr_line), pctrl->regs + CHV_INTSTAT);
+	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 
-	raw_spin_unlock(&pctrl->lock);
-	*/
+//	raw_spin_lock_irqsave( &pctrl->lock, flags );
+
+	dev_info( pctrl->dev, "irq_ack for '%s' pin %u\n", chip->label, pin );
+
+//	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 }
 
 static void pinctrl_fake_gpio_irq_mask_unmask(struct irq_data *d, bool mask)
 {
-	/*
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-	int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, irqd_to_hwirq(d));
-	u32 value, intr_line;
-	unsigned long flags;
+	struct gpio_chip *chip;
+	struct pinctrl_fake_gpio_chip *fchip;
+	struct pinctrl_fake *pctrl;
+	unsigned offset;
+	int pin;
+//	irq_flow_handler_t handler;
+//	unsigned long flags;
+//	u32 intsel, value;
 
-	raw_spin_lock_irqsave(&pctrl->lock, flags);
+	chip = irq_data_get_irq_chip_data( d );
+	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
+	pctrl = gpiochip_get_data( chip );
+	offset = irqd_to_hwirq( d );
 
-	intr_line = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-	intr_line &= CHV_PADCTRL0_INTSEL_MASK;
-	intr_line >>= CHV_PADCTRL0_INTSEL_SHIFT;
+	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 
-	value = readl(pctrl->regs + CHV_INTMASK);
-	if (mask)
-		value &= ~BIT(intr_line);
-	else
-		value |= BIT(intr_line);
-	pinctrl_fake_writel(value, pctrl->regs + CHV_INTMASK);
+//	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-	*/
+	dev_info( pctrl->dev, "irq_mask_unmask for '%s' pin %u mask %u\n", chip->label, pin, mask );
+
+//	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 }
 
 static void pinctrl_fake_gpio_irq_mask(struct irq_data *d)
@@ -179,110 +184,61 @@ static void pinctrl_fake_gpio_irq_unmask(struct irq_data *d)
 	pinctrl_fake_gpio_irq_mask_unmask(d, false);
 }
 
-static unsigned pinctrl_fake_gpio_irq_startup(struct irq_data *d)
-{
-	/*
-	 // Check if the interrupt has been requested with 0 as triggering
-	 // type. In that case it is assumed that the current values
-	 // programmed to the hardware are used (e.g BIOS configured
-	 // defaults).
-	 //
-	 // In that case ->irq_set_type() will never be called so we need to
-	 // read back the values from hardware now, set correct flow handler
-	 // and update mappings before the interrupt is being used.
-	if (irqd_get_trigger_type(d) == IRQ_TYPE_NONE) {
-		struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-		struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-		unsigned offset = irqd_to_hwirq(d);
-		int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, offset);
-		irq_flow_handler_t handler;
-		unsigned long flags;
-		u32 intsel, value;
+static unsigned pinctrl_fake_gpio_irq_startup( struct irq_data *d ) {
 
-		raw_spin_lock_irqsave(&pctrl->lock, flags);
-		intsel = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-		intsel &= CHV_PADCTRL0_INTSEL_MASK;
-		intsel >>= CHV_PADCTRL0_INTSEL_SHIFT;
+	struct gpio_chip *chip;
+	struct pinctrl_fake_gpio_chip *fchip;
+	struct pinctrl_fake *pctrl;
+	unsigned offset;
+	int pin;
+//	irq_flow_handler_t handler;
+//	unsigned long flags;
+//	u32 intsel, value;
 
-		value = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL1));
-		if (value & CHV_PADCTRL1_INTWAKECFG_LEVEL)
-			handler = handle_level_irq;
-		else
-			handler = handle_edge_irq;
+	chip = irq_data_get_irq_chip_data( d );
+	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
+	pctrl = gpiochip_get_data( chip );
+	offset = irqd_to_hwirq( d );
 
-		if (!pctrl->intr_lines[intsel]) {
-			irq_set_handler_locked(d, handler);
-			pctrl->intr_lines[intsel] = offset;
-		}
-		raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-	}
+	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 
-	pinctrl_fake_gpio_irq_unmask(d);
-	*/
+//	raw_spin_lock_irqsave( &pctrl->lock, flags );
+
+	dev_info( pctrl->dev, "irq_startup for '%s' pin %u\n", chip->label, pin );
+
+//	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
+
+	pinctrl_fake_gpio_irq_unmask( d );
 	return 0;
 }
 
-static int pinctrl_fake_gpio_irq_type(struct irq_data *d, unsigned type)
+static int pinctrl_fake_gpio_irq_type( struct irq_data *d, unsigned type )
 {
-	printk( KERN_INFO "pinctrl-fake: irq_type(): %u\n", type );
 
-	/*
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct pinctrl_fake *pctrl = gpiochip_get_data(gc);
-	unsigned offset = irqd_to_hwirq(d);
-	int pin = pinctrl_fake_gpio_offset_to_pin(pctrl, offset);
-	unsigned long flags;
-	u32 value;
+	struct gpio_chip *chip;
+	struct pinctrl_fake_gpio_chip *fchip;
+	struct pinctrl_fake *pctrl;
+	unsigned offset;
+	int pin;
+//	irq_flow_handler_t handler;
+//	unsigned long flags;
+//	u32 intsel, value;
 
-	raw_spin_lock_irqsave(&pctrl->lock, flags);
+	chip = irq_data_get_irq_chip_data( d );
+	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
+	pctrl = gpiochip_get_data( chip );
+	offset = irqd_to_hwirq( d );
 
-	// Pins which can be used as shared interrupt are configured in
-	// BIOS. Driver trusts BIOS configurations and assigns different
-	// handler according to the irq type.
-	//
-	// Driver needs to save the mapping between each pin and
-	// its interrupt line.
-	// 1. If the pin cfg is locked in BIOS:
-	//	Trust BIOS has programmed IntWakeCfg bits correctly,
-	//	driver just needs to save the mapping.
-	// 2. If the pin cfg is not locked in BIOS:
-	//	Driver programs the IntWakeCfg bits and save the mapping.
-	if (!pinctrl_fake_pad_locked(pctrl, pin)) {
-		void __iomem *reg = pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL1);
+	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 
-		value = readl(reg);
-		value &= ~CHV_PADCTRL1_INTWAKECFG_MASK;
-		value &= ~CHV_PADCTRL1_INVRXTX_MASK;
+//	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-		if (type & IRQ_TYPE_EDGE_BOTH) {
-			if ((type & IRQ_TYPE_EDGE_BOTH) == IRQ_TYPE_EDGE_BOTH)
-				value |= CHV_PADCTRL1_INTWAKECFG_BOTH;
-			else if (type & IRQ_TYPE_EDGE_RISING)
-				value |= CHV_PADCTRL1_INTWAKECFG_RISING;
-			else if (type & IRQ_TYPE_EDGE_FALLING)
-				value |= CHV_PADCTRL1_INTWAKECFG_FALLING;
-		} else if (type & IRQ_TYPE_LEVEL_MASK) {
-			value |= CHV_PADCTRL1_INTWAKECFG_LEVEL;
-			if (type & IRQ_TYPE_LEVEL_LOW)
-				value |= CHV_PADCTRL1_INVRXTX_RXDATA;
-		}
+	fchip->irq_types[ offset ] = type;
 
-		pinctrl_fake_writel(value, reg);
-	}
+	dev_info( pctrl->dev, "set irq_type of chip '%s' pin %u to = %u\n", chip->label, pin, type );
 
-	value = readl(pinctrl_fake_padreg(pctrl, pin, CHV_PADCTRL0));
-	value &= CHV_PADCTRL0_INTSEL_MASK;
-	value >>= CHV_PADCTRL0_INTSEL_SHIFT;
+//	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 
-	pctrl->intr_lines[value] = offset;
-
-	if (type & IRQ_TYPE_EDGE_BOTH)
-		irq_set_handler_locked(d, handle_edge_irq);
-	else if (type & IRQ_TYPE_LEVEL_MASK)
-		irq_set_handler_locked(d, handle_level_irq);
-
-	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-*/
 	return 0;
 }
 
@@ -300,7 +256,7 @@ static void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
 {
 	struct gpio_chip *gc = irq_desc_get_handler_data( desc );
 	struct pinctrl_fake *pctrl = gpiochip_get_data( gc );
-	struct irq_chip *chip = irq_desc_get_chip( desc );
+//	struct irq_chip *chip = irq_desc_get_chip( desc );
 
 	dev_info( pctrl->dev, "irq_handler()\n" );
 
