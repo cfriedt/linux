@@ -252,32 +252,31 @@ static struct irq_chip pinctrl_fake_gpio_irqchip = {
 	.flags = IRQCHIP_SKIP_SET_WAKE,
 };
 
-static void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
+void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
 {
-	struct gpio_chip *gc = irq_desc_get_handler_data( desc );
-	struct pinctrl_fake *pctrl = gpiochip_get_data( gc );
-//	struct irq_chip *chip = irq_desc_get_chip( desc );
+	struct irq_data *data;
+	struct gpio_chip *chip;
+	struct pinctrl_fake *pctrl;
+	struct irq_chip *irq_chip;
+	struct pinctrl_fake_gpio_chip *fchip;
+	unsigned offset;
+	int irq;
 
-	dev_info( pctrl->dev, "irq_handler()\n" );
+	data = irq_desc_get_irq_data( desc );
+	offset = irqd_to_hwirq( data );
+	chip = irq_data_get_irq_chip_data( data );
+	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
+	pctrl = gpiochip_get_data( chip );
+	irq_chip = irq_desc_get_chip( desc );
+	irq = data->irq;
 
-	generic_handle_irq( 0 );
-/*
-	unsigned long pending;
-	u32 intr_line;
+	chained_irq_enter( irq_chip, desc );
 
-	chained_irq_enter( chip, desc );
+	dev_info( pctrl->dev, "irq %u handler for chip '%s' pin %u\n", irq, chip->label, fchip->pins[ offset ] );
 
-	pending = readl( pctrl->regs + CHV_INTSTAT );
-	for_each_set_bit( intr_line, &pending, 16 ) {
-		unsigned irq, offset;
+	generic_handle_irq( irq );
 
-		offset = pctrl->intr_lines[ intr_line ];
-		irq = irq_find_mapping( gc->irqdomain, offset );
-		generic_handle_irq( irq );
-	}
-
-	chained_irq_exit( chip, desc );
-	*/
+	chained_irq_exit( irq_chip, desc );
 }
 
 
@@ -286,6 +285,7 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 	int r;
 
 	struct pinctrl_fake_gpio_chip *fchip;
+	int irq;
 
 	memcpy( chip, & pinctrl_fake_gpio_chip_template, sizeof( *chip ) );
 	chip->label = label;
@@ -304,6 +304,8 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	chip->parent = pctrl->dev;
 
+	irq = 0;
+
 	r = gpiochip_add_pingroup_range( chip, pctrl->pctldev, 0, fchip->group );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( pctrl->dev, "failed to add pingroup range to %s\n", label );
@@ -311,14 +313,14 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 	}
 
 	dev_info( pctrl->dev, "adding irq chip to %s\n", label );
-	r = gpiochip_irqchip_add( chip, &pinctrl_fake_gpio_irqchip, 0, handle_simple_irq, IRQ_TYPE_NONE );
+	r = gpiochip_irqchip_add( chip, &pinctrl_fake_gpio_irqchip, irq, handle_simple_irq, IRQ_TYPE_NONE );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( pctrl->dev, "failed to add IRQ chip\n" );
 		goto out;
 	}
 
 	dev_info( pctrl->dev, "calling gpiochip_set_chained_irqchip()\n" );
-	gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, 0, pinctrl_fake_gpio_irq_handler );
+	gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, irq, pinctrl_fake_gpio_irq_handler );
 
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 	pinctrl_fake_gpio_toggler_init( fchip );

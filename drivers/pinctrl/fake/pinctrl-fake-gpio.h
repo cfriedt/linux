@@ -34,7 +34,8 @@ struct pinctrl_fake_gpio_chip {
 struct pinctrl_fake;
 
 int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label );
-
 void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip );
+
+void pinctrl_fake_gpio_irq_handler( struct irq_desc *irq_desc );
 
 #endif /* PINCTRL_FAKE_GPIO_H_ */

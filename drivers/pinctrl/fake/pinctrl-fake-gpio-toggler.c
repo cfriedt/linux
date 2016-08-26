@@ -102,7 +102,8 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 	struct pinctrl_fake_gpio_toggler_elem *toggler;
 	unsigned long now;
 	unsigned long delta;
-
+	int irq;
+	struct irq_desc *desc;
 	bool should_trigger_interrupt;
 
 	LIST_HEAD( expired );
@@ -194,8 +195,16 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 		}
 
 		if ( should_trigger_interrupt ) {
-			// XXX: @CF: figure out how to manually trigger a gpio interrupt
-			dev_info( pctrl->dev, "toggler: TODO: trigger interrupt for chip '%s' pin %u", fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+
+			if ( fchip->gpiochip.to_irq ) {
+				irq = fchip->gpiochip.to_irq( & fchip->gpiochip, toggler->gpio_offset );
+				desc = irq_to_desc( irq );
+				dev_info( pctrl->dev, "toggler: trigger interrupt %u for chip '%s' pin %u", irq, fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+				pinctrl_fake_gpio_irq_handler( desc );
+			} else {
+				irq = -1;
+				dev_info( pctrl->dev, "toggler: no interrupt found for chip '%s' pin %u", fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+			}
 		}
 	}
 
