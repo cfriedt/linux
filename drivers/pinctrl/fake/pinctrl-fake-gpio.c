@@ -144,7 +144,7 @@ static void pinctrl_fake_gpio_irq_ack(struct irq_data *d)
 
 //	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	dev_info( pctrl->dev, "irq_ack for '%s' pin %u\n", chip->label, pin );
+	dev_dbg( pctrl->dev, "irq_ack for '%s' pin %u\n", chip->label, pin );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 }
@@ -169,7 +169,7 @@ static void pinctrl_fake_gpio_irq_mask_unmask(struct irq_data *d, bool mask)
 
 //	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	dev_info( pctrl->dev, "irq_mask_unmask for '%s' pin %u mask %u\n", chip->label, pin, mask );
+	dev_dbg( pctrl->dev, "irq_mask_unmask for '%s' pin %u mask %u\n", chip->label, pin, mask );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 }
@@ -204,7 +204,7 @@ static unsigned pinctrl_fake_gpio_irq_startup( struct irq_data *d ) {
 
 //	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	dev_info( pctrl->dev, "irq_startup for '%s' pin %u\n", chip->label, pin );
+	dev_dbg( pctrl->dev, "irq_startup for '%s' pin %u\n", chip->label, pin );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 
@@ -235,7 +235,7 @@ static int pinctrl_fake_gpio_irq_type( struct irq_data *d, unsigned type )
 
 	fchip->irq_types[ offset ] = type;
 
-	dev_info( pctrl->dev, "set irq_type of chip '%s' pin %u to = %u\n", chip->label, pin, type );
+	dev_dbg( pctrl->dev, "set irq_type of chip '%s' pin %u to = %u\n", chip->label, pin, type );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 
@@ -272,7 +272,7 @@ void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
 
 	chained_irq_enter( irq_chip, desc );
 
-	dev_info( pctrl->dev, "irq %u handler for chip '%s' pin %u\n", irq, chip->label, fchip->pins[ offset ] );
+	dev_dbg( pctrl->dev, "irq %u handler (%p) for chip '%s' pin %u\n", irq, desc->handle_irq, chip->label, fchip->pins[ offset ] );
 
 	generic_handle_irq( irq );
 
@@ -295,7 +295,6 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	INIT_LIST_HEAD( & fchip->toggler_head );
 
-	dev_info( pctrl->dev, "calling gpiochip_add_data()\n" );
 	r = gpiochip_add_data( chip, pctrl );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( pctrl->dev, "failed to add pinctrl data to %s\n", label );
@@ -312,14 +311,14 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 		goto out;
 	}
 
-	dev_info( pctrl->dev, "adding irq chip to %s\n", label );
+	dev_dbg( pctrl->dev, "adding irq chip to %s\n", label );
 	r = gpiochip_irqchip_add( chip, &pinctrl_fake_gpio_irqchip, irq, handle_simple_irq, IRQ_TYPE_NONE );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( pctrl->dev, "failed to add IRQ chip\n" );
 		goto out;
 	}
 
-	dev_info( pctrl->dev, "calling gpiochip_set_chained_irqchip()\n" );
+	dev_dbg( pctrl->dev, "calling gpiochip_set_chained_irqchip()\n" );
 	gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, irq, pinctrl_fake_gpio_irq_handler );
 
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER

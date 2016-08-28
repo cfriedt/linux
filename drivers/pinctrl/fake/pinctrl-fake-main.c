@@ -584,22 +584,21 @@ static void pinctrl_fake_gpio_fini( struct pinctrl_fake *pctrl )
 	struct pinctrl_fake_gpio_chip *fchip;
 	int i;
 
-	dev_info( pctrl->dev, "pinctrl_fake_gpio_fini()\n" );
-
 	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
 
 		fchip = pctrl->fgpiochip[ i ];
 		chip = & fchip->gpiochip;
 
+		dev_dbg( pctrl->dev, "removing gpio chip '%s'\n", chip->label );
+
 		pinctrl_fake_gpio_chip_fini( chip );
 
-		dev_info( pctrl->dev, "calling gpiochip_remove for chip '%s'\n", chip->label );
 		gpiochip_remove( chip );
 		memset( chip, 0, sizeof( *chip ) );
 	}
 }
 
-static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl, int irq )
+static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl )
 {
 	struct pinctrl_fake_gpio_chip *fchip;
 	struct gpio_chip *chip;
@@ -610,24 +609,18 @@ static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl, int irq )
 		"pinctrl-fake-gpiochip-b",
 	};
 
-	dev_info( pctrl->dev, "pinctrl_fake_gpio_init()\n" );
-
 	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
 
 		fchip = pctrl->fgpiochip[ i ];
 		chip = & fchip->gpiochip;
 
-		dev_info( pctrl->dev, "initializing gpio chip %s\n", label[ i ] );
+		dev_dbg( pctrl->dev, "adding gpio chip %s\n", label[ i ] );
 
 		ret = pinctrl_fake_gpio_chip_init( pctrl, chip, fchip->npins, label[ i ] );
 		if ( EXIT_SUCCESS != ret ) {
 			dev_err( pctrl->dev, "failed to add gpio chip %s\n", label[ i ] );
 			break;
 		}
-	}
-
-	if ( EXIT_SUCCESS == ret ) {
-		dev_info(pctrl->dev, "gpio probe success!\n");
 	}
 
 	return ret;
@@ -642,20 +635,14 @@ static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl, int irq )
 static int pinctrl_fake_probe(struct platform_device *pdev)
 {
 	int r;
-	int irq = 0;
-
 	struct pinctrl_fake *pctrl;
 
 	pctrl = & pinctrl_fake;
-
-	dev_info( & pdev->dev, "pinctrl_fake_probe()\n" );
 
 	//raw_spin_lock_init( & pctrl->lock );
 	pctrl->dev = & pdev->dev;
 
 	pctrl->pctldesc.name = dev_name( & pdev->dev );
-
-	dev_info( & pdev->dev, "calling pinctrl_register()\n" );
 
 	pctrl->pctldev = pinctrl_register( & pctrl->pctldesc, & pdev->dev, pctrl );
 	if ( IS_ERR( pctrl->pctldev ) ) {
@@ -663,15 +650,14 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		dev_err( & pdev->dev, "failed to register pinctrl driver (%d)\n", r );
 		goto out;
 	}
-	dev_info( & pdev->dev, "calling pinctrl_fake_gpio_init()\n" );
 
-	r = pinctrl_fake_gpio_init( pctrl, irq );
+	r = pinctrl_fake_gpio_init( pctrl );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( & pdev->dev, "pinctrl_fake_gpio_probe() failed (%d)\n", r );
 		goto unregister_pinctrl;
 	}
 
-	platform_set_drvdata(pdev, pctrl);
+	platform_set_drvdata( pdev, pctrl );
 
 	goto out;
 
@@ -682,15 +668,12 @@ out:
 	return r;
 }
 
-static int pinctrl_fake_remove(struct platform_device *pdev)
+static int pinctrl_fake_remove( struct platform_device *pdev )
 {
 	struct pinctrl_fake *pctrl = platform_get_drvdata( pdev );
 
-	dev_info( & pdev->dev, "remove()\n" );
-
 	pinctrl_fake_gpio_fini( pctrl );
 
-	dev_info( & pdev->dev, "unregistering pinctrl device\n" );
 	pinctrl_unregister( pctrl->pctldev );
 
 	return 0;
@@ -722,7 +705,6 @@ static struct platform_driver pinctrl_fake_driver = {
 };
 
 static void	pinctrl_fake_platform_device_release( struct device *dev ) {
-	dev_info( dev, "dev->release()\n" );
 }
 
 static struct platform_device pinctrl_fake_platform_device = {
@@ -742,7 +724,7 @@ static int __init pinctrl_fake_init( void )
 {
 	int r;
 
-	_pr_info( "pinctrl_fake_init()\n" );
+	_pr_info( "Fake Pin Controller Driver, initializing\n" );
 
 	r = platform_add_devices( pinctrl_fake_platform_devices, ARRAY_SIZE( pinctrl_fake_platform_devices ) );
 	if ( EXIT_SUCCESS != r ) {
@@ -756,7 +738,7 @@ static int __init pinctrl_fake_init( void )
 		goto out;
 	}
 
-	_pr_info( "success!\n" );
+	_pr_info( "Fake Pin Controller Driver, initialization complete\n" );
 
 out:
 	return r;
@@ -768,16 +750,17 @@ static void __exit pinctrl_fake_exit( void )
 	int i;
 	struct platform_device *pdev;
 
-	_pr_info( "exit()\n" );
+	_pr_info( "Fake Pin Controller Driver, shutting down\n" );
 
 	for( i = 0; i < ARRAY_SIZE( pinctrl_fake_platform_devices ); i++ ) {
 		pdev = pinctrl_fake_platform_devices[ i ];
-		dev_info( & pdev->dev, "unregistering platform device\n" );
+		dev_dbg( & pdev->dev, "unregistering platform device\n" );
 		platform_device_unregister( pdev );
 	}
 
-	_pr_info( "unregistering platform driver\n" );
 	platform_driver_unregister( & pinctrl_fake_driver );
+
+	_pr_info( "Fake Pin Controller Driver, shutdown complete\n" );
 }
 module_exit( pinctrl_fake_exit );
 

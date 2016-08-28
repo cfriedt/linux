@@ -163,7 +163,7 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 
 		fchip->values[ toggler->gpio_offset ] ^= 1;
 
-		dev_info( pctrl->dev, "toggler: pin %u changed: %u -> %u\n", fchip->pins[ toggler->gpio_offset ], ! fchip->values[ toggler->gpio_offset ], fchip->values[ toggler->gpio_offset ] );
+		dev_dbg( pctrl->dev, "toggler: pin %u changed: %u -> %u\n", fchip->pins[ toggler->gpio_offset ], ! fchip->values[ toggler->gpio_offset ], fchip->values[ toggler->gpio_offset ] );
 
 		should_trigger_interrupt = false;
 
@@ -172,25 +172,25 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 		case IRQ_TYPE_EDGE_RISING:
 			if ( fchip->values[ toggler->gpio_offset ] ) {
 				should_trigger_interrupt = true;
-				dev_info( pctrl->dev, "toggler: triggering EDGE_RISING interrupt\n" );
+				dev_dbg( pctrl->dev, "toggler: triggering EDGE_RISING interrupt\n" );
 			}
 			break;
 
 		case IRQ_TYPE_EDGE_FALLING:
 			if ( ! fchip->values[ toggler->gpio_offset ] ) {
 				should_trigger_interrupt = true;
-				dev_info( pctrl->dev, "toggler: triggering EDGE_FALLING interrupt\n" );
+				dev_dbg( pctrl->dev, "toggler: triggering EDGE_FALLING interrupt\n" );
 			}
 			break;
 
 		case IRQ_TYPE_EDGE_BOTH:
 			should_trigger_interrupt = true;
-			dev_info( pctrl->dev, "toggler: triggering EDGE_BOTH interrupt\n" );
+			dev_dbg( pctrl->dev, "toggler: triggering EDGE_BOTH interrupt\n" );
 			break;
 
 		case IRQ_TYPE_NONE:
 		default:
-			dev_info( pctrl->dev, "toggler: not triggering an interrupt\n" );
+			dev_dbg( pctrl->dev, "toggler: not triggering an interrupt\n" );
 			break;
 		}
 
@@ -199,11 +199,11 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 			if ( fchip->gpiochip.to_irq ) {
 				irq = fchip->gpiochip.to_irq( & fchip->gpiochip, toggler->gpio_offset );
 				desc = irq_to_desc( irq );
-				dev_info( pctrl->dev, "toggler: trigger interrupt %u for chip '%s' pin %u", irq, fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+				dev_dbg( pctrl->dev, "toggler: trigger interrupt %u for chip '%s' pin %u", irq, fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
 				pinctrl_fake_gpio_irq_handler( desc );
 			} else {
 				irq = -1;
-				dev_info( pctrl->dev, "toggler: no interrupt found for chip '%s' pin %u", fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+				dev_dbg( pctrl->dev, "toggler: no interrupt found for chip '%s' pin %u", fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
 			}
 		}
 	}

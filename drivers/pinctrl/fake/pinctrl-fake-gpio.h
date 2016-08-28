@@ -6,6 +6,7 @@
 #include <linux/gpio/driver.h>
 #include <linux/workqueue.h>
 #include <linux/list.h>
+#include <linux/bitops.h>
 
 /**
  * @gpiochip   - gpio chip, for api purposes
