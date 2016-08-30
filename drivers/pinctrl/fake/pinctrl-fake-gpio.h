@@ -8,6 +8,8 @@
 #include <linux/list.h>
 #include <linux/bitops.h>
 
+#include <linux/interrupt.h>
+
 /**
  * @gpiochip   - gpio chip, for api purposes
  * @name       - name of the pinctrl group associated with this gpio chip's
@@ -26,8 +28,10 @@ struct pinctrl_fake_gpio_chip {
 	u8 *values;
 	u8 *directions;
 	u8 *irq_types;
+	u8 *pended;
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 	struct delayed_work toggler_dwork;
+	struct tasklet_struct tasklet;
 	struct list_head toggler_head;
 #endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 };

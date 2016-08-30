@@ -5,6 +5,8 @@
 #include <linux/gpio.h>
 #include <linux/gpio/driver.h>
 
+#include <linux/interrupt.h>
+
 #include "pinctrl-fake.h"
 
 static unsigned pinctrl_fake_gpio_offset_to_pin( struct gpio_chip *chip,
@@ -279,6 +281,29 @@ void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
 	chained_irq_exit( irq_chip, desc );
 }
 
+static void pinctrl_fake_gpio_tasklet( unsigned long data ) {
+	struct pinctrl_fake_gpio_chip *fchip;
+	struct irq_desc *desc;
+	int irq;
+	int i;
+
+	fchip = (struct pinctrl_fake_gpio_chip *) data;
+
+	local_irq_disable();
+	for( i = 0; i < fchip->npins; i++ ) {
+		if ( fchip->pended[ i ] ) {
+
+			irq = fchip->gpiochip.to_irq( & fchip->gpiochip, i );
+			desc = irq_to_desc( irq );
+			fchip->pended[ i ] = false;
+
+			chained_irq_enter( fchip->gpiochip.irqchip, desc );
+			generic_handle_irq( irq );
+			chained_irq_exit( fchip->gpiochip.irqchip, desc );
+		}
+	}
+	local_irq_enable();
+}
 
 int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label ) {
 
@@ -320,6 +345,8 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	dev_dbg( pctrl->dev, "calling gpiochip_set_chained_irqchip()\n" );
 	gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, irq, pinctrl_fake_gpio_irq_handler );
+
+	tasklet_init( & fchip->tasklet, pinctrl_fake_gpio_tasklet, (unsigned long) fchip );
 
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 	pinctrl_fake_gpio_toggler_init( fchip );

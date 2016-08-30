@@ -82,6 +82,7 @@ static const unsigned pinctrl_fake_gpiochip_b_pins[] = { 38, 46, 54, 56, 57, 58,
 static u8 pinctrl_fake_ ## n ## _values[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
 static u8 pinctrl_fake_ ## n ## _directions[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
 static u8 pinctrl_fake_ ## n ## _irq_types[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
+static u8 pinctrl_fake_ ## n ## _pended[ ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ) ]; \
 static struct pinctrl_fake_gpio_chip pinctrl_fake_ ##n = { \
 	.group = #n "_grp",                                    \
 	.npins = ARRAY_SIZE( pinctrl_fake_ ## n ## _pins ),    \
@@ -89,6 +90,7 @@ static struct pinctrl_fake_gpio_chip pinctrl_fake_ ##n = { \
 	.values = pinctrl_fake_ ## n ## _values,               \
 	.directions = pinctrl_fake_ ## n ## _directions,       \
 	.irq_types = pinctrl_fake_ ## n ## _irq_types,         \
+	.pended = pinctrl_fake_ ## n ## _pended,               \
 };
 
 FAKE_GPIO_CHIP( gpiochip_a );
