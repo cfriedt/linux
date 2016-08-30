@@ -67,16 +67,11 @@ static void pinctrl_fake_gpio_toggler_update( struct pinctrl_fake_gpio_chip *fch
 
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
 
-	dev_dbg( pctrl->dev, "toggler_update: canceling delayed work\n" );
-
 	cancel_delayed_work( & fchip->toggler_dwork );
 
 	if ( list_empty( & fchip->toggler_head ) ) {
-		dev_dbg( pctrl->dev, "toggler_update: list was empty\n" );
 		return;
 	}
-
-	dev_dbg( pctrl->dev, "toggler_update: sorting list\n" );
 
 	list_sort( NULL, & fchip->toggler_head, pinctrl_fake_gpio_toggler_eta_comparator );
 
@@ -86,11 +81,6 @@ static void pinctrl_fake_gpio_toggler_update( struct pinctrl_fake_gpio_chip *fch
 			struct pinctrl_fake_gpio_toggler_elem,
 			ev_head
 		)->eta;
-
-	dev_dbg( pctrl->dev, "toggler_update: calling INIT_DELAYED_WORK( %p, %p )\n", & fchip->toggler_dwork, pinctrl_fake_gpio_toggler_work_func );
-	INIT_DELAYED_WORK( & fchip->toggler_dwork, pinctrl_fake_gpio_toggler_work_func );
-
-	dev_dbg( pctrl->dev, "toggler_update: calling scheduling_delayed_work( %p, %lu )\n", & fchip->toggler_dwork, max( 0L, then - jiffies ) );
 
 	schedule_delayed_work( & fchip->toggler_dwork, max( 0L, then - jiffies ) );
 }
@@ -105,7 +95,7 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 	unsigned long now;
 	unsigned long delta;
 	int irq;
-	struct irq_desc *desc;
+
 	bool should_trigger_interrupt;
 
 	LIST_HEAD( expired );
@@ -119,30 +109,24 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 	// this function should only ever be called if there is actually something in the tree!!!!
 	//BUG_ON( list_empty( & fchip->toggler_head ) );
 
-	dev_dbg( pctrl->dev, "toggler_work_func(): dwork %p fchip %p pctrl %p\n", dwork, fchip, pctrl );
-
-	dev_dbg( pctrl->dev, "toggler_work_func(): updating eta's..\n" );
-
 	now = jiffies;
 	list_for_each( it, & fchip->toggler_head ) {
 
 		toggler = container_of( it, struct pinctrl_fake_gpio_toggler_elem, ev_head );
 
-		dev_dbg( pctrl->dev, "toggler_work_func(): iterating through toggler %p for chip '%s' pin %u\n", toggler, fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
-
 		if ( time_after_eq( now, toggler->eta ) ) {
 
-			dev_dbg( pctrl->dev, "toggler_work_func(): toggler for chip '%s' pin %u has expired\n", fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+			dev_dbg( pctrl->dev, "GPIO Toggler: toggler for %s pin %u has expired\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ toggler->gpio_offset ] );
 
 			list_add( & toggler->ex_head, & expired );
 			toggler->eta = now;
 			toggler->eta += toggler->period;
 
-			dev_dbg( pctrl->dev, "toggler_work_func(): setting eta to now ( %lu ) + period ( %lu ) = %lu\n", now, toggler->period, toggler->eta );
+			dev_dbg( pctrl->dev, "GPIO Toggler: setting eta to now ( %lu ) + period ( %lu ) = %lu\n", now, toggler->period, toggler->eta );
 
 		} else {
 
-			dev_dbg( pctrl->dev, "toggler_work_func(): toggler for chip '%s' pin %u has not expired\n", fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+			dev_dbg( pctrl->dev, "GPIO Toggler: toggler for %s pin %u has not expired\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ toggler->gpio_offset ] );
 
 			delta =
 				now >= toggler->eta
@@ -150,15 +134,13 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 				: now + ( MAX_JIFFY_OFFSET - toggler->eta ) + 1;
 			toggler->eta -= delta;
 
-			dev_dbg( pctrl->dev, "toggler_work_func(): old eta (%lu) - new eta (%lu) = delta (%lu)\n", toggler->eta + delta, toggler->eta, delta );
+			dev_dbg( pctrl->dev, "GPIO Toggler: old eta (%lu) - new eta (%lu) = delta (%lu)\n", toggler->eta + delta, toggler->eta, delta );
 		}
 
 	}
 
 	// this function should only ever be called once a timer expires!!!
 	// BUG_ON( list_empty( & expired ) );
-
-	dev_dbg( pctrl->dev, "toggler_work_func(): toggling values..\n" );
 
 	should_trigger_interrupt = false;
 
@@ -167,7 +149,7 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 
 		fchip->values[ toggler->gpio_offset ] ^= 1;
 
-		dev_dbg( pctrl->dev, "toggler: pin %u changed: %u -> %u\n", fchip->pins[ toggler->gpio_offset ], ! fchip->values[ toggler->gpio_offset ], fchip->values[ toggler->gpio_offset ] );
+		dev_dbg( pctrl->dev, "GPIO Toggler: pin %u changed: %u -> %u\n", fchip->pins[ toggler->gpio_offset ], ! fchip->values[ toggler->gpio_offset ], fchip->values[ toggler->gpio_offset ] );
 
 		switch ( fchip->irq_types[ toggler->gpio_offset ] ) {
 
@@ -175,7 +157,7 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 			if ( fchip->values[ toggler->gpio_offset ] ) {
 				fchip->pended[ toggler->gpio_offset ] = true;
 				should_trigger_interrupt = true;
-				dev_dbg( pctrl->dev, "toggler: triggering EDGE_RISING interrupt\n" );
+				dev_dbg( pctrl->dev, "GPIO Toggler: triggering EDGE_RISING interrupt\n" );
 			}
 			break;
 
@@ -183,29 +165,27 @@ static void pinctrl_fake_gpio_toggler_work_func( struct work_struct *work ) {
 			if ( ! fchip->values[ toggler->gpio_offset ] ) {
 				fchip->pended[ toggler->gpio_offset ] = true;
 				should_trigger_interrupt = true;
-				dev_dbg( pctrl->dev, "toggler: triggering EDGE_FALLING interrupt\n" );
+				dev_dbg( pctrl->dev, "GPIO Toggler: triggering EDGE_FALLING interrupt\n" );
 			}
 			break;
 
 		case IRQ_TYPE_EDGE_BOTH:
 			fchip->pended[ toggler->gpio_offset ] = true;
 			should_trigger_interrupt = true;
-			dev_dbg( pctrl->dev, "toggler: triggering EDGE_BOTH interrupt\n" );
+			dev_dbg( pctrl->dev, "GPIO Toggler: triggering EDGE_BOTH interrupt\n" );
 			break;
 
 		case IRQ_TYPE_NONE:
 		default:
-			dev_dbg( pctrl->dev, "toggler: not triggering an interrupt\n" );
+			dev_dbg( pctrl->dev, "GPIO Toggler: not triggering an interrupt\n" );
 			break;
 		}
 	}
 
 	if ( should_trigger_interrupt ) {
-		dev_dbg( pctrl->dev, "toggler: trigger interrupt %u for chip '%s' pin %u", irq, fchip->gpiochip.label, fchip->pins[ toggler->gpio_offset ] );
+		dev_dbg( pctrl->dev, "GPIO Toggler: trigger interrupt %u for %s pin %u", irq, dev_name( fchip->gpiochip.cdev ), fchip->pins[ toggler->gpio_offset ] );
 		tasklet_schedule( & fchip->tasklet );
 	}
-
-	dev_dbg( pctrl->dev, "toggler_work_func(): calling toggler_update()..\n" );
 
 	pinctrl_fake_gpio_toggler_update( fchip );
 
@@ -231,11 +211,6 @@ static struct pinctrl_fake_gpio_toggler_elem *
 	return r;
 }
 
-static DECLARE_DELAYED_WORK(
-	pinctrl_fake_gpio_toggler_delayed_work_template,
-	pinctrl_fake_gpio_toggler_work_func
-);
-
 void pinctrl_fake_gpio_toggler_init( struct pinctrl_fake_gpio_chip *fchip ) {
 
 	struct pinctrl_fake *pctrl;
@@ -244,13 +219,9 @@ void pinctrl_fake_gpio_toggler_init( struct pinctrl_fake_gpio_chip *fchip ) {
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( chip );
 
-	memcpy(
-		& fchip->toggler_dwork,
-		& pinctrl_fake_gpio_toggler_delayed_work_template,
-		sizeof( struct delayed_work )
-	);
+	INIT_DELAYED_WORK( & fchip->toggler_dwork, pinctrl_fake_gpio_toggler_work_func );
 
-	dev_info( chip->cdev, "Fake Pin Controller Toggler, initialized\n" );
+	dev_info( chip->cdev, "GPIO Toggler started\n" );
 }
 
 void pinctrl_fake_gpio_toggler_fini( struct pinctrl_fake_gpio_chip *fchip ) {
@@ -263,11 +234,7 @@ void pinctrl_fake_gpio_toggler_fini( struct pinctrl_fake_gpio_chip *fchip ) {
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
 
-	dev_dbg( chip->cdev, "toggler_fini: canceling any delayed work\n" );
-
 	cancel_delayed_work( & fchip->toggler_dwork );
-
-	dev_dbg( chip->cdev, "toggler_fini: emptying event queue\n" );
 
 	while( ! list_empty( & fchip->toggler_head )  ) {
 		r = list_first_entry(
@@ -275,12 +242,14 @@ void pinctrl_fake_gpio_toggler_fini( struct pinctrl_fake_gpio_chip *fchip ) {
 			struct pinctrl_fake_gpio_toggler_elem,
 			ev_head
 		);
-		dev_dbg( chip->cdev, "toggler_fini: removing event for gpio %u\n", fchip->pins[ r->gpio_offset ] );
+
+		dev_info( chip->cdev, "GPIO Toggler: disabled on pin %u\n", fchip->pins[ r->gpio_offset ] );
+
 		list_del( & r->ev_head );
 		kfree( r );
 	}
 
-	dev_info( chip->cdev, "Fake Pin Controller Toggler, shutting down\n" );
+	dev_info( chip->cdev, "GPIO Toggler stopped\n" );
 }
 
 bool pinctrl_fake_gpio_toggler_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset ) {
@@ -296,26 +265,26 @@ bool pinctrl_fake_gpio_toggler_add( struct pinctrl_fake_gpio_chip *fchip, u16 gp
 
 	if ( gpio_offset >= fchip->npins ) {
 		r = false;
-		dev_err( chip->cdev, "toggler_add: invalid gpio_offset %u\n", gpio_offset );
+		dev_err( chip->cdev, "GPIO Toggler: invalid gpio_offset %u\n", gpio_offset );
 		goto out;
 	}
 
 	if ( GPIOF_DIR_IN != fchip->directions[ gpio_offset ] ) {
 		r = false;
-		dev_err( chip->cdev, "toggler_add: pin %u not an input\n", fchip->pins[ gpio_offset ] );
+		dev_err( chip->cdev, "GPIO Toggler: pin %u not an input\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
 	if ( NULL != pinctrl_fake_gpio_toggler_search_by_offset( & fchip->toggler_head, gpio_offset ) ) {
 		r = false;
-		dev_err( chip->cdev, "toggler_add: pin %u already toggling\n", fchip->pins[ gpio_offset ] );
+		dev_err( chip->cdev, "GPIO Toggler: pin %u already toggling\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
 	elem = kzalloc( sizeof( *elem ), GFP_KERNEL );
 	if ( NULL == elem ) {
 		r = false;
-		dev_err( chip->cdev, "toggler_add: no memory to toggle pin %u\n", fchip->pins[ gpio_offset ] );
+		dev_err( chip->cdev, "GPIO Toggler: no memory to toggle pin %u\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
@@ -324,13 +293,9 @@ bool pinctrl_fake_gpio_toggler_add( struct pinctrl_fake_gpio_chip *fchip, u16 gp
 	*( (u16 *) & elem->gpio_offset ) = gpio_offset;
 	INIT_LIST_HEAD( & elem->ev_head );
 
-	dev_info( chip->cdev, "toggler_add: pin %u period %u eta %lu\n", fchip->pins[ gpio_offset ], jiffies_to_msecs( elem->period ), elem->eta );
-
-	dev_dbg( chip->cdev, "toggler_add: calling list_add_tail()\n" );
+	dev_info( chip->cdev, "GPIO Toggler: enabled on pin %u period %u eta %lu\n", fchip->pins[ gpio_offset ], jiffies_to_msecs( elem->period ), elem->eta );
 
 	list_add_tail( & elem->ev_head, & fchip->toggler_head );
-
- 	dev_dbg( chip->cdev, "toggler_add: calling toggler_update()\n" );
 
 	pinctrl_fake_gpio_toggler_update( fchip );
 
@@ -353,22 +318,21 @@ bool pinctrl_fake_gpio_toggler_remove( struct pinctrl_fake_gpio_chip *fchip, u16
 
 	if ( gpio_offset >= fchip->npins ) {
 		r = false;
-		dev_err( chip->cdev, "toggler_remove: invalid gpio_offset %u\n", gpio_offset );
+		dev_err( chip->cdev, "GPIO Toggler: invalid gpio_offset %u\n", gpio_offset );
 		goto out;
 	}
 
 	elem = pinctrl_fake_gpio_toggler_search_by_offset( & fchip->toggler_head, gpio_offset );
 	if ( NULL == elem ) {
 		r = false;
-		dev_err( chip->cdev, "toggler_remove: pin %u already removed\n", fchip->pins[ gpio_offset ] );
+		dev_err( chip->cdev, "GPIO Toggler: pin %u already removed\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
-	dev_info( chip->cdev, "toggler_remove: pin %u\n", fchip->pins[ gpio_offset ] );
-
 	list_del( & elem->ev_head );
-
 	kfree( elem );
+
+	dev_info( chip->cdev, "GPIO Toggler: disabled on pin %u\n", fchip->pins[ gpio_offset ] );
 
 	pinctrl_fake_gpio_toggler_update( fchip );
 
