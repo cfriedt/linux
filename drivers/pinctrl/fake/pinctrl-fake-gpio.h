@@ -10,6 +10,8 @@
 
 #include <linux/interrupt.h>
 
+#include "pinctrl-fake-gpio-worker.h"
+
 /**
  * @gpiochip   - gpio chip, for api purposes
  * @name       - name of the pinctrl group associated with this gpio chip's
@@ -29,11 +31,11 @@ struct pinctrl_fake_gpio_chip {
 	u8 *directions;
 	u8 *irq_types;
 	u8 *pended;
-#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
-	struct delayed_work toggler_dwork;
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
+	struct delayed_work worker_dwork;
 	struct tasklet_struct tasklet;
-	struct list_head toggler_head;
-#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+	struct list_head worker_head;
+#endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 };
 
 struct pinctrl_fake;

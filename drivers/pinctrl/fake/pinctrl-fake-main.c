@@ -634,6 +634,7 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 {
 	int r;
 	struct pinctrl_fake *pctrl;
+	bool pctrl_muxed;
 
 	pctrl = & pinctrl_fake;
 
@@ -649,13 +650,37 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	r = pinctrl_fake_gpio_init( pctrl );
-	if ( EXIT_SUCCESS != r ) {
-		dev_err( & pdev->dev, "pinctrl_fake_gpio_probe() failed (%d)\n", r );
-		goto unregister_pinctrl;
+	pctrl_muxed = false;
+
+#ifdef CONFIG_PINCTRL_FAKE_GPIO
+//	if ( ! pctrl_muxed ) {
+		r = pinctrl_fake_gpio_init( pctrl );
+		if ( EXIT_SUCCESS != r ) {
+			dev_err( & pdev->dev, "pinctrl_fake_gpio_init() failed (%d)\n", r );
+			goto unregister_pinctrl;
+		}
+//		pctrl_muxed = true;
+//	}
+#endif // CONFIG_PINCTRL_FAKE_GPIO
+
+#ifdef CONFIG_PINCTRL_FAKE_I2C
+//	if ( ! pctrl_muxed ) {
+		r = pinctrl_fake_i2c_init( pctrl );
+		if ( EXIT_SUCCESS != r ) {
+			dev_err( & pdev->dev, "pinctrl_fake_i2c_init() failed (%d)\n", r );
+			goto out;
+		}
+//		pctrl_muxed = true;
+//	}
+#endif // CONFIG_PINCTRL_FAKE_I2C
+
+	if ( ! pctrl_muxed ) {
+		//dev_err( pctrl->dev, "failed to set initial mux\n" );
 	}
 
 	platform_set_drvdata( pdev, pctrl );
+
+	r = EXIT_SUCCESS;
 
 	goto out;
 
@@ -670,7 +695,13 @@ static int pinctrl_fake_remove( struct platform_device *pdev )
 {
 	struct pinctrl_fake *pctrl = platform_get_drvdata( pdev );
 
+#ifdef CONFIG_PINCTRL_FAKE_I2C
+	pinctrl_fake_i2c_fini( pctrl );
+#endif // CONFIG_PINCTRL_FAKE_I2C
+
+#ifdef CONFIG_PINCTRL_FAKE_GPIO
 	pinctrl_fake_gpio_fini( pctrl );
+#endif // CONFIG_PINCTRL_FAKE_GPIO
 
 	pinctrl_unregister( pctrl->pctldev );
 

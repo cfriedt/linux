@@ -84,7 +84,7 @@ static int pinctrl_fake_gpio_direction_input( struct gpio_chip *chip, unsigned o
 	fchip->directions[ offset ] = GPIOF_DIR_IN;
 
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
-	pinctrl_fake_gpio_toggler_add( fchip, offset );
+	pinctrl_fake_gpio_worker_add( fchip, offset );
 #endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 
 	dev_dbg( fchip->gpiochip.cdev, "direction_input( %u )\n", pin );
@@ -318,7 +318,7 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 
-	INIT_LIST_HEAD( & fchip->toggler_head );
+	INIT_LIST_HEAD( & fchip->worker_head );
 
 	r = gpiochip_add_data( chip, pctrl );
 	if ( EXIT_SUCCESS != r ) {
@@ -351,7 +351,7 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 	dev_info( pctrl->dev, "added %s (%s)\n", dev_name( chip->cdev ), chip->label );
 
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
-	pinctrl_fake_gpio_toggler_init( fchip );
+	pinctrl_fake_gpio_worker_init( fchip );
 #endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 
 	r = EXIT_SUCCESS;
@@ -366,7 +366,7 @@ void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip ) {
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 	struct pinctrl_fake_gpio_chip *fchip;
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
-	pinctrl_fake_gpio_toggler_fini( fchip );
+	pinctrl_fake_gpio_worker_fini( fchip );
 #endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
 
 	pctrl = gpiochip_get_data( chip );

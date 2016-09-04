@@ -1,39 +1,39 @@
-#ifndef PINCTRL_FAKE_GPIO_TOGGLER_H_
-#define PINCTRL_FAKE_GPIO_TOGGLER_H_
+#ifndef PINCTRL_FAKE_GPIO_WORKER_H_
+#define PINCTRL_FAKE_GPIO_WORKER_H_
 
 #include <linux/types.h>
 
-#define PINCTRL_FAKE_GPIO_TOGGLER_PERIOD_MS_MIN 1000
-#define PINCTRL_FAKE_GPIO_TOGGLER_PERIOD_MS_MAX 10000
+#define PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MIN 1000
+#define PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MAX 10000
 
-#define PINCTRL_FAKE_GPIO_TOGGLER_PERIOD_MS_DEFAULT PINCTRL_FAKE_GPIO_TOGGLER_PERIOD_MS_MIN
+#define PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_DEFAULT PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MIN
 
-#define PINCTRL_FAKE_GPIO_TOGGLER_ETA_MS_EPSILON 100
+#define PINCTRL_FAKE_GPIO_WORKER_ETA_MS_EPSILON 100
 
 struct pinctrl_fake_gpio_chip;
 
 /**
- * pinctrl_fake_gpio_toggler_init
+ * pinctrl_fake_gpio_worker_init
  *
  * @brief        Set up work for toggling fake GPIO.
  *
  * @param fchip  The pinctrl_fake_gpio_chip with which the work in
  *               question is associated.
  */
-void pinctrl_fake_gpio_toggler_init( struct pinctrl_fake_gpio_chip *fchip );
+void pinctrl_fake_gpio_worker_init( struct pinctrl_fake_gpio_chip *fchip );
 
 /**
- * pinctrl_fake_gpio_toggler_init
+ * pinctrl_fake_gpio_worker_init
  *
  * @brief        Tear down work for toggling fake GPIO.
  *
  * @param fchip  The pinctrl_fake_gpio_chip with which the work in
  *               question is associated.
  */
-void pinctrl_fake_gpio_toggler_fini( struct pinctrl_fake_gpio_chip *fchip );
+void pinctrl_fake_gpio_worker_fini( struct pinctrl_fake_gpio_chip *fchip );
 
 /**
- * pinctrl_fake_gpio_toggler_add
+ * pinctrl_fake_gpio_worker_add
  *
  * @brief              Start periodically toggling a fake input GPIO.
  *
@@ -43,10 +43,10 @@ void pinctrl_fake_gpio_toggler_fini( struct pinctrl_fake_gpio_chip *fchip );
  * @return             True if the GPIO in question was successfully added,
  *                     otherwise false.
  */
-bool pinctrl_fake_gpio_toggler_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset );
+bool pinctrl_fake_gpio_worker_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset );
 
 /**
- * pinctrl_fake_gpio_toggler_remove
+ * pinctrl_fake_gpio_worker_remove
  *
  * @brief              Stop periodically toggling a fake input GPIO.
  *
@@ -56,10 +56,10 @@ bool pinctrl_fake_gpio_toggler_add( struct pinctrl_fake_gpio_chip *fchip, u16 gp
  * @return             True if the GPIO in question was successfully removed,
  *                     otherwise false.
  */
-bool pinctrl_fake_gpio_toggler_remove( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset );
+bool pinctrl_fake_gpio_worker_remove( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset );
 
 /**
- * pinctrl_fake_gpio_toggler_period_ms_get
+ * pinctrl_fake_gpio_worker_period_ms_get
  *
  * @brief              Get the period, in milliseconds, of a fake GPIO being
  *                     toggled.
@@ -71,10 +71,10 @@ bool pinctrl_fake_gpio_toggler_remove( struct pinctrl_fake_gpio_chip *fchip, u16
  * @return             True if the value has been returned at the location
  *                     pointed to by @period_ms, otherwise false.
  */
-bool pinctrl_fake_gpio_toggler_period_ms_get( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset, unsigned *period_ms );
+bool pinctrl_fake_gpio_worker_period_ms_get( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset, unsigned *period_ms );
 
 /**
- * pinctrl_fake_gpio_toggler_period_ms_set
+ * pinctrl_fake_gpio_worker_period_ms_set
  *
  * @brief              Set the period, in milliseconds, of a fake GPIO being
  *                     toggled.
@@ -86,6 +86,6 @@ bool pinctrl_fake_gpio_toggler_period_ms_get( struct pinctrl_fake_gpio_chip *fch
  * @return             True if the value in the location pointed to by
  *                     @period_ms has been used, otherwise false.
  */
-bool pinctrl_fake_gpio_toggler_period_ms_set( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset, unsigned *period_ms );
+bool pinctrl_fake_gpio_worker_period_ms_set( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset, unsigned *period_ms );
 
-#endif /* PINCTRL_FAKE_GPIO_TOGGLER_H_ */
+#endif /* PINCTRL_FAKE_GPIO_WORKER_H_ */
