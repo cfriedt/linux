@@ -13,10 +13,10 @@
 static const u16 pinctrl_fake_i2c_mcp9808_regs_default[ MCP9808_NREG_ ] = {
 	[ MCP9808_MID ] = 0x0054,
 	[ MCP9808_DID ] = 0x0400,
-	[ MCP9808_RES ] = 0x03,
+	[ MCP9808_RES ] = 0x0003,
 };
 
-static const u16 pinctrl_fake_i2c_mcp9808_regs_size[ MCP9808_NREG_ ] = {
+static const u8 pinctrl_fake_i2c_mcp9808_regs_size[ MCP9808_NREG_ ] = {
 	[ MCP9808_RFU ]    = 0,
 	[ MCP9808_CONFIG ] = 2,
 	[ MCP9808_TUPPER ] = 2,
@@ -26,6 +26,30 @@ static const u16 pinctrl_fake_i2c_mcp9808_regs_size[ MCP9808_NREG_ ] = {
 	[ MCP9808_MID ]    = 2,
 	[ MCP9808_DID ]    = 2,
 	[ MCP9808_RES ]    = 1,
+};
+
+static const u16 pinctrl_fake_i2c_mcp9808_regs_write_mask[ MCP9808_NREG_ ] = {
+	[ MCP9808_RFU ]    = 0x0000,
+	[ MCP9808_CONFIG ] = 0x07ef, // Alert Stat. is RO
+	[ MCP9808_TUPPER ] = 0x1ff6,
+	[ MCP9808_TLOWER ] = 0x1ff6,
+	[ MCP9808_TCRIT ]  = 0x1ff6,
+	[ MCP9808_TA ]     = 0x0000,
+	[ MCP9808_MID ]    = 0x0000,
+	[ MCP9808_DID ]    = 0x0000,
+	[ MCP9808_RES ]    = 0x0003,
+};
+
+static const u16 pinctrl_fake_i2c_mcp9808_regs_read_mask[ MCP9808_NREG_ ] = {
+	[ MCP9808_RFU ]    = 0x0000,
+	[ MCP9808_CONFIG ] = 0x07df, // Int. Clear is RAZ
+	[ MCP9808_TUPPER ] = 0x1ff6,
+	[ MCP9808_TLOWER ] = 0x1ff6,
+	[ MCP9808_TCRIT ]  = 0x1ff6,
+	[ MCP9808_TA ]     = 0xffff,
+	[ MCP9808_MID ]    = 0xffff,
+	[ MCP9808_DID ]    = 0xffff,
+	[ MCP9808_RES ]    = 0x0003,
 };
 
 int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msgs, int num ) {
@@ -38,7 +62,8 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 	struct i2c_msg *msg;
 	bool read;
 	unsigned offset;
-	unsigned nbytes;
+	int nbytes;
+	u16 val;
 
 	pctrl = (struct pinctrl_fake *) adap->algo_data;
 	ichip = container_of( adap, struct pinctrl_fake_i2c_chip, adapter );
@@ -49,35 +74,39 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 
 		read = 0 != ( msg->flags & I2C_M_RD );
 
-		dev_info( pctrl->dev, "processing msg %u / %u (%s)\n", i + 1, num, read ? "read" : "write" );
-
 		if ( read ) {
 
 			offset = ichip->therm.mem_address;
 			nbytes = msg->len;
 
-			// XXX: handle address roll-over
-			if ( offset >= MCP9808_NREG_ ) {
-				dev_err( pctrl->dev, "offset (%04x) invalid\n", offset );
+			if ( 0 == offset || offset >= MCP9808_NREG_ ) {
+				dev_err( & ichip->adapter.dev, "offset %u invalid\n", offset );
 				r = -EINVAL;
 				goto out;
 			}
 
-			if ( nbytes > pinctrl_fake_i2c_mcp9808_regs_size[ offset ] ) {
-				dev_err( pctrl->dev, "nbytes (%u) invalid for offset (%u)\n", nbytes, offset );
+			if ( nbytes < 0 ) {
+				dev_err( & ichip->adapter.dev, "nbytes (%d) invalid\n", nbytes );
 				r = -EINVAL;
 				goto out;
 			}
 
 			if ( nbytes != pinctrl_fake_i2c_mcp9808_regs_size[ offset ] ) {
-				dev_warn( pctrl->dev, "nbytes (%u) not correct length (%u) for offset (%u)\n",
+				dev_warn( & ichip->adapter.dev, "nbytes (%u) not correct length (%u) for offset (%u)\n",
 					nbytes, pinctrl_fake_i2c_mcp9808_regs_size[ offset ], offset );
 			}
 
+			nbytes = min( nbytes, pinctrl_fake_i2c_mcp9808_regs_size[ offset ] );
+
 			if ( nbytes >= 0 ) {
-				memcpy( msg->buf, & ichip->therm.reg[ offset ], nbytes );
-				dev_info( pctrl->dev, "read %u bytes from therm at offset 0x%04x\n", nbytes, offset );
-				ichip->therm.mem_address += nbytes;
+
+				val = ichip->therm.reg[ offset ];
+				val &= pinctrl_fake_i2c_mcp9808_regs_read_mask[ offset ];
+
+				// protocol specifies that MSB must be transferred first
+				val = cpu_to_be16( val );
+
+				memcpy( msg->buf, & val, nbytes );
 			}
 
 			r++;
@@ -87,32 +116,72 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 			offset = msg->buf[ 0 ];
 			nbytes = msg->len - 1;
 
-			// XXX: handle address roll-over
-			if ( offset >= MCP9808_NREG_ ) {
-				dev_err( pctrl->dev, "offset (%04x) and nbytes (%u) combination invalid\n", offset, nbytes );
+			if ( 0 == offset || offset >= MCP9808_NREG_ ) {
+				dev_err( & ichip->adapter.dev, "offset %u invalid\n", offset );
 				r = -EINVAL;
 				goto out;
 			}
-
 
 			if ( nbytes > pinctrl_fake_i2c_mcp9808_regs_size[ offset ] ) {
-				dev_err( pctrl->dev, "nbytes (%u) invalid for offset (%u)\n", nbytes, offset );
+				dev_err( & ichip->adapter.dev, "nbytes (%u) invalid for offset (%u)\n", nbytes, offset );
 				r = -EINVAL;
 				goto out;
 			}
 
-			if ( nbytes != pinctrl_fake_i2c_mcp9808_regs_size[ offset ] ) {
-				dev_warn( pctrl->dev, "nbytes (%u) not correct length (%u) for offset (%u)\n",
-					nbytes, pinctrl_fake_i2c_mcp9808_regs_size[ offset ], offset );
-			}
-
+			// we set the register pointer even if nbytes is 0
 			ichip->therm.mem_address = offset;
+
 			if ( nbytes > 0 ) {
-				memcpy( msg->buf, & ichip->therm.reg[ offset ], nbytes );
-				dev_info( pctrl->dev, "read %u bytes from therm at offset 0x%04x\n", nbytes, offset );
-				ichip->therm.mem_address += nbytes;
-			} else {
-				dev_info( pctrl->dev, "dummy write set address pointer to offset 0x%04x\n", offset );
+
+				if ( nbytes != pinctrl_fake_i2c_mcp9808_regs_size[ offset ] ) {
+					dev_warn( & ichip->adapter.dev, "nbytes (%u) not correct length (%u) for offset (%u)\n",
+						nbytes, pinctrl_fake_i2c_mcp9808_regs_size[ offset ], offset );
+				}
+
+				for( i = 1, val = 0; i <= nbytes; i++ ) {
+					val |= ( (uint16_t) msg->buf[ i ] ) & 0xff;
+					if ( i <  nbytes ) {
+						val <<= 8;
+					}
+				}
+
+				// protocol specifies that MSB must be transferred first
+				val = be16_to_cpu( val );
+
+				if ( 0 == pinctrl_fake_i2c_mcp9808_regs_write_mask[ offset ] ) {
+					dev_warn( & ichip->adapter.dev, "attempt to write value 0x%04x to read-only register at offset (%u)\n", val, offset );
+					r++;
+					continue;
+				}
+
+				val &= pinctrl_fake_i2c_mcp9808_regs_write_mask[ offset ];
+
+				switch( offset ) {
+
+				case MCP9808_CONFIG:
+
+					if ( MCP9808_CONFIG == offset ) {
+						if ( 0 != ( val & (1 << 5) ) ) {
+							// would de-assert interrupt line
+							val &= ~(1 << 5);
+						}
+					}
+					/* no break */
+
+				case MCP9808_TUPPER:
+				case MCP9808_TLOWER:
+				case MCP9808_TCRIT:
+				case MCP9808_TA:
+				case MCP9808_MID:
+				case MCP9808_DID:
+				case MCP9808_RES:
+
+					memcpy( & ichip->therm.reg[ offset ], & val, nbytes );
+
+					break;
+				default:
+					break;
+				}
 			}
 
 			r++;
