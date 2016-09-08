@@ -176,6 +176,7 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 				case MCP9808_DID:
 				case MCP9808_RES:
 
+					dev_info( & ichip->adapter.dev, "writing %u-byte value %04x to offset %u\n", nbytes, val, offset );
 					memcpy( & ichip->therm.reg[ offset ], & val, nbytes );
 
 					break;

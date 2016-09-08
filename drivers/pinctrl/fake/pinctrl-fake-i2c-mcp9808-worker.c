@@ -10,54 +10,133 @@
 
 #include "pinctrl-fake.h"
 
-static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
+static u16 abs16( s16 x ) {
+	u16 y;
+	y = x < 0 ? -x : x;
+	return y;
+}
 
-	static const int16_t mcp9808_ta_min = -(1 << 7);
-	static const int16_t mcp9808_ta_max =  (1 << 7);
-	static const int16_t mcp9808_ta_range = mcp9808_ta_max - mcp9808_ta_min;
-	static const int16_t delta = mcp9808_ta_range >> 3;
+static s16 mcp9808_treg_to_temperature( u16 reg ) {
+	s16 temperature;
+
+	s16 sign;
+
+	sign = ( reg >> ( 4 + 8 ) ) & 0x0001;
+	temperature = ( reg >> 4 ) & 0x00ff;
+	temperature = sign ? -temperature : temperature;
+
+	return temperature;
+}
+
+static u16 mcp9808_temperature_to_treg( s16 temperature ) {
+	u16 reg;
+
+	u16 sign;
+
+	sign = temperature < 0 ? 1 : 0;
+
+	reg = 0;
+	reg |= ( sign << 12 ) & 0x1000;
+	reg |= ( abs16( temperature ) << 4 ) & 0x0ff0;
+
+	return reg;
+}
+
+static s16 mcp9808_temperature_update( s16 temperature ) {
+
+	static const s16 mcp9808_ta_min = -(1 << 7);
+	static const s16 mcp9808_ta_max =  (1 << 7);
+	static const s16 mcp9808_ta_range = mcp9808_ta_max - mcp9808_ta_min;
+	static const s16 delta = mcp9808_ta_range >> 3;
+
+	s16 temperature_new;
+
+	temperature_new = temperature;
+
+	temperature_new += delta;
+	if ( temperature_new >= mcp9808_ta_max ) {
+		temperature_new -= mcp9808_ta_range;
+	}
+
+	return temperature_new;
+}
+
+static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
 
 	struct delayed_work *dwork;
 	struct pinctrl_fake_i2c_mcp9808_worker *worker;
 	struct pinctrl_fake_i2c_device_mcp9808 *therm;
 	struct pinctrl_fake_i2c_chip *ichip;
 
-	int16_t sign;
-	int16_t temperature;
-	int16_t old_temperature;
-	int16_t new_temperature;
+	s16 tlower;
+	s16 tupper;
+	s16 tcrit;
+	s16 tambient;
+	u16 ta_reg;
+
+	bool ta_vs_tcrit;
+	bool ta_vs_tlower;
+	bool ta_vs_tupper;
+
+	bool alert_stat;
+
+	u16 config;
 
 	dwork = container_of( work, struct delayed_work, work );
 	worker = container_of( dwork, struct pinctrl_fake_i2c_mcp9808_worker, dwork );
 	therm = container_of( worker, struct pinctrl_fake_i2c_device_mcp9808, worker );
 	ichip = container_of( therm, struct pinctrl_fake_i2c_chip, therm );
 
-	sign = ( therm->reg[ MCP9808_TA ] >> ( 4 + 8 ) ) & 0x1;
-	temperature = ( therm->reg[ MCP9808_TA ] >> 4 ) & 0xff;
-	temperature = sign ? -temperature : temperature;
+	tambient = mcp9808_treg_to_temperature( therm->reg[ MCP9808_TA ] );
+	tlower = mcp9808_treg_to_temperature( therm->reg[ MCP9808_TLOWER ] );
+	tupper = mcp9808_treg_to_temperature( therm->reg[ MCP9808_TUPPER ] );
+	tcrit = mcp9808_treg_to_temperature( therm->reg[ MCP9808_TCRIT ] );
 
-	old_temperature = temperature;
+	tambient = mcp9808_temperature_update( tambient );
+	ta_reg = mcp9808_temperature_to_treg( tambient );
 
-	temperature += delta;
-	if ( temperature < 0 ) {
-		sign = 1;
-		temperature = -temperature;
-	} else if ( temperature > 0 ) {
-		if ( temperature >= mcp9808_ta_max ) {
-			sign = 1;
-			temperature = mcp9808_ta_min + ( temperature - mcp9808_ta_max );
-			temperature = -temperature;
-		} else {
-			sign = 0;
+	config = therm->reg[ MCP9808_CONFIG ];
+
+	dev_info( & ichip->adapter.dev, "tambient: %d\n", tambient );
+	dev_info( & ichip->adapter.dev, "tcrit:    %d\n", tcrit );
+	dev_info( & ichip->adapter.dev, "tupper:   %d\n", tupper );
+	dev_info( & ichip->adapter.dev, "tlower:   %d\n", tlower );
+
+	dev_info( & ichip->adapter.dev, "config:   %04x\n", config );
+
+	ta_vs_tcrit = tambient >= tcrit;
+	ta_reg |=  ( (  ta_vs_tcrit ) << 15 );
+
+	ta_vs_tupper = tambient > tupper;
+	ta_reg |=  ( ( ta_vs_tupper ) << 14 );
+
+	ta_vs_tlower = tambient < tlower;
+	ta_reg |=  ( ( ta_vs_tlower ) << 13 );
+
+	therm->reg[ MCP9808_TA ] = ta_reg;
+
+	alert_stat = false;
+	if ( 0 != ( config & ( 1 << 3 ) ) ) {
+
+		if ( ta_vs_tcrit ) {
+			dev_info( & ichip->adapter.dev, "ta (%d) >= tcrit (%d) -> interrupt\n", tambient, tcrit );
+			alert_stat = true;
+		}
+
+		if ( 0 == ( therm->reg[ MCP9808_CONFIG ] & ( 1 << 2 ) ) ) {
+			if ( ta_vs_tupper ) {
+				dev_info( & ichip->adapter.dev, "ta (%d) > tupper (%d) -> interrupt\n", tambient, tupper );
+				alert_stat = true;
+			}
+			if ( ta_vs_tlower ) {
+				dev_info( & ichip->adapter.dev, "ta (%d) < tlower (%d) -> interrupt\n", tambient, tlower );
+				alert_stat = true;
+			}
 		}
 	}
-	new_temperature = sign ? -temperature : temperature;
+	config |= alert_stat << 4;
 
-	therm->reg[ MCP9808_TA ] &= ~( 0x1ff << 4 );
-	therm->reg[ MCP9808_TA ] |= sign << ( 4 + 8 );
-	therm->reg[ MCP9808_TA ] |= ( temperature & 0xff ) << 4;
-
-	dev_info( & ichip->adapter.dev, "old_temperature: %d, new_temperature: %d\n", old_temperature, new_temperature );
+	therm->reg[ MCP9808_CONFIG ] = config;
 
 	schedule_delayed_work( dwork, msecs_to_jiffies( worker->period_ms ) );
 }
@@ -92,7 +171,7 @@ int pinctrl_fake_i2c_mcp9808_worker_init( struct pinctrl_fake_i2c_mcp9808_worker
 	INIT_DELAYED_WORK( & therm->worker.dwork, pinctrl_fake_i2c_mcp9808_work );
 	schedule_delayed_work( & therm->worker.dwork, msecs_to_jiffies( therm->worker.period_ms ) );
 
-	dev_info( & ichip->adapter.dev, "MPC9808 Worker started\n" );
+	dev_info( & ichip->adapter.dev, "MCP9808 Worker started\n" );
 
 	r = EXIT_SUCCESS;
 
@@ -110,7 +189,7 @@ void pinctrl_fake_i2c_mcp9808_worker_fini( struct pinctrl_fake_i2c_mcp9808_worke
 
 	cancel_delayed_work( & therm->worker.dwork );
 
-	dev_info( & ichip->adapter.dev, "MPC9808 Worker stopped\n" );
+	dev_info( & ichip->adapter.dev, "MCP9808 Worker stopped\n" );
 
 //	gpio_free( therm->worker.interrupt_line );
 }
