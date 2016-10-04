@@ -11,8 +11,8 @@
 #include "pinctrl-fake.h"
 
 static const u16 pinctrl_fake_i2c_mcp9808_regs_default[ MCP9808_NREG_ ] = {
-	[ MCP9808_MID ] = 0x0054,
-	[ MCP9808_DID ] = 0x0400,
+	[ MCP9808_MID ] = ( MCP9808_MANUFACTURER_ID_MSB << 8 ) | MCP9808_MANUFACTURER_ID_LSB,
+	[ MCP9808_DID ] = ( MCP9808_DEVICE_ID << 8 ) | MCP9808_DEVICE_REVISION,
 	[ MCP9808_RES ] = 0x0003,
 };
 
@@ -64,6 +64,8 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 	unsigned offset;
 	int nbytes;
 	u16 val;
+	struct pinctrl_fake_gpio_chip *fchip;
+	int fchip_offset;
 
 	pctrl = (struct pinctrl_fake *) adap->algo_data;
 	ichip = container_of( adap, struct pinctrl_fake_i2c_chip, adapter );
@@ -103,8 +105,14 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 				val = ichip->therm.reg[ offset ];
 				val &= pinctrl_fake_i2c_mcp9808_regs_read_mask[ offset ];
 
-				// protocol specifies that MSB must be transferred first
-				val = cpu_to_be16( val );
+				if ( MCP9808_CONFIG == offset ) {
+					dev_info( & ichip->adapter.dev, "reading %u-byte value %04x from offset %u\n", nbytes, val, offset );
+				}
+
+				if ( sizeof( u16 ) == nbytes ) {
+					// protocol specifies that MSB must be transferred first
+					val = cpu_to_be16( val );
+				}
 
 				memcpy( msg->buf, & val, nbytes );
 			}
@@ -138,15 +146,17 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 						nbytes, pinctrl_fake_i2c_mcp9808_regs_size[ offset ], offset );
 				}
 
-				for( i = 1, val = 0; i <= nbytes; i++ ) {
-					val |= ( (uint16_t) msg->buf[ i ] ) & 0xff;
-					if ( i <  nbytes ) {
-						val <<= 8;
-					}
+				if ( sizeof( u16 ) == nbytes ) {
+					val = *( (uint16_t *) msg->buf );
+					// protocol specifies that MSB must be transferred first
+					val = be16_to_cpu( val );
+				} else {
+					val = msg->buf[ i ];
 				}
 
-				// protocol specifies that MSB must be transferred first
-				val = be16_to_cpu( val );
+				if ( MCP9808_CONFIG == offset ) {
+					dev_info( & ichip->adapter.dev, "writing %u-byte value %04x to offset %u\n", nbytes, val, offset );
+				}
 
 				if ( 0 == pinctrl_fake_i2c_mcp9808_regs_write_mask[ offset ] ) {
 					dev_warn( & ichip->adapter.dev, "attempt to write value 0x%04x to read-only register at offset (%u)\n", val, offset );
@@ -156,14 +166,48 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 
 				val &= pinctrl_fake_i2c_mcp9808_regs_write_mask[ offset ];
 
+				if ( MCP9808_CONFIG == offset ) {
+					dev_info( & ichip->adapter.dev, "writing %u-byte value %04x to offset %u\n", nbytes, val, offset );
+				}
+
 				switch( offset ) {
 
 				case MCP9808_CONFIG:
 
 					if ( MCP9808_CONFIG == offset ) {
+
+//						// Disallow active-high for now
+//						if ( 0 != ( val & (1 << 1) ) ) {
+//							val &= ~(1 << 1);
+//						}
+//
+						// XXX: TODO: check Alert Mod. (bit 0)
+
+						// CLEAR INTERRUPT
 						if ( 0 != ( val & (1 << 5) ) ) {
-							// would de-assert interrupt line
+							// Int. Clear always reads as 0, so clear it before writing to memory
 							val &= ~(1 << 5);
+
+							// Alert Stat. will be 0, after writing to Int. Clear
+							val &= ~(1 << 4);
+
+							// de-assert interrupt line
+							fchip = ichip->therm.worker.fchip;
+							fchip_offset = ichip->therm.worker.fchip_offset;
+							if ( !( NULL == fchip || fchip_offset < 0 || fchip_offset >= fchip->npins ) ) {
+
+								if ( 0 == ( val & (1 << 1) ) ) {
+									// active-low, deasserting interrupt means setting it high again
+									fchip->values[ fchip_offset ] = 1;
+									dev_info( & ichip->adapter.dev, "MCP9808: setting interrupt line back to 1\n" );
+								} else {
+									// active-high, deasserting interrupt means setting it low again
+									dev_info( & ichip->adapter.dev, "MCP9808: setting interrupt line back to 0\n" );
+									fchip->values[ fchip_offset ] = 0;
+								}
+								// not sure if it's better to clear pended status here or in the gpio code
+								fchip->pended[ fchip_offset ] = 0;
+							}
 						}
 					}
 					/* no break */
@@ -176,7 +220,7 @@ int pinctrl_fake_i2c_mcp9808_xfer( struct i2c_adapter *adap, struct i2c_msg *msg
 				case MCP9808_DID:
 				case MCP9808_RES:
 
-					dev_info( & ichip->adapter.dev, "writing %u-byte value %04x to offset %u\n", nbytes, val, offset );
+					//dev_info( & ichip->adapter.dev, "writing %u-byte value %04x to offset %u\n", nbytes, val, offset );
 					memcpy( & ichip->therm.reg[ offset ], & val, nbytes );
 
 					break;
@@ -198,12 +242,16 @@ int pinctrl_fake_i2c_mcp9808_init( struct pinctrl_fake_i2c_device_mcp9808 *therm
 	int r;
 
 	struct pinctrl_fake_i2c_chip *ichip;
+	struct pinctrl_fake *pctrl;
+	struct pinctrl_fake_gpio_chip *fchip;
 
 	ichip = container_of( therm, struct pinctrl_fake_i2c_chip, therm );
+	pctrl = (struct pinctrl_fake *) ichip->adapter.algo_data;
+	fchip = pctrl->fgpiochip[ 1 ];
 
 	dev_info( & ichip->adapter.dev, "Fake MCP9808 Temperature Sensor, Copyright (C) 2016, Christopher Friedt, initializing\n" );
 
-	if ( addr < I2C_ADDR_MIN_MCP9808 || addr > I2C_ADDR_MAX_MCP9808 ) {
+	if ( addr < I2C_ADDR_MCP9808_MIN || addr > I2C_ADDR_MCP9808_MAX ) {
 		r = -EINVAL;
 		dev_err( & ichip->adapter.dev, "invalid addr 0x%04x\n", addr );
 		goto out;
@@ -213,7 +261,7 @@ int pinctrl_fake_i2c_mcp9808_init( struct pinctrl_fake_i2c_device_mcp9808 *therm
 	therm->device_address = addr;
 
 #ifdef CONFIG_PINCTRL_FAKE_I2C_MCP9808_WORKER
-	r = pinctrl_fake_i2c_mcp9808_worker_init( & therm->worker, I2C_MCP9808_PERIOD_MS_DEFAULT, -1 );
+	r = pinctrl_fake_i2c_mcp9808_worker_init( & therm->worker, I2C_MCP9808_PERIOD_MS_DEFAULT, fchip, 0 );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( & ichip->adapter.dev, "pinctrl_fake_i2c_mcp9808_worker_init() failed (%d)\n", r );
 		goto out;

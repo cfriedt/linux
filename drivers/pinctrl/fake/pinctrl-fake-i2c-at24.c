@@ -31,7 +31,7 @@ int pinctrl_fake_i2c_at24_xfer( struct i2c_adapter *adap, struct i2c_msg *msgs, 
 
 		read = 0 != ( msg->flags & I2C_M_RD );
 
-		dev_info( pctrl->dev, "processing msg %u / %u (%s)\n", i + 1, num, read ? "read" : "write" );
+		dev_dbg( & adap->dev, "AT24 processing msg %u / %u (%s)\n", i + 1, num, read ? "read" : "write" );
 
 		if ( read ) {
 
@@ -40,38 +40,56 @@ int pinctrl_fake_i2c_at24_xfer( struct i2c_adapter *adap, struct i2c_msg *msgs, 
 
 			// XXX: handle address roll-over
 			if ( offset >= ichip->eeprom.mem_size || offset + nbytes >= ichip->eeprom.mem_size ) {
-				dev_err( pctrl->dev, "offset (%04x) and nbytes (%u) combination invalid\n", offset, nbytes );
+				dev_err( & adap->dev, "offset (%04x) and nbytes (%u) combination invalid\n", offset, nbytes );
 				r = -EINVAL;
 				goto out;
 			}
 
 			if ( nbytes >= 0 ) {
 				memcpy( msg->buf, & ichip->eeprom.mem[ offset ], nbytes );
-				dev_info( pctrl->dev, "read %u bytes from eeprom at offset 0x%04x\n", nbytes, offset );
-				ichip->eeprom.mem_address += nbytes;
+				dev_dbg( & adap->dev, "read %u bytes from eeprom at offset 0x%04x\n", nbytes, offset );
+				offset += nbytes;
+				offset %= ichip->eeprom.mem_size;
+				ichip->eeprom.mem_address = offset;
 			}
 
 			r++;
 
 		} else {
 
-			offset = ( msg->buf[ 0 ] << 8 ) | msg->buf[ 1 ];
-			nbytes = msg->len - 2;
+			nbytes = msg->len;
+			dev_dbg( & adap->dev, "pinctrl_fake_i2c_at24_xfer(): (write) nbytes %d\n", nbytes );
+			offset = ichip->eeprom.mem_address;
+
+			if ( msg == & msg[ 0 ] ) {
+				dev_dbg( & adap->dev, "pinctrl_fake_i2c_at24_xfer(): (write) msg == & msg[ 0 ]\n" );
+				if ( msg->len < 2 ) {
+					dev_err( & adap->dev, "invalid msg len (%u)\n", msg->len );
+					r = -EINVAL;
+					goto out;
+				}
+
+				offset = ( msg->buf[ 0 ] << 8 ) | msg->buf[ 1 ];
+				nbytes -= 2;
+				dev_dbg( & adap->dev, "pinctrl_fake_i2c_at24_xfer(): (write) offset %04x\n", offset );
+				dev_dbg( & adap->dev, "pinctrl_fake_i2c_at24_xfer(): (write) nbytes %d\n", nbytes );
+			}
 
 			// XXX: handle address roll-over
-			if ( offset >= ichip->eeprom.mem_size || offset + nbytes >= ichip->eeprom.mem_size ) {
-				dev_err( pctrl->dev, "offset (%04x) and nbytes (%u) combination invalid\n", offset, nbytes );
+			if ( offset + nbytes >= ichip->eeprom.mem_size ) {
+				dev_err( & adap->dev, "offset (%04x) and nbytes (%u) combination invalid\n", offset, nbytes );
 				r = -EINVAL;
 				goto out;
 			}
 
-			ichip->eeprom.mem_address = offset;
 			if ( nbytes > 0 ) {
 				memcpy( & ichip->eeprom.mem[ offset ], & msg->buf[ 2 ], nbytes );
-				dev_info( pctrl->dev, "wrote %u bytes to eeprom at offset 0x%04x\n", nbytes, offset );
-				ichip->eeprom.mem_address += nbytes;
+				dev_dbg( & adap->dev, "wrote %u bytes to eeprom at offset 0x%04x\n", nbytes, offset );
+				offset += nbytes;
+				offset %= ichip->eeprom.mem_size;
+				ichip->eeprom.mem_address = offset;
 			} else {
-				dev_info( pctrl->dev, "dummy write set address pointer to offset 0x%04x\n", offset );
+				dev_dbg( & adap->dev, "dummy write set address pointer to offset 0x%04x\n", offset );
 			}
 
 			r++;
@@ -79,6 +97,7 @@ int pinctrl_fake_i2c_at24_xfer( struct i2c_adapter *adap, struct i2c_msg *msgs, 
 	}
 
 out:
+	dev_dbg( & adap->dev, "pinctrl_fake_i2c_at24_xfer(): returning %d\n", r );
 	return r;
 }
 

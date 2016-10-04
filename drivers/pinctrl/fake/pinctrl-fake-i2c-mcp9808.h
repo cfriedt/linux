@@ -6,8 +6,15 @@
 
 #include "pinctrl-fake-i2c-mcp9808-worker.h"
 
-#define I2C_ADDR_MIN_MCP9808 0x18
-#define I2C_ADDR_MAX_MCP9808 0x1f
+#define MCP9808_MANUFACTURER_ID_MSB 0x00
+#define MCP9808_MANUFACTURER_ID_LSB 0x54
+
+#define MCP9808_DEVICE_ID       0x04
+#define MCP9808_DEVICE_REVISION 0x00
+
+#define I2C_ADDR_MCP9808_MIN 0x18
+#define I2C_ADDR_MCP9808_MAX 0x1f
+
 
 enum {
 	MCP9808_RFU    = 0, // RFU, Reserved for Future Use (Read-Only register)

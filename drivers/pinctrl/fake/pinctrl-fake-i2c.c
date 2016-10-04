@@ -28,7 +28,7 @@ static int pinctrl_fake_i2c_adapter_algo_master_xfer( struct i2c_adapter *adap, 
 	}
 
 
-	if ( addr >= I2C_ADDR_MIN_MCP9808 && addr <= I2C_ADDR_MAX_MCP9808 ) {
+	if ( addr >= I2C_ADDR_MCP9808_MIN && addr <= I2C_ADDR_MCP9808_MAX ) {
 		r = pinctrl_fake_i2c_mcp9808_xfer( adap, msgs, num );
 	}
 
@@ -99,7 +99,7 @@ int pinctrl_fake_i2c_init( struct pinctrl_fake *pctrl ) {
 #endif // CONFIG_PINCTRL_FAKE_I2C_AT24
 
 #ifdef CONFIG_PINCTRL_FAKE_I2C_MCP9808
-		r = pinctrl_fake_i2c_mcp9808_init( & ichip->therm, I2C_ADDR_MIN_MCP9808 );
+		r = pinctrl_fake_i2c_mcp9808_init( & ichip->therm, I2C_ADDR_MCP9808_MIN );
 		if ( EXIT_SUCCESS != r ) {
 			dev_err( pctrl->dev, "failed to add temperature sensor (%d)\n", r );
 			goto do_remove;

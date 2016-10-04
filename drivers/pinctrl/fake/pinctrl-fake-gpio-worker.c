@@ -147,6 +147,11 @@ static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work ) {
 	list_for_each( it, & expired ) {
 		worker = container_of( it, struct pinctrl_fake_gpio_worker_elem, ex_head );
 
+		if ( fchip->reserved[ worker->gpio_offset ] ) {
+			dev_info( pctrl->dev, "GPIO Worker: pin %u unchanged due to reservation\n", fchip->pins[ worker->gpio_offset ] );
+			continue;
+		}
+
 		fchip->values[ worker->gpio_offset ] ^= 1;
 
 		dev_dbg( pctrl->dev, "GPIO Worker: pin %u changed: %u -> %u\n", fchip->pins[ worker->gpio_offset ], ! fchip->values[ worker->gpio_offset ], fchip->values[ worker->gpio_offset ] );
@@ -288,7 +293,7 @@ bool pinctrl_fake_gpio_worker_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpi
 		goto out;
 	}
 
-	elem->period = msecs_to_jiffies( PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_DEFAULT );
+	elem->period = msecs_to_jiffies( CONFIG_PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_DEFAULT );
 	elem->eta = jiffies + elem->period;
 	*( (u16 *) & elem->gpio_offset ) = gpio_offset;
 	INIT_LIST_HEAD( & elem->ev_head );

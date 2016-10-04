@@ -67,6 +67,7 @@ static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
 	struct pinctrl_fake_i2c_mcp9808_worker *worker;
 	struct pinctrl_fake_i2c_device_mcp9808 *therm;
 	struct pinctrl_fake_i2c_chip *ichip;
+	struct pinctrl_fake_gpio_chip *fchip;
 
 	s16 tlower;
 	s16 tupper;
@@ -97,12 +98,12 @@ static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
 
 	config = therm->reg[ MCP9808_CONFIG ];
 
-	dev_info( & ichip->adapter.dev, "tambient: %d\n", tambient );
-	dev_info( & ichip->adapter.dev, "tcrit:    %d\n", tcrit );
-	dev_info( & ichip->adapter.dev, "tupper:   %d\n", tupper );
-	dev_info( & ichip->adapter.dev, "tlower:   %d\n", tlower );
+	dev_dbg( & ichip->adapter.dev, "tambient: %d\n", tambient );
+	dev_dbg( & ichip->adapter.dev, "tcrit:    %d\n", tcrit );
+	dev_dbg( & ichip->adapter.dev, "tupper:   %d\n", tupper );
+	dev_dbg( & ichip->adapter.dev, "tlower:   %d\n", tlower );
 
-	dev_info( & ichip->adapter.dev, "config:   %04x\n", config );
+	dev_dbg( & ichip->adapter.dev, "config:   %04x\n", config );
 
 	ta_vs_tcrit = tambient >= tcrit;
 	ta_reg |=  ( (  ta_vs_tcrit ) << 15 );
@@ -116,6 +117,8 @@ static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
 	therm->reg[ MCP9808_TA ] = ta_reg;
 
 	alert_stat = false;
+	config &= ~(alert_stat << 4);
+
 	if ( 0 != ( config & ( 1 << 3 ) ) ) {
 
 		if ( ta_vs_tcrit ) {
@@ -135,13 +138,26 @@ static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
 		}
 	}
 	config |= alert_stat << 4;
+	if ( alert_stat ) {
+		fchip = worker->fchip;
+		if ( !( NULL == fchip || worker->fchip_offset < 0 || worker->fchip_offset >= fchip->npins ) ) {
+			fchip->pended[ worker->fchip_offset ] = true;
+			fchip->values[ worker->fchip_offset ] =
+				0 == ( config & 2 )
+				? false
+				: true;
+			//dev_info( & ichip->adapter.dev, "MCP9808 Worker: trigger interrupt %u for %s pin %u (hw pin %u offset %u)", fchip->gpiochip.to_irq( & fchip->gpiochip, worker->fchip_offset ), dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->fchip_offset ] );
+			dev_info( & ichip->adapter.dev, "MCP9808 Worker: trigger interrupt %u for %s pin %u\n", fchip->gpiochip.to_irq( & fchip->gpiochip, worker->fchip_offset ), dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->fchip_offset ] );
+			tasklet_schedule( & fchip->tasklet );
+		}
+	}
 
 	therm->reg[ MCP9808_CONFIG ] = config;
 
 	schedule_delayed_work( dwork, msecs_to_jiffies( worker->period_ms ) );
 }
 
-int pinctrl_fake_i2c_mcp9808_worker_init( struct pinctrl_fake_i2c_mcp9808_worker *worker, unsigned period_ms, unsigned interrupt_line ) {
+int pinctrl_fake_i2c_mcp9808_worker_init( struct pinctrl_fake_i2c_mcp9808_worker *worker, unsigned period_ms, struct pinctrl_fake_gpio_chip *fchip, int fchip_offset ) {
 	int r;
 
 	struct pinctrl_fake_i2c_device_mcp9808 *therm;
@@ -157,16 +173,19 @@ int pinctrl_fake_i2c_mcp9808_worker_init( struct pinctrl_fake_i2c_mcp9808_worker
 	}
 	therm->worker.period_ms = period_ms;
 
-	// XXX: request GPIO
-//	r = gpio_request( interrupt_line, "mcp9808-alert" );
-//	if ( EXIT_SUCCESS != r ) {
-//		dev_err( & ichip->adapter.dev, "unable to request gpio %u\n", interrupt_line );
-//		if ( r > 0 ) {
-//			r = -ENXIO;
-//		}
-//		goto out;
-//	}
-	therm->worker.interrupt_line = interrupt_line;
+	if ( !( NULL == fchip || fchip_offset < 0 || fchip_offset >= fchip->npins ) ) {
+
+		dev_info( & ichip->adapter.dev, "MCP9808 Worker reserving %s pin %d (hw pin %u, offset %u) for notifications\n", dev_name( fchip->gpiochip.cdev ), fchip->gpiochip.base + fchip_offset, fchip->pins[ fchip_offset ], fchip_offset );
+
+		therm->reg[ MCP9808_CONFIG ] &= ~2; // ensure active low by (default)
+		fchip->values[ fchip_offset ] = true;
+
+		fchip->reserved[ fchip_offset ] = true;
+		fchip->directions[ fchip_offset ] = GPIOF_DIR_IN;
+
+		worker->fchip = fchip;
+		worker->fchip_offset = fchip_offset;
+	}
 
 	INIT_DELAYED_WORK( & therm->worker.dwork, pinctrl_fake_i2c_mcp9808_work );
 	schedule_delayed_work( & therm->worker.dwork, msecs_to_jiffies( therm->worker.period_ms ) );
@@ -183,9 +202,22 @@ void pinctrl_fake_i2c_mcp9808_worker_fini( struct pinctrl_fake_i2c_mcp9808_worke
 
 	struct pinctrl_fake_i2c_device_mcp9808 *therm;
 	struct pinctrl_fake_i2c_chip *ichip;
+	struct pinctrl_fake_gpio_chip *fchip;
 
 	therm = container_of( worker, struct pinctrl_fake_i2c_device_mcp9808, worker );
 	ichip = container_of( therm, struct pinctrl_fake_i2c_chip, therm );
+
+	fchip = worker->fchip;
+	if ( !( NULL == fchip || worker->fchip_offset < 0 || worker->fchip_offset >= fchip->npins ) ) {
+
+		dev_info( & ichip->adapter.dev, "MCP9808 Worker un-reserving %s pin %d for notifications\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->fchip_offset ] );
+
+		fchip->reserved[ worker->fchip_offset ] = false;
+		fchip->pended[ worker->fchip_offset ] = false;
+
+		worker->fchip = NULL;
+		worker->fchip_offset = -1;
+	}
 
 	cancel_delayed_work( & therm->worker.dwork );
 

@@ -31,11 +31,12 @@ struct pinctrl_fake_gpio_chip {
 	u8 *directions;
 	u8 *irq_types;
 	u8 *pended;
+	u8 *reserved;
+	struct tasklet_struct tasklet;
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
 	struct delayed_work worker_dwork;
-	struct tasklet_struct tasklet;
 	struct list_head worker_head;
-#endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
+#endif // CONFIG_CONFIG_PINCTRL_FAKE_GPIO_WORKER
 };
 
 struct pinctrl_fake;

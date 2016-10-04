@@ -1,14 +1,14 @@
-#ifndef PINCTRL_FAKE_GPIO_WORKER_H_
-#define PINCTRL_FAKE_GPIO_WORKER_H_
+#ifndef CONFIG_PINCTRL_FAKE_GPIO_WORKER_H_
+#define CONFIG_PINCTRL_FAKE_GPIO_WORKER_H_
 
 #include <linux/types.h>
 
-#define PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MIN 1000
-#define PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MAX 10000
+#define CONFIG_PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MIN 1000
+#define CONFIG_PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MAX 10000
 
-#define PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_DEFAULT PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MIN
+#define CONFIG_PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_DEFAULT CONFIG_PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_MIN
 
-#define PINCTRL_FAKE_GPIO_WORKER_ETA_MS_EPSILON 100
+#define CONFIG_PINCTRL_FAKE_GPIO_WORKER_ETA_MS_EPSILON 100
 
 struct pinctrl_fake_gpio_chip;
 
@@ -88,4 +88,4 @@ bool pinctrl_fake_gpio_worker_period_ms_get( struct pinctrl_fake_gpio_chip *fchi
  */
 bool pinctrl_fake_gpio_worker_period_ms_set( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset, unsigned *period_ms );
 
-#endif /* PINCTRL_FAKE_GPIO_WORKER_H_ */
+#endif /* CONFIG_PINCTRL_FAKE_GPIO_WORKER_H_ */

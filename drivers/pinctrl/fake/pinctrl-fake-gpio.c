@@ -83,9 +83,9 @@ static int pinctrl_fake_gpio_direction_input( struct gpio_chip *chip, unsigned o
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 	fchip->directions[ offset ] = GPIOF_DIR_IN;
 
-#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
 	pinctrl_fake_gpio_worker_add( fchip, offset );
-#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
 	dev_dbg( fchip->gpiochip.cdev, "direction_input( %u )\n", pin );
 
@@ -94,6 +94,8 @@ static int pinctrl_fake_gpio_direction_input( struct gpio_chip *chip, unsigned o
 
 static int pinctrl_fake_gpio_direction_output( struct gpio_chip *chip, unsigned offset, int value )
 {
+	int r;
+
 	struct pinctrl_fake *pctrl;
 	struct pinctrl_fake_gpio_chip *fchip;
 	int pin;
@@ -101,15 +103,23 @@ static int pinctrl_fake_gpio_direction_output( struct gpio_chip *chip, unsigned 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
+
+	if ( fchip->reserved[ offset ] ) {
+		r = -EPERM;
+		goto out;
+	}
 	fchip->directions[ offset ] = GPIOF_DIR_OUT;
 
-#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
-	pinctrl_fake_gpio_toggler_remove( fchip, offset );
-#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
+	pinctrl_fake_gpio_worker_remove( fchip, offset );
+#endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
 	dev_dbg( fchip->gpiochip.cdev, "direction_output( %u )\n", pin );
 
-	return EXIT_SUCCESS;
+	r = EXIT_SUCCESS;
+
+out:
+	return r;
 }
 
 static const struct gpio_chip pinctrl_fake_gpio_chip_template = {
@@ -318,7 +328,9 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 
+#ifdef CONFIG_CONFIG_PINCTRL_FAKE_GPIO_WORKER
 	INIT_LIST_HEAD( & fchip->worker_head );
+#endif // CONFIG_CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
 	r = gpiochip_add_data( chip, pctrl );
 	if ( EXIT_SUCCESS != r ) {
@@ -350,9 +362,9 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	dev_info( pctrl->dev, "added %s (%s)\n", dev_name( chip->cdev ), chip->label );
 
-#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
 	pinctrl_fake_gpio_worker_init( fchip );
-#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
 	r = EXIT_SUCCESS;
 
@@ -363,11 +375,11 @@ out:
 void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip ) {
 	struct pinctrl_fake *pctrl;
 
-#ifdef CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
 	struct pinctrl_fake_gpio_chip *fchip;
 	fchip = container_of( chip, struct pinctrl_fake_gpio_chip, gpiochip );
 	pinctrl_fake_gpio_worker_fini( fchip );
-#endif // CONFIG_PINCTRL_FAKE_GPIO_TOGGLER
+#endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
 	pctrl = gpiochip_get_data( chip );
 
