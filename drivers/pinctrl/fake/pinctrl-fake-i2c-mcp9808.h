@@ -3,8 +3,59 @@
 
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include "mcp9808-regs.h"
+
+enum {
+	MCP9808_CONFIG_ALERT_MOD_COMPARATOR,
+	MCP9808_CONFIG_ALERT_MOD_INTERRUPT,
+};
+enum {
+	MCP9808_CONFIG_ALERT_POL_ACTIVE_LOW,
+	MCP9808_CONFIG_ALERT_POL_ACTIVE_HIGH,
+};
+enum {
+	MCP9808_CONFIG_ALERT_SEL_TUPPER_TLOWER_TCRIT,
+	MCP9808_CONFIG_ALERT_SEL_TCRIT,
+};
+enum {
+	MCP9808_CONFIG_ALERT_CNT_DISABLED,
+	MCP9808_CONFIG_ALERT_CNT_ENABLED,
+};
+enum {
+	MCP9808_CONFIG_ALERT_STAT_NOT_ASSERTED,
+	MCP9808_CONFIG_ALERT_STAT_ASSERTED,
+};
+enum {
+	MCP9808_CONFIG_INT_CLEAR = 1,
+};
+enum {
+	MCP9808_CONFIG_WIN_LOCK_UNLOCKED,
+	MCP9808_CONFIG_WIN_LOCK_LOCKED,
+};
+enum {
+	MCP9808_CONFIG_CRIT_LOCK_UNLOCKED,
+	MCP9808_CONFIG_CRIT_LOCK_LOCKED,
+};
+enum {
+	MCP9808_CONFIG_SHDN_ON,
+	MCP9808_CONFIG_SHDN_OFF,
+};
+enum {
+	MCP9808_CONFIG_THYST_0P0_DEGC,
+	MCP9808_CONFIG_THYST_1P5_DEGC,
+	MCP9808_CONFIG_THYST_3P0_DEGC,
+	MCP9808_CONFIG_THYST_6P0_DEGC,
+};
+
+enum {
+	MCP9808_RES_0P5000_DEGREES_C,
+	MCP9808_RES_0P2500_DEGREES_C,
+	MCP9808_RES_0P1250_DEGREES_C,
+	MCP9808_RES_0P0625_DEGREES_C,
+};
 
 #include "pinctrl-fake-i2c-mcp9808-worker.h"
+
 
 #define MCP9808_MANUFACTURER_ID_MSB 0x00
 #define MCP9808_MANUFACTURER_ID_LSB 0x54
@@ -15,20 +66,6 @@
 #define I2C_ADDR_MCP9808_MIN 0x18
 #define I2C_ADDR_MCP9808_MAX 0x1f
 
-
-enum {
-	MCP9808_RFU    = 0, // RFU, Reserved for Future Use (Read-Only register)
-	MCP9808_CONFIG = 1, // Configuration register (CONFIG)
-	MCP9808_TUPPER = 2, // Alert Temperature Upper Boundary Trip register (TUPPER)
-	MCP9808_TLOWER = 3, // Alert Temperature Lower Boundary Trip register (TLOWER)
-	MCP9808_TCRIT  = 4, // Critical Temperature Trip register (TCRIT)
-	MCP9808_TA     = 5, // Temperature register (TA)
-	MCP9808_MID    = 6, // Manufacturer ID register
-	MCP9808_DID    = 7, // Device ID/Revision register
-	MCP9808_RES    = 8, // Resolution register
-	MCP9808_NREG_,
-	// all other registers are reserved (Some registers contain calibration codes and should not be accessed.)
-};
 struct pinctrl_fake_i2c_device_mcp9808 {
 	u16 device_address;
 	u8 mem_address;
