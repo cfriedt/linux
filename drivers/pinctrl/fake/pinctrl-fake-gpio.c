@@ -7,6 +7,11 @@
 
 #include <linux/interrupt.h>
 
+// XXX: @CF: TODO: the cdev field of struct gpio_chip was moved into struct gpio_dev gpiodev, which is opaque
+// this is a dirty hack to get the definition of struct gpio_dev. ATM, it's only used for dev_info, dev_err,
+// and dev_dbg, and therefore is not 100% necessary. Will be removed in a future revision.
+#include "../../gpio/gpiolib.h"
+
 #include "pinctrl-fake.h"
 
 static unsigned pinctrl_fake_gpio_offset_to_pin( struct gpio_chip *chip,
@@ -36,7 +41,7 @@ static int pinctrl_fake_gpio_get(struct gpio_chip *chip, unsigned offset)
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 	value = fchip->values[ offset ];
 
-	dev_dbg( fchip->gpiochip.cdev, "get( %u ) = %u\n", pin, value );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "get( %u ) = %u\n", pin, value );
 
 	return value;
 }
@@ -52,7 +57,7 @@ static void pinctrl_fake_gpio_set(struct gpio_chip *chip, unsigned offset, int v
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 	fchip->values[ offset ] = value;
 
-	dev_dbg( fchip->gpiochip.cdev, "set( %u ) = %u\n", pin, value );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "set( %u ) = %u\n", pin, value );
 }
 
 static int pinctrl_fake_gpio_get_direction(struct gpio_chip *chip, unsigned offset)
@@ -67,7 +72,7 @@ static int pinctrl_fake_gpio_get_direction(struct gpio_chip *chip, unsigned offs
 	pin = pinctrl_fake_gpio_offset_to_pin( chip, offset );
 	direction = fchip->directions[ offset ];
 
-	dev_dbg( fchip->gpiochip.cdev, "set( %u ) = %u\n", pin, direction );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "set( %u ) = %u\n", pin, direction );
 
 	return direction;
 }
@@ -87,7 +92,7 @@ static int pinctrl_fake_gpio_direction_input( struct gpio_chip *chip, unsigned o
 	pinctrl_fake_gpio_worker_add( fchip, offset );
 #endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
-	dev_dbg( fchip->gpiochip.cdev, "direction_input( %u )\n", pin );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "direction_input( %u )\n", pin );
 
 	return EXIT_SUCCESS;
 }
@@ -114,7 +119,7 @@ static int pinctrl_fake_gpio_direction_output( struct gpio_chip *chip, unsigned 
 	pinctrl_fake_gpio_worker_remove( fchip, offset );
 #endif // CONFIG_PINCTRL_FAKE_GPIO_WORKER
 
-	dev_dbg( fchip->gpiochip.cdev, "direction_output( %u )\n", pin );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "direction_output( %u )\n", pin );
 
 	r = EXIT_SUCCESS;
 
@@ -156,7 +161,7 @@ static void pinctrl_fake_gpio_irq_ack(struct irq_data *d)
 
 //	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	dev_dbg( fchip->gpiochip.cdev, "irq_ack for '%s' pin %u\n", dev_name( chip->cdev ), pin );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "irq_ack for '%s' pin %u\n", dev_name( chip->gpiodev->mockdev ), pin );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 }
@@ -181,7 +186,7 @@ static void pinctrl_fake_gpio_irq_mask_unmask(struct irq_data *d, bool mask)
 
 //	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	dev_dbg( fchip->gpiochip.cdev, "irq_mask_unmask for '%s' pin %u mask %u\n", dev_name( chip->cdev ), pin, mask );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "irq_mask_unmask for '%s' pin %u mask %u\n", dev_name( chip->gpiodev->mockdev ), pin, mask );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 }
@@ -216,7 +221,7 @@ static unsigned pinctrl_fake_gpio_irq_startup( struct irq_data *d ) {
 
 //	raw_spin_lock_irqsave( &pctrl->lock, flags );
 
-	dev_dbg( fchip->gpiochip.cdev, "irq_startup for '%s' pin %u\n", dev_name( chip->cdev ), pin );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "irq_startup for '%s' pin %u\n", dev_name( chip->gpiodev->mockdev ), pin );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 
@@ -247,7 +252,7 @@ static int pinctrl_fake_gpio_irq_type( struct irq_data *d, unsigned type )
 
 	fchip->irq_types[ offset ] = type;
 
-	dev_dbg( fchip->gpiochip.cdev, "set irq_type of chip '%s' pin %u to = %u\n", dev_name( chip->cdev ), pin, type );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "set irq_type of chip '%s' pin %u to = %u\n", dev_name( chip->gpiodev->mockdev ), pin, type );
 
 //	raw_spin_unlock_irqrestore( & pctrl->lock, flags );
 
@@ -284,7 +289,7 @@ void pinctrl_fake_gpio_irq_handler(struct irq_desc *desc)
 
 	chained_irq_enter( irq_chip, desc );
 
-	dev_dbg( fchip->gpiochip.cdev, "irq %u handler (%p) for chip '%s' pin %u\n", irq, desc->handle_irq, dev_name( chip->cdev ), fchip->pins[ offset ] );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "irq %u handler (%p) for chip '%s' pin %u\n", irq, desc->handle_irq, dev_name( chip->gpiodev->mockdev ), fchip->pins[ offset ] );
 
 	generic_handle_irq( irq );
 
@@ -334,7 +339,7 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	r = gpiochip_add_data( chip, pctrl );
 	if ( EXIT_SUCCESS != r ) {
-		dev_err( fchip->gpiochip.cdev, "failed to add pinctrl data to %s\n", label );
+		dev_err( fchip->gpiochip.gpiodev->mockdev, "failed to add pinctrl data to %s\n", label );
 		goto out;
 	}
 
@@ -344,23 +349,23 @@ int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *c
 
 	r = gpiochip_add_pingroup_range( chip, pctrl->pctldev, 0, fchip->group );
 	if ( EXIT_SUCCESS != r ) {
-		dev_err( fchip->gpiochip.cdev, "failed to add pingroup range to %s\n", label );
+		dev_err( fchip->gpiochip.gpiodev->mockdev, "failed to add pingroup range to %s\n", label );
 		goto out;
 	}
 
-	dev_dbg( fchip->gpiochip.cdev, "adding irq chip to %s\n", label );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "adding irq chip to %s\n", label );
 	r = gpiochip_irqchip_add( chip, &pinctrl_fake_gpio_irqchip, irq, handle_simple_irq, IRQ_TYPE_NONE );
 	if ( EXIT_SUCCESS != r ) {
-		dev_err( fchip->gpiochip.cdev, "failed to add IRQ chip\n" );
+		dev_err( fchip->gpiochip.gpiodev->mockdev, "failed to add IRQ chip\n" );
 		goto out;
 	}
 
-	dev_dbg( fchip->gpiochip.cdev, "calling gpiochip_set_chained_irqchip()\n" );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "calling gpiochip_set_chained_irqchip()\n" );
 	gpiochip_set_chained_irqchip( chip, &pinctrl_fake_gpio_irqchip, irq, pinctrl_fake_gpio_irq_handler );
 
 	tasklet_init( & fchip->tasklet, pinctrl_fake_gpio_tasklet, (unsigned long) fchip );
 
-	dev_info( pctrl->dev, "added %s (%s)\n", dev_name( chip->cdev ), chip->label );
+	dev_info( pctrl->dev, "added %s (%s)\n", dev_name( chip->gpiodev->mockdev ), chip->label );
 
 #ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
 	pinctrl_fake_gpio_worker_init( fchip );
@@ -383,5 +388,5 @@ void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip ) {
 
 	pctrl = gpiochip_get_data( chip );
 
-	dev_info( pctrl->dev, "removed %s (%s)\n", dev_name( chip->cdev ), chip->label );
+	dev_info( pctrl->dev, "removed %s (%s)\n", dev_name( chip->gpiodev->mockdev ), chip->label );
 }

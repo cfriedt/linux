@@ -11,6 +11,11 @@
 
 #include "pinctrl-fake.h"
 
+// XXX: @CF: TODO: the cdev field of struct gpio_chip was moved into struct gpio_dev gpiodev, which is opaque
+// this is a dirty hack to get the definition of struct gpio_dev. ATM, it's only used for dev_info, dev_err,
+// and dev_dbg, and therefore is not 100% necessary. Will be removed in a future revision.
+#include "../../gpio/gpiolib.h"
+
 static u16 abs16( s16 x ) {
 	u16 y;
 	y = x < 0 ? -x : x;
@@ -160,8 +165,8 @@ static void pinctrl_fake_i2c_mcp9808_work( struct work_struct *work ) {
 				MCP9808_CONFIG_ALERT_POL_ACTIVE_LOW == ( config & MCP9808_CONFIG_ALERT_POL_MASK )
 				? false
 				: true;
-			//dev_dbg( & ichip->adapter.dev, "MCP9808 Worker: trigger interrupt %u for %s pin %u (hw pin %u offset %u)", fchip->gpiochip.to_irq( & fchip->gpiochip, worker->fchip_offset ), dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->fchip_offset ] );
-			dev_dbg( & ichip->adapter.dev, "MCP9808 Worker: trigger interrupt %u for %s pin %u\n", fchip->gpiochip.to_irq( & fchip->gpiochip, worker->fchip_offset ), dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->fchip_offset ] );
+			//dev_dbg( & ichip->adapter.dev, "MCP9808 Worker: trigger interrupt %u for %s pin %u (hw pin %u offset %u)", fchip->gpiochip.to_irq( & fchip->gpiochip, worker->fchip_offset ), dev_name( fchip->gpiochip.gpiodev->mockdev ), fchip->pins[ worker->fchip_offset ] );
+			dev_dbg( & ichip->adapter.dev, "MCP9808 Worker: trigger interrupt %u for %s pin %u\n", fchip->gpiochip.to_irq( & fchip->gpiochip, worker->fchip_offset ), dev_name( fchip->gpiochip.gpiodev->mockdev ), fchip->pins[ worker->fchip_offset ] );
 			tasklet_schedule( & fchip->tasklet );
 		}
 	}
@@ -189,7 +194,7 @@ int pinctrl_fake_i2c_mcp9808_worker_init( struct pinctrl_fake_i2c_mcp9808_worker
 
 	if ( !( NULL == fchip || fchip_offset < 0 || fchip_offset >= fchip->npins ) ) {
 
-		dev_info( & ichip->adapter.dev, "MCP9808 Worker reserving %s pin %d (hw pin %u, offset %u) for notifications\n", dev_name( fchip->gpiochip.cdev ), fchip->gpiochip.base + fchip_offset, fchip->pins[ fchip_offset ], fchip_offset );
+		dev_info( & ichip->adapter.dev, "MCP9808 Worker reserving %s pin %d (hw pin %u, offset %u) for notifications\n", dev_name( fchip->gpiochip.gpiodev->mockdev ), fchip->gpiochip.base + fchip_offset, fchip->pins[ fchip_offset ], fchip_offset );
 
 		if ( MCP9808_CONFIG_ALERT_POL_ACTIVE_LOW == ( MCP9808_CONFIG_ALERT_POL_MASK & therm->reg[ MCP9808_CONFIG ] ) ) {
 			fchip->values[ fchip_offset ] = true;
@@ -227,7 +232,7 @@ void pinctrl_fake_i2c_mcp9808_worker_fini( struct pinctrl_fake_i2c_mcp9808_worke
 	fchip = worker->fchip;
 	if ( !( NULL == fchip || worker->fchip_offset < 0 || worker->fchip_offset >= fchip->npins ) ) {
 
-		dev_info( & ichip->adapter.dev, "MCP9808 Worker un-reserving %s pin %d for notifications\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->fchip_offset ] );
+		dev_info( & ichip->adapter.dev, "MCP9808 Worker un-reserving %s pin %d for notifications\n", dev_name( fchip->gpiochip.gpiodev->mockdev ), fchip->pins[ worker->fchip_offset ] );
 
 		fchip->reserved[ worker->fchip_offset ] = false;
 		fchip->pended[ worker->fchip_offset ] = false;
