@@ -67,3 +67,34 @@ config PINCTRL_FAKE_I2C_MCP9808_WORKER
 	  bound when it reaches the upper bound.
 	  
 	  Updates occur periodically. The default period will be 1000 ms.
+
+config PINCTRL_FAKE_SPI
+	boolean "Fake SPI bus"
+	depends on PINCTRL_FAKE && SPI
+	help
+	  Pin control driver for a fake i2c bus. Based on example described in
+	  Documentation/pinctrl.txt.
+
+config PINCTRL_FAKE_SPI_AT25
+	boolean "Fake AT25 SPI EEPROM"
+	depends on PINCTRL_FAKE_SPI
+	help
+	  A simulated eeprom device for the fake spi bus.
+
+config PINCTRL_FAKE_SPI_MAX6662
+	boolean "Fake MAX6662 Temperature Sensor"
+	depends on PINCTRL_FAKE_SPI
+	help
+	  A simulated temperature sensor for the fake spi bus.
+
+config PINCTRL_FAKE_SPI_MAX6662_WORKER
+	boolean "Simulated input for the fake MAX6662"
+	depends on PINCTRL_FAKE_SPI_MAX6662
+	help
+	  This option creates scheduled work that simulates a monotonically
+	  increasing temperature. The temperature wraps back to the lower
+	  bound when it reaches the upper bound.
+	  
+	  Updates occur periodically. The default period will be 1000 ms.
+
+	  

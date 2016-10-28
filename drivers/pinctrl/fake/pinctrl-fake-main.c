@@ -676,6 +676,17 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 //	}
 #endif // CONFIG_PINCTRL_FAKE_I2C
 
+#ifdef CONFIG_PINCTRL_FAKE_SPI
+//	if ( ! pctrl_muxed ) {
+		r = pinctrl_fake_spi_init( pctrl );
+		if ( EXIT_SUCCESS != r ) {
+			dev_err( & pdev->dev, "pinctrl_fake_spi_init() failed (%d)\n", r );
+			goto out;
+		}
+//		pctrl_muxed = true;
+//	}
+#endif // CONFIG_PINCTRL_FAKE_I2C
+
 	if ( ! pctrl_muxed ) {
 		//dev_err( pctrl->dev, "failed to set initial mux\n" );
 	}

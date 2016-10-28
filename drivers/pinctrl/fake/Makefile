@@ -10,7 +10,11 @@ pinctrl-fake-$(CONFIG_PINCTRL_FAKE_I2C_AT24)            += pinctrl-fake-i2c-at24
 pinctrl-fake-$(CONFIG_PINCTRL_FAKE_I2C_MCP9808)         += pinctrl-fake-i2c-mcp9808.o
 pinctrl-fake-$(CONFIG_PINCTRL_FAKE_I2C_MCP9808_WORKER)  += pinctrl-fake-i2c-mcp9808-worker.o
 
-#pinctrl-fake-$(CONFIG_PINCTRL_FAKE_SPI)  += pinctrl-fake-spi.o
+pinctrl-fake-$(CONFIG_PINCTRL_FAKE_SPI)                 += pinctrl-fake-spi.o
+pinctrl-fake-$(CONFIG_PINCTRL_FAKE_SPI_AT25)            += pinctrl-fake-spi-at25.o
+pinctrl-fake-$(CONFIG_PINCTRL_FAKE_SPI_MAX6662)         += pinctrl-fake-spi-max6662.o
+pinctrl-fake-$(CONFIG_PINCTRL_FAKE_SPI_MAX6662_WORKER)  += pinctrl-fake-spi-max6662-worker.o
+
 #pinctrl-fake-$(CONFIG_PINCTRL_FAKE_MMC)  += pinctrl-fake-mmc.o
 #pinctrl-fake-$(CONFIG_PINCTRL_FAKE_UART) += pinctrl-fake-uart.o
 #pinctrl-fake-$(CONFIG_PINCTRL_FAKE_PWM)  += pinctrl-fake-uart.o

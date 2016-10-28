@@ -9,6 +9,7 @@
 #include "pinctrl-fake-misc.h"
 #include "pinctrl-fake-gpio.h"
 #include "pinctrl-fake-i2c.h"
+#include "pinctrl-fake-spi.h"
 
 struct pinctrl_fake {
 	struct device *dev;
@@ -30,6 +31,14 @@ struct pinctrl_fake {
 	#endif
 	struct pinctrl_fake_i2c_chip *fi2cchip[ PINCTRL_FAKE_N_I2C_CHIPS ];
 #endif // CONFIG_PINCTRL_FAKE_I2C
+#ifdef CONFIG_PINCTRL_FAKE_SPI
+	#define PINCTRL_FAKE_N_SPI_CHIPS_MAX 26
+    #define PINCTRL_FAKE_N_SPI_CHIPS 1
+	#if PINCTRL_FAKE_N_SPI_CHIPS > PINCTRL_FAKE_N_SPI_CHIPS_MAX
+		#error Too many Fake SPI Chips!
+	#endif
+	struct pinctrl_fake_spi_chip *fspichip[ PINCTRL_FAKE_N_SPI_CHIPS ];
+#endif // CONFIG_PINCTRL_FAKE_SPI
 //	void __iomem *regs;
 //	raw_spinlock_t lock;
 //	unsigned intr_lines[16];
