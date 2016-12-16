@@ -13,7 +13,7 @@
 
 #include <linux/interrupt.h>
 
-#include "pinctrl-fake.h"
+#include "../../../include/linux/pinctrl-fake.h"
 
 /**
  * @eta          Absolute time (in jiffies) when the GPIO should be toggled.
@@ -25,7 +25,7 @@
  * @ev_head      To hold position within the event queue.
  * @ex_head      To hold position within the expired queue.
  */
-struct pinctrl_fake_gpio_worker_elem {
+struct fake_gpio_worker_elem {
 	unsigned long eta;
 	unsigned long period;
 
@@ -35,18 +35,18 @@ struct pinctrl_fake_gpio_worker_elem {
 	struct list_head ex_head;
 };
 
-static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work );
+static void fake_gpio_worker_work_func( struct work_struct *work );
 
-static int pinctrl_fake_gpio_worker_eta_comparator( void *priv, struct list_head *a, struct list_head *b ) {
+static int fake_gpio_worker_eta_comparator( void *priv, struct list_head *a, struct list_head *b ) {
 	int r;
 
-	struct pinctrl_fake_gpio_worker_elem *aa;
-	struct pinctrl_fake_gpio_worker_elem *bb;
+	struct fake_gpio_worker_elem *aa;
+	struct fake_gpio_worker_elem *bb;
 
 	(void) priv;
 
-	aa = container_of( a, struct pinctrl_fake_gpio_worker_elem, ev_head );
-	bb = container_of( a, struct pinctrl_fake_gpio_worker_elem, ev_head );
+	aa = container_of( a, struct fake_gpio_worker_elem, ev_head );
+	bb = container_of( a, struct fake_gpio_worker_elem, ev_head );
 
 	if ( false ) {
 	} else if ( time_before( aa->eta, bb->eta ) ) {
@@ -60,7 +60,7 @@ static int pinctrl_fake_gpio_worker_eta_comparator( void *priv, struct list_head
 	return r;
 }
 
-static void pinctrl_fake_gpio_worker_update( struct pinctrl_fake_gpio_chip *fchip ) {
+static void fake_gpio_worker_update( struct fake_gpio_chip *fchip ) {
 
 	struct pinctrl_fake *pctrl;
 	unsigned long then;
@@ -73,25 +73,25 @@ static void pinctrl_fake_gpio_worker_update( struct pinctrl_fake_gpio_chip *fchi
 		return;
 	}
 
-	list_sort( NULL, & fchip->worker_head, pinctrl_fake_gpio_worker_eta_comparator );
+	list_sort( NULL, & fchip->worker_head, fake_gpio_worker_eta_comparator );
 
 	then =
 		list_first_entry(
 			& fchip->worker_head,
-			struct pinctrl_fake_gpio_worker_elem,
+			struct fake_gpio_worker_elem,
 			ev_head
 		)->eta;
 
 	schedule_delayed_work( & fchip->worker_dwork, max( 0L, then - jiffies ) );
 }
 
-static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work ) {
+static void fake_gpio_worker_work_func( struct work_struct *work ) {
 
 	struct delayed_work *dwork;
 	struct pinctrl_fake *pctrl;
-	struct pinctrl_fake_gpio_chip *fchip;
+	struct fake_gpio_chip *fchip;
 	struct list_head *it;
-	struct pinctrl_fake_gpio_worker_elem *worker;
+	struct fake_gpio_worker_elem *worker;
 	unsigned long now;
 	unsigned long delta;
 	int irq;
@@ -102,7 +102,7 @@ static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work ) {
 
 	dwork = to_delayed_work( work );
 
-	fchip = container_of( dwork, struct pinctrl_fake_gpio_chip, worker_dwork );
+	fchip = container_of( dwork, struct fake_gpio_chip, worker_dwork );
 
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
 
@@ -112,7 +112,7 @@ static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work ) {
 	now = jiffies;
 	list_for_each( it, & fchip->worker_head ) {
 
-		worker = container_of( it, struct pinctrl_fake_gpio_worker_elem, ev_head );
+		worker = container_of( it, struct fake_gpio_worker_elem, ev_head );
 
 		if ( time_after_eq( now, worker->eta ) ) {
 
@@ -145,7 +145,7 @@ static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work ) {
 	should_trigger_interrupt = false;
 
 	list_for_each( it, & expired ) {
-		worker = container_of( it, struct pinctrl_fake_gpio_worker_elem, ex_head );
+		worker = container_of( it, struct fake_gpio_worker_elem, ex_head );
 
 		if ( fchip->reserved[ worker->gpio_offset ] ) {
 			dev_info( pctrl->dev, "GPIO Worker: pin %u unchanged due to reservation\n", fchip->pins[ worker->gpio_offset ] );
@@ -192,21 +192,21 @@ static void pinctrl_fake_gpio_worker_work_func( struct work_struct *work ) {
 		tasklet_schedule( & fchip->tasklet );
 	}
 
-	pinctrl_fake_gpio_worker_update( fchip );
+	fake_gpio_worker_update( fchip );
 
 	// after updating from scheduled work, we should always reschedule and then have delayed work pending
 	// only removing worker pins should unschedule work
 	//BUG_ON( ! delayed_work_pending( & fchip->worker_dwork ) );
 }
 
-static struct pinctrl_fake_gpio_worker_elem *
-	pinctrl_fake_gpio_worker_search_by_offset( struct list_head *head, u16 gpio_offset ) {
+static struct fake_gpio_worker_elem *
+	fake_gpio_worker_search_by_offset( struct list_head *head, u16 gpio_offset ) {
 
-	struct pinctrl_fake_gpio_worker_elem *r;
+	struct fake_gpio_worker_elem *r;
 	struct list_head *it;
 
 	list_for_each( it, head ) {
-		r = container_of( it, struct pinctrl_fake_gpio_worker_elem, ev_head );
+		r = container_of( it, struct fake_gpio_worker_elem, ev_head );
 		if ( gpio_offset == r->gpio_offset ) {
 			break;
 		}
@@ -216,7 +216,7 @@ static struct pinctrl_fake_gpio_worker_elem *
 	return r;
 }
 
-void pinctrl_fake_gpio_worker_init( struct pinctrl_fake_gpio_chip *fchip ) {
+void fake_gpio_worker_init( struct fake_gpio_chip *fchip ) {
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
@@ -224,14 +224,14 @@ void pinctrl_fake_gpio_worker_init( struct pinctrl_fake_gpio_chip *fchip ) {
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( chip );
 
-	INIT_DELAYED_WORK( & fchip->worker_dwork, pinctrl_fake_gpio_worker_work_func );
+	INIT_DELAYED_WORK( & fchip->worker_dwork, fake_gpio_worker_work_func );
 
 	dev_info( chip->cdev, "GPIO Worker started\n" );
 }
 
-void pinctrl_fake_gpio_worker_fini( struct pinctrl_fake_gpio_chip *fchip ) {
+void fake_gpio_worker_fini( struct fake_gpio_chip *fchip ) {
 
-	struct pinctrl_fake_gpio_worker_elem *r;
+	struct fake_gpio_worker_elem *r;
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
@@ -244,7 +244,7 @@ void pinctrl_fake_gpio_worker_fini( struct pinctrl_fake_gpio_chip *fchip ) {
 	while( ! list_empty( & fchip->worker_head )  ) {
 		r = list_first_entry(
 			& fchip->worker_head,
-			struct pinctrl_fake_gpio_worker_elem,
+			struct fake_gpio_worker_elem,
 			ev_head
 		);
 
@@ -257,13 +257,13 @@ void pinctrl_fake_gpio_worker_fini( struct pinctrl_fake_gpio_chip *fchip ) {
 	dev_info( chip->cdev, "GPIO Worker stopped\n" );
 }
 
-bool pinctrl_fake_gpio_worker_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset ) {
+bool fake_gpio_worker_add( struct fake_gpio_chip *fchip, u16 gpio_offset ) {
 
 	bool r;
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
-	struct pinctrl_fake_gpio_worker_elem *elem;
+	struct fake_gpio_worker_elem *elem;
 
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
@@ -280,7 +280,7 @@ bool pinctrl_fake_gpio_worker_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpi
 		goto out;
 	}
 
-	if ( NULL != pinctrl_fake_gpio_worker_search_by_offset( & fchip->worker_head, gpio_offset ) ) {
+	if ( NULL != fake_gpio_worker_search_by_offset( & fchip->worker_head, gpio_offset ) ) {
 		r = false;
 		dev_err( chip->cdev, "GPIO Worker: pin %u already toggling\n", fchip->pins[ gpio_offset ] );
 		goto out;
@@ -302,7 +302,7 @@ bool pinctrl_fake_gpio_worker_add( struct pinctrl_fake_gpio_chip *fchip, u16 gpi
 
 	list_add_tail( & elem->ev_head, & fchip->worker_head );
 
-	pinctrl_fake_gpio_worker_update( fchip );
+	fake_gpio_worker_update( fchip );
 
 	r = true;
 
@@ -310,13 +310,13 @@ out:
 	return r;
 }
 
-bool pinctrl_fake_gpio_worker_remove( struct pinctrl_fake_gpio_chip *fchip, u16 gpio_offset ) {
+bool fake_gpio_worker_remove( struct fake_gpio_chip *fchip, u16 gpio_offset ) {
 
 	bool r;
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
-	struct pinctrl_fake_gpio_worker_elem *elem;
+	struct fake_gpio_worker_elem *elem;
 
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
@@ -327,7 +327,7 @@ bool pinctrl_fake_gpio_worker_remove( struct pinctrl_fake_gpio_chip *fchip, u16 
 		goto out;
 	}
 
-	elem = pinctrl_fake_gpio_worker_search_by_offset( & fchip->worker_head, gpio_offset );
+	elem = fake_gpio_worker_search_by_offset( & fchip->worker_head, gpio_offset );
 	if ( NULL == elem ) {
 		r = false;
 		dev_err( chip->cdev, "GPIO Worker: pin %u already removed\n", fchip->pins[ gpio_offset ] );
@@ -339,7 +339,7 @@ bool pinctrl_fake_gpio_worker_remove( struct pinctrl_fake_gpio_chip *fchip, u16 
 
 	dev_info( chip->cdev, "GPIO Worker: disabled on pin %u\n", fchip->pins[ gpio_offset ] );
 
-	pinctrl_fake_gpio_worker_update( fchip );
+	fake_gpio_worker_update( fchip );
 
 	r = true;
 

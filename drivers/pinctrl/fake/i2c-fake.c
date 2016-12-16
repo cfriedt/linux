@@ -8,7 +8,7 @@
 
 #include <linux/interrupt.h>
 
-#include "pinctrl-fake.h"
+#include <linux/pinctrl-fake.h>
 
 static int pinctrl_fake_i2c_adapter_algo_master_xfer( struct i2c_adapter *adap, struct i2c_msg *msgs, int num ) {
 	int r;

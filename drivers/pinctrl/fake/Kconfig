@@ -13,54 +13,28 @@ config PINCTRL_FAKE
 	  To compile this code as a module, choose M here: the
 	  module will be called pinctrl-fake.
 
-config PINCTRL_FAKE_GPIO
-	boolean "Fake GPIO support"
-	depends on PINCTRL_FAKE
-	select GPIOLIB
-	select GPIOLIB_IRQCHIP
-	help
-	  A driver for fake GPIO functionality on any system. Based on example
-	  described in Documentation/pinctrl.txt.
-
-config PINCTRL_FAKE_GPIO_WORKER
-	boolean "Simulated input for fake GPIO"
-	depends on PINCTRL_FAKE_GPIO
-	help
-	  For each fake GPIO that is exported as a GPIO input via sysfs, the
-	  kernel will periodically toggle the value of that GPIO. User
-	  applications can then poll the value of the GPIO via sysfs. If the GPIO
-	  is configured to trigger an interrupt, then user applications can be
-	  notified of the interrupt using the poll(2) or select(2) system calls.
-	  
-	  See Documentation/gpio/sysfs.txt for more information.
-
-	  If the kernel is compiled with DEBUGFS, then users may modify the
-	  period of GPIO togglers to any value within 1000 to 10000 milliseconds.
-	  
-	  The default period will be 1000 ms.
-
-config PINCTRL_FAKE_I2C
+config I2C_FAKE
 	boolean "Fake I2C bus"
 	depends on PINCTRL_FAKE && I2C
 	help
 	  Pin control driver for a fake i2c bus. Based on example described in
 	  Documentation/pinctrl.txt.
 
-config PINCTRL_FAKE_I2C_AT24
+config I2C_FAKE_AT24
 	boolean "Fake AT24C32 I2C EEPROM"
-	depends on PINCTRL_FAKE_I2C
+	depends on I2C_FAKE
 	help
 	  A simulated eeprom device for the fake i2c bus.
 
-config PINCTRL_FAKE_I2C_MCP9808
+config I2C_FAKE_MCP9808
 	boolean "Fake MCP9808 Temperature Sensor"
-	depends on PINCTRL_FAKE_I2C
+	depends on I2C_FAKE
 	help
 	  A simulated temperature sensor for the fake i2c bus.
 
-config PINCTRL_FAKE_I2C_MCP9808_WORKER
+config I2C_FAKE_MCP9808_WORKER
 	boolean "Simulated input for the fake MCP9808"
-	depends on PINCTRL_FAKE_I2C_MCP9808
+	depends on I2C_FAKE_MCP9808
 	help
 	  This option creates scheduled work that simulates a monotonically
 	  increasing temperature. The temperature wraps back to the lower
@@ -68,28 +42,28 @@ config PINCTRL_FAKE_I2C_MCP9808_WORKER
 	  
 	  Updates occur periodically. The default period will be 1000 ms.
 
-config PINCTRL_FAKE_SPI
+config SPI_FAKE
 	boolean "Fake SPI bus"
 	depends on PINCTRL_FAKE && SPI
 	help
 	  Pin control driver for a fake i2c bus. Based on example described in
 	  Documentation/pinctrl.txt.
 
-config PINCTRL_FAKE_SPI_AT25
+config SPI_FAKE_AT25
 	boolean "Fake AT25 SPI EEPROM"
-	depends on PINCTRL_FAKE_SPI
+	depends on SPI_FAKE
 	help
 	  A simulated eeprom device for the fake spi bus.
 
-config PINCTRL_FAKE_SPI_MAX6662
+config SPI_FAKE_MAX6662
 	boolean "Fake MAX6662 Temperature Sensor"
-	depends on PINCTRL_FAKE_SPI
+	depends on SPI_FAKE
 	help
 	  A simulated temperature sensor for the fake spi bus.
 
-config PINCTRL_FAKE_SPI_MAX6662_WORKER
+config SPI_FAKE_MAX6662_WORKER
 	boolean "Simulated input for the fake MAX6662"
-	depends on PINCTRL_FAKE_SPI_MAX6662
+	depends on SPI_FAKE_MAX6662
 	help
 	  This option creates scheduled work that simulates a monotonically
 	  increasing temperature. The temperature wraps back to the lower

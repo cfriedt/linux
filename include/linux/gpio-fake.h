@@ -1,5 +1,5 @@
-#ifndef PINCTRL_FAKE_GPIO_H_
-#define PINCTRL_FAKE_GPIO_H_
+#ifndef GPIO_FAKE_H_
+#define GPIO_FAKE_H_
 
 #include <linux/types.h>
 #include <linux/gpio.h>
@@ -10,7 +10,7 @@
 
 #include <linux/interrupt.h>
 
-#include "pinctrl-fake-gpio-worker.h"
+#include "gpio-fake-worker.h"
 
 /**
  * @gpiochip   - gpio chip, for api purposes
@@ -22,7 +22,7 @@
  * @directions - array of pin directions, length @npins. E.g. GPIOF_DIR_IN or GPIOF_DIR_OUT
  * @irq_types  - array of pin irq types, of length @npins
  */
-struct pinctrl_fake_gpio_chip {
+struct gpio_fake_chip {
 	struct gpio_chip gpiochip;
 	const char *group;
 	u16 npins;
@@ -33,17 +33,18 @@ struct pinctrl_fake_gpio_chip {
 	u8 *pended;
 	u8 *reserved;
 	struct tasklet_struct tasklet;
-#ifdef CONFIG_PINCTRL_FAKE_GPIO_WORKER
+#ifdef CONFIG_GPIO_FAKE_WORKER
 	struct delayed_work worker_dwork;
 	struct list_head worker_head;
-#endif // CONFIG_CONFIG_PINCTRL_FAKE_GPIO_WORKER
+#endif // CONFIG_CONFIG_GPIO_FAKE_WORKER
+	struct list_head head;
 };
 
 struct pinctrl_fake;
 
-int pinctrl_fake_gpio_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label );
-void pinctrl_fake_gpio_chip_fini( struct gpio_chip *chip );
+int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label );
+void gpio_fake_chip_fini( struct gpio_chip *chip );
 
-void pinctrl_fake_gpio_irq_handler( struct irq_desc *irq_desc );
+void gpio_fake_irq_handler( struct irq_desc *irq_desc );
 
-#endif /* PINCTRL_FAKE_GPIO_H_ */
+#endif /* GPIO_FAKE_H_ */

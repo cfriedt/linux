@@ -56,7 +56,7 @@ enum {
 };
 */
 
-#include "pinctrl-fake-spi-max6662-worker.h"
+#include "spi-fake-max6662-worker.h"
 
 /*
 #define MAX6662_MANUFACTURER_ID_MSB 0x00

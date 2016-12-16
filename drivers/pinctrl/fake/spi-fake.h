@@ -5,8 +5,8 @@
 #include <linux/spi/spi.h>
 #include <linux/workqueue.h>
 
-#include "pinctrl-fake-spi-at25.h"
-#include "pinctrl-fake-spi-max6662.h"
+#include "spi-fake-at25.h"
+#include "spi-fake-max6662.h"
 
 struct pinctrl_fake_spi_chip {
 	struct spi_master *master;

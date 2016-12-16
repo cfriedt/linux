@@ -1,86 +1,205 @@
 /dts-v1/;
 
+/*
+ * Example from Documentation/pinctrl.txt
+ *
+ *        A   B   C   D   E   F   G   H
+ *      +---+
+ *   8  | o | o   o   o   o   o   o   o
+ *      |   |
+ *   7  | o | o   o   o   o   o   o   o
+ *      |   |
+ *   6  | o | o   o   o   o   o   o   o
+ *      +---+---+
+ *   5  | o | o | o   o   o   o   o   o
+ *      +---+---+               +---+
+ *   4    o   o   o   o   o   o | o | o
+ *                              |   |
+ *   3    o   o   o   o   o   o | o | o
+ *                              |   |
+ *   2    o   o   o   o   o   o | o | o
+ *      +-------+-------+-------+---+---+
+ *   1  | o   o | o   o | o   o | o | o |
+ *      +-------+-------+-------+---+---+
+ */
+
 / {
-    compatible = "acme,coyotes-revenge";
-    #address-cells = <1>;
-    #size-cells = <1>;
-    interrupt-parent = <&intc>;
+	compatible = "simple-bus";
 
-    cpus {
-        #address-cells = <1>;
-        #size-cells = <0>;
-        cpu@0 {
-            compatible = "arm,cortex-a9";
-            reg = <0>;
-        };
-        cpu@1 {
-            compatible = "arm,cortex-a9";
-            reg = <1>;
-        };
-    };
+	nwpins: pinctrl {
 
-    serial@101f0000 {
-        compatible = "arm,pl011";
-        reg = <0x101f0000 0x1000 >;
-        interrupts = < 1 0 >;
-    };
+		/*
+		 * In contrast to devicetree bindings for concrete pin controller
+		 * implementations, this pin controller does not have a hard-
+		 * coded set of pins, pin-names, or groups that would typically
+		 * be declared statically in the OS kernel. Therefore, for this
+		 * fake but configurable pin controller, we define all of those
+		 * parameters within the devicetree file so that they can be
+		 * dynamically instantiated within the OS kernel at runtime prior
+		 * to probing of any fake busses or devices.
+		 */   
 
-    serial@101f2000 {
-        compatible = "arm,pl011";
-        reg = <0x101f2000 0x1000 >;
-        interrupts = < 2 0 >;
-    };
+		compatible = "pinctrl-fake";
 
-    gpio@101f3000 {
-        compatible = "arm,pl061";
-        reg = <0x101f3000 0x1000
-               0x101f4000 0x0010>;
-        interrupts = < 3 0 >;
-    };
+		/*
+		 * First, we define a set of fake pins and name those pins.
+		 */
 
-    intc: interrupt-controller@10140000 {
-        compatible = "arm,pl190";
-        reg = <0x10140000 0x1000 >;
-        interrupt-controller;
-        #interrupt-cells = <2>;
-    };
+		pinctrl-fake-pins = <
+			 0  8 16 24
+			25 38 46 54
+			56 57 58 59
+			60 61 62 63
+		>; 
+		pinctrl-fake-pin-names =
+			"A8", "A7", "A6", "A5",
+			"B5", "G4", "G3", "G2",
+			"A1", "B1", "C1", "D1",
+			"E1", "F1", "G1", "H1"
+		;
 
-    spi@10115000 {
-        compatible = "arm,pl022";
-        reg = <0x10115000 0x1000 >;
-        interrupts = < 4 0 >;
-    };
+		/*
+		 * Next, we state that this pin controller will have a fake
+		 * gpio chip as well as a fake irq chip.
+		 */
 
-    external-bus {
-        #address-cells = <2>
-        #size-cells = <1>;
-        ranges = <0 0  0x10100000   0x10000     // Chipselect 1, Ethernet
-                  1 0  0x10160000   0x10000     // Chipselect 2, i2c controller
-                  2 0  0x30000000   0x1000000>; // Chipselect 3, NOR Flash
+/*
+		gpio-controller;
+		interrupt-controller;
+*/
+		
+		/*
+		 * Then, we group pin functionally.
+		 */
 
-        ethernet@0,0 {
-            compatible = "smc,smc91c111";
-            reg = <0 0 0x1000>;
-            interrupts = < 5 2 >;
-        };
+		pinctrl-fake-pin-groups =
+			"spi0_0",
+			"spi0_1",
+			"i2c0",
+			"mmc0_0",
+			"mmc0_1",
+			"mmc0_2"
+		;
+		pinctrl-fake-pin-group-0 = <
+			0 8 16 24
+		>;
+		pinctrl-fake-pin-group-1 = <
+			38 46 54 62
+		>;
+		pinctrl-fake-pin-group-2 = <
+			24 25
+		>;
+		pinctrl-fake-pin-group-3 = <
+			56 57
+		>;
+		pinctrl-fake-pin-group-4 = <
+			56 57 58 59
+		>;
+		pinctrl-fake-pin-group-5 = <
+			56 57 58 59
+			60 61 62 63
+		>;
 
-        i2c@1,0 {
-            compatible = "acme,a1234-i2c-bus";
-            #address-cells = <1>;
-            #size-cells = <0>;
-            reg = <1 0 0x1000>;
-            interrupts = < 6 2 >;
-            rtc@58 {
-                compatible = "maxim,ds1338";
-                reg = <58>;
-                interrupts = < 7 3 >;
-            };
-        };
+		/*
+		 * And, lastly, we define pinmux functions
+		 */
+		 
+		 pinctrl-fake-pin-muxes =
+		 	"spi0",
+		 	"i2c0",
+		 	"mmc0"
+		 ;
+		 
+		 pinctrl-fake-pin-mux-0 =
+		 	"spi0_0",
+		 	"spi0_1"
+		 ;
 
-        flash@2,0 {
-            compatible = "samsung,k8f1315ebm", "cfi-flash";
-            reg = <2 0 0x4000000>;
-        };
-    };
+		 pinctrl-fake-pin-mux-1 =
+		 	"i2c0"
+		 ;
+
+		 pinctrl-fake-pin-mux-2 =
+		 	"mmc0_0",
+			"mmc0_1",
+			"mmc0_2"
+		 ;
+	};
+
+/*
+	nw_spi0 {
+		// pins A5 (SCLK), A6 (MISO), A7 (MOSI), A8 (/SS) used for spi
+		// pin B5 is gpio
+		compatible = "spi-fake";		
+		pinctrl-names = "disable", "enable";
+		pinctrl-0 = <&nw_spi0_disable>;
+		pinctrl-1 = <&nw_spi0_enable>;
+	};
+
+	nw_i2c0 {
+		// pins A5 (SCL), B5 (SDA) used for i2c
+		// pins A6, A7, A8 are gpio
+		compatible = "i2c-fake";		
+		pinctrl-names = "disable", "enable";
+		pinctrl-0 = <&nw_i2c0_disable>;
+		pinctrl-1 = <&nw_i2c0_enable>;
+	};
+*/
 };
 
+/*
+&nwpins {
+	nw_spi0_disable: nw_spi0_disable {
+		pinmux {
+			function = "gpio";
+			pins = "A5", "A6", "A7", "A8", "B5";
+		};
+		pinconf {
+			pins = "A5", "A6", "A7", "A8", "B5";
+			bias-pull-down;
+		};
+	};
+
+	nw_spi0_enable: nw_spi0_enable {
+		pinmux {
+			function = "spi0";
+			pins = "A5", "A6", "A7";
+		};
+		pinconf {
+			pins = "A5", "A6", "A7";
+			bias-disable;
+		};
+		pinmux_cs {
+			function = "gpio";
+			pins = "A8";
+		};
+		pinconf_cs {
+			pins = "A8";
+			bias-disable;
+			output-high;
+		};
+	};
+
+	nw_i2c0_disable: nw_i2c0_disable {
+		pinmux {
+			function = "gpio";
+			pins = "A5", "B6";
+		};
+		pinconf {
+			pins = "A5", "B5";
+			bias-disable;
+		};
+	};
+
+	nw_i2c0_enable: nw_i2c0_enable {
+		pinmux {
+			function = "i2c0";
+			pins = "A5", "B5";
+		};
+		pinconf {
+			pins = "A5", "B5";
+			bias-disable = <0>;
+		};
+	};
+};
+*/

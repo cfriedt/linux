@@ -8,7 +8,7 @@
 
 #include <linux/interrupt.h>
 
-#include "pinctrl-fake.h"
+#include "../../../include/linux/pinctrl-fake.h"
 
 static int pinctrl_fake_spi_transfer_one( struct spi_master *master, struct spi_device *spi, struct spi_transfer *transfer ) {
 	return -ENOSYS;

@@ -7,13 +7,9 @@
 #include <linux/i2c.h>
 
 #include <linux/interrupt.h>
+#include "../../../include/linux/pinctrl-fake.h"
 #include "mcp9808-regs.h"
 
-#include "pinctrl-fake.h"
-
-// XXX: @CF: TODO: the cdev field of struct gpio_chip was moved into struct gpio_dev gpiodev, which is opaque
-// this is a dirty hack to get the definition of struct gpio_dev. ATM, it's only used for dev_info, dev_err,
-// and dev_dbg, and therefore is not 100% necessary. Will be removed in a future revision.
 #include "../../gpio/gpiolib.h"
 
 static u16 abs16( s16 x ) {

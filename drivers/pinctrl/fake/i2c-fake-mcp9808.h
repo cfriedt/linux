@@ -54,7 +54,7 @@ enum {
 	MCP9808_RES_0P0625_DEGREES_C,
 };
 
-#include "pinctrl-fake-i2c-mcp9808-worker.h"
+#include "i2c-fake-mcp9808-worker.h"
 
 
 #define MCP9808_MANUFACTURER_ID_MSB 0x00

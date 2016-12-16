@@ -8,7 +8,7 @@
 
 #include <linux/interrupt.h>
 
-#include "pinctrl-fake.h"
+#include "../../../include/linux/pinctrl-fake.h"
 
 int pinctrl_fake_i2c_at24_xfer( struct i2c_adapter *adap, struct i2c_msg *msgs, int num ) {
 

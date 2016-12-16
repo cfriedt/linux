@@ -4,9 +4,9 @@
 #include <linux/types.h>
 #include <linux/i2c.h>
 #include <linux/workqueue.h>
+#include "i2c-fake-at24.h"
 
-#include "pinctrl-fake-i2c-at24.h"
-#include "pinctrl-fake-i2c-mcp9808.h"
+#include "i2c-fake-mcp9808.h"
 
 struct pinctrl_fake_i2c_chip {
 	struct i2c_adapter adapter;

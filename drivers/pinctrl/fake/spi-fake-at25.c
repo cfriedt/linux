@@ -8,7 +8,7 @@
 
 #include <linux/interrupt.h>
 
-#include "pinctrl-fake.h"
+#include "../../../include/linux/pinctrl-fake.h"
 
 int pinctrl_fake_spi_at25_xfer( struct spi_device *spi, struct spi_transfer *transfer ) {
 /*

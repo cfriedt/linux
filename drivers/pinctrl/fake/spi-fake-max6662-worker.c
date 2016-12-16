@@ -9,7 +9,7 @@
 #include <linux/interrupt.h>
 //#include "max6662-regs.h"
 
-#include "pinctrl-fake.h"
+#include "../../../include/linux/pinctrl-fake.h"
 
 /*
 // XXX: @CF: TODO: the cdev field of struct gpio_chip was moved into struct gpio_dev gpiodev, which is opaque
