@@ -26,43 +26,56 @@ struct pinctrl_fake_pmx_func {
 
 struct pinctrl_fake {
 	struct device *dev;
+
+	// pinctrl interface
 	struct pinctrl_desc pctldesc;
 	struct pinctrl_dev *pctldev;
 	unsigned ngroups;
 	struct pinctrl_fake_group *groups;
 	unsigned nmuxes;
 	struct pinctrl_fake_pmx_func *muxes;
-
 	//	void __iomem *regs;
 	//  raw_spinlock_t lock;
 	//	unsigned intr_lines[16];
 	//	u32 saved_intmask;
 	//	struct pinctrl_fake_pin_context *saved_pin_context;
-	struct list_head head;
 
+	// fake gpio interface
 #ifdef CONFIG_FAKE_GPIO
-	struct fake_gpio_chip fgpiochip;
+	unsigned ngpiochips;
+	struct fake_gpio_chip *fgpiochip;
 #endif // CONFIG_PINCTRL_FAKE_GPIO
+
 /*
 #ifdef CONFIG_PINCTRL_FAKE_I2C
-	#define PINCTRL_FAKE_N_I2C_CHIPS_MAX 26
-    #define PINCTRL_FAKE_N_I2C_CHIPS 1
-	#if PINCTRL_FAKE_N_I2C_CHIPS > PINCTRL_FAKE_N_I2C_CHIPS_MAX
-		#error Too many Fake I2C Chips!
-	#endif
-	struct pinctrl_fake_i2c_chip *fi2cchip[ PINCTRL_FAKE_N_I2C_CHIPS ];
+	struct i2c_fake_chip *fi2cchip;
 #endif // CONFIG_PINCTRL_FAKE_I2C
+*/
+
+/*
 #ifdef CONFIG_PINCTRL_FAKE_SPI
-	#define PINCTRL_FAKE_N_SPI_CHIPS_MAX 26
-    #define PINCTRL_FAKE_N_SPI_CHIPS 1
-	#if PINCTRL_FAKE_N_SPI_CHIPS > PINCTRL_FAKE_N_SPI_CHIPS_MAX
-		#error Too many Fake SPI Chips!
-	#endif
-	struct pinctrl_fake_spi_chip *fspichip[ PINCTRL_FAKE_N_SPI_CHIPS ];
+	struct pinctrl_fake_spi_chip *fspichip;
 #endif // CONFIG_PINCTRL_FAKE_SPI
 */
+
+// mmc
+
+// uart
+
+// a2d
+
+// dac
+
+	struct list_head head;
 };
 
-void pinctrl_fake_hello( void );
+static inline void pinctrl_pin_desc_attach_pinctrl_fake( struct pinctrl_pin_desc *pin, struct pinctrl_fake *pctrl ) {
+	*((struct pinctrl_fake **) & pin->drv_data ) = pctrl;
+}
+static inline struct pinctrl_fake *pinctrl_pin_desc_to_pinctrl_fake( struct pinctrl_pin_desc *pin ) {
+	struct pinctrl_fake *r;
+	r = (struct pinctrl_fake *) pin->drv_data;
+	return r;
+}
 
 #endif // PINCTRL_FAKE_H_

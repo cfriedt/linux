@@ -594,8 +594,6 @@ static int __init gpio_fake_init( void )
 
 	_pr_info( "Copyright (c) 2016, Christopher Friedt\n" );
 
-	pinctrl_fake_hello();
-
 	r = platform_driver_register( & gpio_fake_driver );
 	if ( EXIT_SUCCESS != r ) {
 		_pr_err( "platform_driver_register() failed (%d)\n", r );

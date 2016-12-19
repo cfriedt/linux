@@ -85,12 +85,6 @@ static const struct pinconf_ops pinctrl_fake_pinconf_ops = {
 };
 
 static const struct pinctrl_fake pinctrl_fake_template = {
-#ifdef CONFIG_PINCTRL_FAKE_GPIO
-	.fgpiochip = {
-		& pinctrl_fake_gpiochip_a,
-		& pinctrl_fake_gpiochip_b,
-	},
-#endif // CONFIG_PINCTRL_FAKE_GPIO
 	.pctldesc = {
 		.pctlops = &pinctrl_fake_ops,
 		.pmxops = &pinctrl_fake_pinmux_ops,
@@ -161,7 +155,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 
 		dev_info( dev, "pin[ %u ]: %u '%s'\n", i, pctrl->pctldesc.pins[ i ].number, pctrl->pctldesc.pins[ i ].name );
 
-		//*((void **) & pctrl->pctldesc.pins[ i ].drv_data ) = pctrl;
+		pinctrl_pin_desc_attach_pinctrl_fake( (struct pinctrl_pin_desc *) & pctrl->pctldesc.pins[ i ], pctrl );
 	}
 
 	//
@@ -392,9 +386,6 @@ out:
  *      +-------+-------+-------+---+---+
  */
 
-void pinctrl_fake_hello() {}
-EXPORT_SYMBOL(pinctrl_fake_hello);
-
 static int pinctrl_fake_get_groups_count(struct pinctrl_dev *pctldev)
 {
 	int r;
@@ -586,57 +577,6 @@ static int pinctrl_fake_config_set(struct pinctrl_dev *pctldev, unsigned pin,
 	// see pinctrl-intel.c for example
 	return EXIT_SUCCESS;
 }
-
-#ifdef CONFIG_PINCTRL_FAKE_GPIO
-
-static void pinctrl_fake_gpio_fini( struct pinctrl_fake *pctrl )
-{
-	struct gpio_chip *chip;
-	struct pinctrl_fake_gpio_chip *fchip;
-	int i;
-
-	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
-
-		fchip = pctrl->fgpiochip[ i ];
-		chip = & fchip->gpiochip;
-
-		pinctrl_fake_gpio_chip_fini( chip );
-
-		gpiochip_remove( chip );
-		memset( chip, 0, sizeof( *chip ) );
-	}
-}
-
-static int pinctrl_fake_gpio_init( struct pinctrl_fake *pctrl )
-{
-	struct pinctrl_fake_gpio_chip *fchip;
-	struct gpio_chip *chip;
-	int ret, i;
-
-	static const char *label[] = {
-		"pinctrl-fake-gpiochip-a",
-		"pinctrl-fake-gpiochip-b",
-	};
-
-	for( i = 0; i < ARRAY_SIZE( pctrl->fgpiochip ); i++ ) {
-
-		fchip = pctrl->fgpiochip[ i ];
-		chip = & fchip->gpiochip;
-
-		ret = pinctrl_fake_gpio_chip_init( pctrl, chip, fchip->npins, label[ i ] );
-		if ( EXIT_SUCCESS != ret ) {
-			dev_err( pctrl->dev, "failed to add gpio chip %s\n", label[ i ] );
-			break;
-		}
-	}
-
-	return ret;
-}
-
-#else
-#define pinctrl_fake_gpio_init(...) EXIT_SUCCESS
-#define pinctrl_fake_gpio_fini(...)
-#endif // CONFIG_PINCTRL_FAKE_GPIO
 
 static struct of_device_id pinctrl_fake_dt_ids[] = {
 	{

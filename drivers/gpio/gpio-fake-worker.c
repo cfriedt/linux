@@ -13,7 +13,7 @@
 
 #include <linux/interrupt.h>
 
-#include "../../../include/linux/pinctrl-fake.h"
+#include "linux/pinctrl-fake.h"
 
 /**
  * @eta          Absolute time (in jiffies) when the GPIO should be toggled.
@@ -25,7 +25,7 @@
  * @ev_head      To hold position within the event queue.
  * @ex_head      To hold position within the expired queue.
  */
-struct fake_gpio_worker_elem {
+struct gpio_fake_worker_elem {
 	unsigned long eta;
 	unsigned long period;
 
@@ -35,18 +35,18 @@ struct fake_gpio_worker_elem {
 	struct list_head ex_head;
 };
 
-static void fake_gpio_worker_work_func( struct work_struct *work );
+static void gpio_fake_worker_work_func( struct work_struct *work );
 
-static int fake_gpio_worker_eta_comparator( void *priv, struct list_head *a, struct list_head *b ) {
+static int gpio_fake_worker_eta_comparator( void *priv, struct list_head *a, struct list_head *b ) {
 	int r;
 
-	struct fake_gpio_worker_elem *aa;
-	struct fake_gpio_worker_elem *bb;
+	struct gpio_fake_worker_elem *aa;
+	struct gpio_fake_worker_elem *bb;
 
 	(void) priv;
 
-	aa = container_of( a, struct fake_gpio_worker_elem, ev_head );
-	bb = container_of( a, struct fake_gpio_worker_elem, ev_head );
+	aa = container_of( a, struct gpio_fake_worker_elem, ev_head );
+	bb = container_of( a, struct gpio_fake_worker_elem, ev_head );
 
 	if ( false ) {
 	} else if ( time_before( aa->eta, bb->eta ) ) {
@@ -60,7 +60,7 @@ static int fake_gpio_worker_eta_comparator( void *priv, struct list_head *a, str
 	return r;
 }
 
-static void fake_gpio_worker_update( struct fake_gpio_chip *fchip ) {
+static void gpio_fake_worker_update( struct gpio_fake_chip *fchip ) {
 
 	struct pinctrl_fake *pctrl;
 	unsigned long then;
@@ -73,25 +73,25 @@ static void fake_gpio_worker_update( struct fake_gpio_chip *fchip ) {
 		return;
 	}
 
-	list_sort( NULL, & fchip->worker_head, fake_gpio_worker_eta_comparator );
+	list_sort( NULL, & fchip->worker_head, gpio_fake_worker_eta_comparator );
 
 	then =
 		list_first_entry(
 			& fchip->worker_head,
-			struct fake_gpio_worker_elem,
+			struct gpio_fake_worker_elem,
 			ev_head
 		)->eta;
 
 	schedule_delayed_work( & fchip->worker_dwork, max( 0L, then - jiffies ) );
 }
 
-static void fake_gpio_worker_work_func( struct work_struct *work ) {
+static void gpio_fake_worker_work_func( struct work_struct *work ) {
 
 	struct delayed_work *dwork;
 	struct pinctrl_fake *pctrl;
-	struct fake_gpio_chip *fchip;
+	struct gpio_fake_chip *fchip;
 	struct list_head *it;
-	struct fake_gpio_worker_elem *worker;
+	struct gpio_fake_worker_elem *worker;
 	unsigned long now;
 	unsigned long delta;
 	int irq;
@@ -102,7 +102,7 @@ static void fake_gpio_worker_work_func( struct work_struct *work ) {
 
 	dwork = to_delayed_work( work );
 
-	fchip = container_of( dwork, struct fake_gpio_chip, worker_dwork );
+	fchip = container_of( dwork, struct gpio_fake_chip, worker_dwork );
 
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
 
@@ -112,11 +112,11 @@ static void fake_gpio_worker_work_func( struct work_struct *work ) {
 	now = jiffies;
 	list_for_each( it, & fchip->worker_head ) {
 
-		worker = container_of( it, struct fake_gpio_worker_elem, ev_head );
+		worker = container_of( it, struct gpio_fake_worker_elem, ev_head );
 
 		if ( time_after_eq( now, worker->eta ) ) {
 
-			dev_dbg( pctrl->dev, "GPIO Worker: worker for %s pin %u has expired\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->gpio_offset ] );
+//			dev_dbg( pctrl->dev, "GPIO Worker: worker for %s pin %u has expired\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->gpio_offset ] );
 
 			list_add( & worker->ex_head, & expired );
 			worker->eta = now;
@@ -126,7 +126,7 @@ static void fake_gpio_worker_work_func( struct work_struct *work ) {
 
 		} else {
 
-			dev_dbg( pctrl->dev, "GPIO Worker: worker for %s pin %u has not expired\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->gpio_offset ] );
+//			dev_dbg( pctrl->dev, "GPIO Worker: worker for %s pin %u has not expired\n", dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->gpio_offset ] );
 
 			delta =
 				now >= worker->eta
@@ -145,7 +145,7 @@ static void fake_gpio_worker_work_func( struct work_struct *work ) {
 	should_trigger_interrupt = false;
 
 	list_for_each( it, & expired ) {
-		worker = container_of( it, struct fake_gpio_worker_elem, ex_head );
+		worker = container_of( it, struct gpio_fake_worker_elem, ex_head );
 
 		if ( fchip->reserved[ worker->gpio_offset ] ) {
 			dev_info( pctrl->dev, "GPIO Worker: pin %u unchanged due to reservation\n", fchip->pins[ worker->gpio_offset ] );
@@ -188,25 +188,25 @@ static void fake_gpio_worker_work_func( struct work_struct *work ) {
 	}
 
 	if ( should_trigger_interrupt ) {
-		dev_dbg( pctrl->dev, "GPIO Worker: trigger interrupt %u for %s pin %u", irq, dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->gpio_offset ] );
+//		dev_dbg( pctrl->dev, "GPIO Worker: trigger interrupt %u for %s pin %u", irq, dev_name( fchip->gpiochip.cdev ), fchip->pins[ worker->gpio_offset ] );
 		tasklet_schedule( & fchip->tasklet );
 	}
 
-	fake_gpio_worker_update( fchip );
+	gpio_fake_worker_update( fchip );
 
 	// after updating from scheduled work, we should always reschedule and then have delayed work pending
 	// only removing worker pins should unschedule work
 	//BUG_ON( ! delayed_work_pending( & fchip->worker_dwork ) );
 }
 
-static struct fake_gpio_worker_elem *
-	fake_gpio_worker_search_by_offset( struct list_head *head, u16 gpio_offset ) {
+static struct gpio_fake_worker_elem *
+	gpio_fake_worker_search_by_offset( struct list_head *head, u16 gpio_offset ) {
 
-	struct fake_gpio_worker_elem *r;
+	struct gpio_fake_worker_elem *r;
 	struct list_head *it;
 
 	list_for_each( it, head ) {
-		r = container_of( it, struct fake_gpio_worker_elem, ev_head );
+		r = container_of( it, struct gpio_fake_worker_elem, ev_head );
 		if ( gpio_offset == r->gpio_offset ) {
 			break;
 		}
@@ -216,7 +216,7 @@ static struct fake_gpio_worker_elem *
 	return r;
 }
 
-void fake_gpio_worker_init( struct fake_gpio_chip *fchip ) {
+void gpio_fake_worker_init( struct gpio_fake_chip *fchip ) {
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
@@ -224,14 +224,14 @@ void fake_gpio_worker_init( struct fake_gpio_chip *fchip ) {
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( chip );
 
-	INIT_DELAYED_WORK( & fchip->worker_dwork, fake_gpio_worker_work_func );
+	INIT_DELAYED_WORK( & fchip->worker_dwork, gpio_fake_worker_work_func );
 
-	dev_info( chip->cdev, "GPIO Worker started\n" );
+//	dev_info( chip->cdev, "GPIO Worker started\n" );
 }
 
-void fake_gpio_worker_fini( struct fake_gpio_chip *fchip ) {
+void gpio_fake_worker_fini( struct gpio_fake_chip *fchip ) {
 
-	struct fake_gpio_worker_elem *r;
+	struct gpio_fake_worker_elem *r;
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
@@ -244,65 +244,65 @@ void fake_gpio_worker_fini( struct fake_gpio_chip *fchip ) {
 	while( ! list_empty( & fchip->worker_head )  ) {
 		r = list_first_entry(
 			& fchip->worker_head,
-			struct fake_gpio_worker_elem,
+			struct gpio_fake_worker_elem,
 			ev_head
 		);
 
-		dev_info( chip->cdev, "GPIO Worker: disabled on pin %u\n", fchip->pins[ r->gpio_offset ] );
+//		dev_info( chip->cdev, "GPIO Worker: disabled on pin %u\n", fchip->pins[ r->gpio_offset ] );
 
 		list_del( & r->ev_head );
 		kfree( r );
 	}
 
-	dev_info( chip->cdev, "GPIO Worker stopped\n" );
+//	dev_info( chip->cdev, "GPIO Worker stopped\n" );
 }
 
-bool fake_gpio_worker_add( struct fake_gpio_chip *fchip, u16 gpio_offset ) {
+bool gpio_fake_worker_add( struct gpio_fake_chip *fchip, u16 gpio_offset ) {
 
 	bool r;
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
-	struct fake_gpio_worker_elem *elem;
+	struct gpio_fake_worker_elem *elem;
 
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
 
 	if ( gpio_offset >= fchip->npins ) {
 		r = false;
-		dev_err( chip->cdev, "GPIO Worker: invalid gpio_offset %u\n", gpio_offset );
+//		dev_err( chip->cdev, "GPIO Worker: invalid gpio_offset %u\n", gpio_offset );
 		goto out;
 	}
 
 	if ( GPIOF_DIR_IN != fchip->directions[ gpio_offset ] ) {
 		r = false;
-		dev_err( chip->cdev, "GPIO Worker: pin %u not an input\n", fchip->pins[ gpio_offset ] );
+//		dev_err( chip->cdev, "GPIO Worker: pin %u not an input\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
-	if ( NULL != fake_gpio_worker_search_by_offset( & fchip->worker_head, gpio_offset ) ) {
+	if ( NULL != gpio_fake_worker_search_by_offset( & fchip->worker_head, gpio_offset ) ) {
 		r = false;
-		dev_err( chip->cdev, "GPIO Worker: pin %u already toggling\n", fchip->pins[ gpio_offset ] );
+//		dev_err( chip->cdev, "GPIO Worker: pin %u already toggling\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
 	elem = kzalloc( sizeof( *elem ), GFP_KERNEL );
 	if ( NULL == elem ) {
 		r = false;
-		dev_err( chip->cdev, "GPIO Worker: no memory to toggle pin %u\n", fchip->pins[ gpio_offset ] );
+//		dev_err( chip->cdev, "GPIO Worker: no memory to toggle pin %u\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
-	elem->period = msecs_to_jiffies( CONFIG_PINCTRL_FAKE_GPIO_WORKER_PERIOD_MS_DEFAULT );
+	elem->period = msecs_to_jiffies( CONFIG_GPIO_FAKE_WORKER_PERIOD_MS_DEFAULT );
 	elem->eta = jiffies + elem->period;
 	*( (u16 *) & elem->gpio_offset ) = gpio_offset;
 	INIT_LIST_HEAD( & elem->ev_head );
 
-	dev_info( chip->cdev, "GPIO Worker: enabled on pin %u period %u eta %lu\n", fchip->pins[ gpio_offset ], jiffies_to_msecs( elem->period ), elem->eta );
+//	dev_info( chip->cdev, "GPIO Worker: enabled on pin %u period %u eta %lu\n", fchip->pins[ gpio_offset ], jiffies_to_msecs( elem->period ), elem->eta );
 
 	list_add_tail( & elem->ev_head, & fchip->worker_head );
 
-	fake_gpio_worker_update( fchip );
+	gpio_fake_worker_update( fchip );
 
 	r = true;
 
@@ -310,36 +310,36 @@ out:
 	return r;
 }
 
-bool fake_gpio_worker_remove( struct fake_gpio_chip *fchip, u16 gpio_offset ) {
+bool gpio_fake_worker_remove( struct gpio_fake_chip *fchip, u16 gpio_offset ) {
 
 	bool r;
 
 	struct pinctrl_fake *pctrl;
 	struct gpio_chip *chip;
-	struct fake_gpio_worker_elem *elem;
+	struct gpio_fake_worker_elem *elem;
 
 	chip = & fchip->gpiochip;
 	pctrl = gpiochip_get_data( &fchip->gpiochip );
 
 	if ( gpio_offset >= fchip->npins ) {
 		r = false;
-		dev_err( chip->cdev, "GPIO Worker: invalid gpio_offset %u\n", gpio_offset );
+//		dev_err( chip->cdev, "GPIO Worker: invalid gpio_offset %u\n", gpio_offset );
 		goto out;
 	}
 
-	elem = fake_gpio_worker_search_by_offset( & fchip->worker_head, gpio_offset );
+	elem = gpio_fake_worker_search_by_offset( & fchip->worker_head, gpio_offset );
 	if ( NULL == elem ) {
 		r = false;
-		dev_err( chip->cdev, "GPIO Worker: pin %u already removed\n", fchip->pins[ gpio_offset ] );
+//		dev_err( chip->cdev, "GPIO Worker: pin %u already removed\n", fchip->pins[ gpio_offset ] );
 		goto out;
 	}
 
 	list_del( & elem->ev_head );
 	kfree( elem );
 
-	dev_info( chip->cdev, "GPIO Worker: disabled on pin %u\n", fchip->pins[ gpio_offset ] );
+//	dev_info( chip->cdev, "GPIO Worker: disabled on pin %u\n", fchip->pins[ gpio_offset ] );
 
-	fake_gpio_worker_update( fchip );
+	gpio_fake_worker_update( fchip );
 
 	r = true;
 
