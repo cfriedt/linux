@@ -636,6 +636,12 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		goto remove_from_list;
 	}
 
+	r = of_platform_populate( dev->of_node, NULL, NULL, dev );
+	if ( EXIT_SUCCESS != r ) {
+		dev_err( dev, "failed to populate platform devices (%d)\n", r );
+		goto remove_from_list;
+	}
+
 	dev_info( dev, "Added pinctrl_fake @ %p, pdev @ %p, dev @ %p\n", pctrl, pdev, dev );
 
 	r = EXIT_SUCCESS;

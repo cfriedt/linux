@@ -1,5 +1,9 @@
 /dts-v1/;
 
+/* compile with:
+ * dtc -I dts -O dtb -o discoball.dt{b,s}
+ */ 
+
 /*
  * Example from Documentation/pinctrl.txt
  *
@@ -25,8 +29,8 @@
 
 / {
 	compatible = "simple-bus";
-
-	nwpins: pinctrl {
+	
+	pinctrl: pinctrl {
 
 		/*
 		 * In contrast to devicetree bindings for concrete pin controller
@@ -37,9 +41,10 @@
 		 * parameters within the devicetree file so that they can be
 		 * dynamically instantiated within the OS kernel at runtime prior
 		 * to probing of any fake busses or devices.
-		 */   
-
+		 */
 		compatible = "pinctrl-fake";
+		#address-cells = <1>;
+		#size-cells = <1>;
 
 		/*
 		 * First, we define a set of fake pins and name those pins.
@@ -124,82 +129,10 @@
 			"mmc0_1",
 			"mmc0_2"
 		 ;
-	};
 
-/*
-	nw_spi0 {
-		// pins A5 (SCLK), A6 (MISO), A7 (MOSI), A8 (/SS) used for spi
-		// pin B5 is gpio
-		compatible = "spi-fake";		
-		pinctrl-names = "disable", "enable";
-		pinctrl-0 = <&nw_spi0_disable>;
-		pinctrl-1 = <&nw_spi0_enable>;
-	};
-
-	nw_i2c0 {
-		// pins A5 (SCL), B5 (SDA) used for i2c
-		// pins A6, A7, A8 are gpio
-		compatible = "i2c-fake";		
-		pinctrl-names = "disable", "enable";
-		pinctrl-0 = <&nw_i2c0_disable>;
-		pinctrl-1 = <&nw_i2c0_enable>;
-	};
-*/
-};
-
-/*
-&nwpins {
-	nw_spi0_disable: nw_spi0_disable {
-		pinmux {
-			function = "gpio";
-			pins = "A5", "A6", "A7", "A8", "B5";
-		};
-		pinconf {
-			pins = "A5", "A6", "A7", "A8", "B5";
-			bias-pull-down;
-		};
-	};
-
-	nw_spi0_enable: nw_spi0_enable {
-		pinmux {
-			function = "spi0";
-			pins = "A5", "A6", "A7";
-		};
-		pinconf {
-			pins = "A5", "A6", "A7";
-			bias-disable;
-		};
-		pinmux_cs {
-			function = "gpio";
-			pins = "A8";
-		};
-		pinconf_cs {
-			pins = "A8";
-			bias-disable;
-			output-high;
-		};
-	};
-
-	nw_i2c0_disable: nw_i2c0_disable {
-		pinmux {
-			function = "gpio";
-			pins = "A5", "B6";
-		};
-		pinconf {
-			pins = "A5", "B5";
-			bias-disable;
-		};
-	};
-
-	nw_i2c0_enable: nw_i2c0_enable {
-		pinmux {
-			function = "i2c0";
-			pins = "A5", "B5";
-		};
-		pinconf {
-			pins = "A5", "B5";
-			bias-disable = <0>;
+		gpio0: gpio@0 {
+			compatible = "gpio-fake";
+			reg = <00 00 00 00>;
 		};
 	};
 };
-*/

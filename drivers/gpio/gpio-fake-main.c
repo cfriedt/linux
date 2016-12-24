@@ -444,7 +444,7 @@ static int gpio_fake_probe(struct platform_device *pdev)
 
 	np = pdev->dev.of_node;
 
-//	pctrl = dev_get_drvdata( dev->parent );
+	pctrl = dev_get_drvdata( dev->parent );
 	dev_info( dev, "dev: %p, parent: %p, pctrl: %p\n", dev, dev->parent, pctrl );
 
 	r = EXIT_SUCCESS;
