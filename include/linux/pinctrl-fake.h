@@ -41,10 +41,10 @@ struct pinctrl_fake {
 	//	struct pinctrl_fake_pin_context *saved_pin_context;
 
 	// fake gpio interface
-#ifdef CONFIG_FAKE_GPIO
+#ifdef CONFIG_GPIO_FAKE
 	unsigned ngpiochips;
-	struct fake_gpio_chip *fgpiochip;
-#endif // CONFIG_PINCTRL_FAKE_GPIO
+	struct gpio_fake_chip *fgpiochip;
+#endif // CONFIG_GPIO_FAKE
 
 /*
 #ifdef CONFIG_PINCTRL_FAKE_I2C

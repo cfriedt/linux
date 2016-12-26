@@ -167,7 +167,5 @@ obj-$(CONFIG_GPIO_ZX)		+= gpio-zx.o
 obj-$(CONFIG_GPIO_LOONGSON1)	+= gpio-loongson1.o
 
 obj-$(CONFIG_GPIO_FAKE) += gpio-fake.o
-gpio-fake-y := gpio-fake-main.o
-ifeq ($(CONFIG_GPIO_FAKE_WORKER),y)
-gpio-fake-y += gpio-fake-worker.o
-endif
+gpio-fake-$(CONFIG_GPIO_FAKE) += gpio-fake-main.o
+gpio-fake-$(CONFIG_GPIO_FAKE_WORKER) += gpio-fake-worker.o

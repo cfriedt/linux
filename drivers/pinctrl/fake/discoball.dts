@@ -44,7 +44,7 @@
 		 */
 		compatible = "pinctrl-fake";
 		#address-cells = <1>;
-		#size-cells = <1>;
+		#size-cells = <0>;
 
 		/*
 		 * First, we define a set of fake pins and name those pins.
@@ -130,9 +130,9 @@
 			"mmc0_2"
 		 ;
 
-		gpio0: gpio@0 {
+		gpiochip0: gpiochip@0 {
 			compatible = "gpio-fake";
-			reg = <00 00 00 00>;
+			reg = <0>;
 		};
 	};
 };
