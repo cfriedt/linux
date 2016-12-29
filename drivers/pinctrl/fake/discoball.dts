@@ -118,16 +118,13 @@
 		 	"i2c0",
 		 	"mmc0"
 		 ;
-		 
 		 pinctrl-fake-pin-mux-0 =
 		 	"spi0_0",
 		 	"spi0_1"
 		 ;
-
 		 pinctrl-fake-pin-mux-1 =
 		 	"i2c0"
 		 ;
-
 		 pinctrl-fake-pin-mux-2 =
 		 	"mmc0_0",
 			"mmc0_1",

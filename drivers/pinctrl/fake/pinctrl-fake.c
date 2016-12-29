@@ -766,15 +766,16 @@ static int pinctrl_fake_remove( struct platform_device *pdev )
 		if ( dev == pctrl->dev ) {
 
 			dev_info( dev, "Removing pinctrl_fake @ %p, pdev @ %p, dev @ %p\n", pctrl, pdev, dev );
-
 			list_del( & pctrl->head );
 
-			dev_dbg( dev, "Calling pinctrl_unregister( %p )\n", pctrl->pctldev );
+			// dev_dbg( dev, "Calling pinctrl_unregister_mappings( %p, %u )\n", pctrl->mappings, pctrl->nmappings );
+			// FIXME: this function does not exist yet, but it needs to be implemented (1)
+			// pinctrl_unregister_mappings( pctrl->mappings, pctrl->nmappings );
 
+			dev_dbg( dev, "Calling pinctrl_unregister( %p )\n", pctrl->pctldev );
 			pinctrl_unregister( pctrl->pctldev );
 
 			dev_dbg( dev, "Setting pctldesc pins to NULL and npins to 0\n" );
-
 			// pinctrl_unregister frees the pins associated with the device but leaves pointers dangling
 			pctrl->pctldesc.pins = NULL;
 			pctrl->pctldesc.npins = 0;
