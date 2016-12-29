@@ -34,7 +34,9 @@ struct pinctrl_fake {
 	struct pinctrl_fake_group *groups;
 	unsigned nmuxes;
 	struct pinctrl_fake_pmx_func *muxes;
-	//	void __iomem *regs;
+	unsigned nmappings;
+	struct pinctrl_map *mappings;
+//	void __iomem *regs;
 	//  raw_spinlock_t lock;
 	//	unsigned intr_lines[16];
 	//	u32 saved_intmask;

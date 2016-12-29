@@ -37,6 +37,10 @@
 #define _pr_err( fmt, args... ) pr_err( MODULE_DESC ": " fmt, ##args )
 #endif
 
+#ifndef _pr_dbg
+#define _pr_dbg( fmt, args... ) pr_devel( MODULE_DESC ": " fmt, ##args )
+#endif
+
 #ifndef EXIT_SUCCESS
 #define EXIT_SUCCESS 0
 #endif // EXIT_SUCCESS
@@ -102,6 +106,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 	u32 pin_number;
 
 	char buf[ 64 ];
+	char **charp;
 
 	dev_info( dev, "%s()\n", __FUNCTION__ );
 
@@ -130,7 +135,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 	}
 	pctrl->pctldesc.npins = r;
 
-	dev_info( dev, "allocating %u pins\n", pctrl->pctldesc.npins );
+	dev_dbg( dev, "allocating %u pins\n", pctrl->pctldesc.npins );
 	pctrl->pctldesc.pins = kzalloc( pctrl->pctldesc.npins * sizeof( struct pinctrl_pin_desc ), GFP_KERNEL );
 	if ( NULL == pctrl->pctldesc.pins ) {
 		dev_err( dev, "unable to allocate array of 'struct pinctrl_pin_desc'\n" );
@@ -153,7 +158,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 			goto free_pctrl;
 		}
 
-		dev_info( dev, "pin[ %u ]: %u '%s'\n", i, pctrl->pctldesc.pins[ i ].number, pctrl->pctldesc.pins[ i ].name );
+		dev_dbg( dev, "pin[ %u ]: %u '%s'\n", i, pctrl->pctldesc.pins[ i ].number, pctrl->pctldesc.pins[ i ].name );
 
 		pinctrl_pin_desc_attach_pinctrl_fake( (struct pinctrl_pin_desc *) & pctrl->pctldesc.pins[ i ], pctrl );
 	}
@@ -175,7 +180,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 		goto free_pctrl;
 	}
 
-	dev_info( dev, "allocating %u groups\n", pctrl->ngroups );
+	dev_dbg( dev, "allocating %u groups\n", pctrl->ngroups );
 	pctrl->groups = kzalloc( pctrl->ngroups * sizeof( struct pinctrl_fake_group ), GFP_KERNEL );
 	if ( NULL == pctrl->groups ) {
 		dev_err( dev, "unable to allocate array of 'struct pinctrl_fake_group'\n" );
@@ -202,7 +207,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 		}
 		pctrl->groups[ i ].npins = r;
 
-		dev_info( dev, "allocating %u pins for group %u '%s'\n", r, i, pctrl->groups[ i ].name );
+		dev_dbg( dev, "allocating %u pins for group %u '%s'\n", r, i, pctrl->groups[ i ].name );
 
 		pctrl->groups[ i ].pins = kzalloc( pctrl->groups[ i ].npins * sizeof( unsigned ), GFP_KERNEL );
 		if ( NULL == pctrl->groups[ i ].pins ) {
@@ -219,7 +224,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 			}
 			pctrl->groups[ i ].pins[ j ] = pin_number;
 
-			dev_info( dev, "group[ %u ]: '%s', pin[ %u ]: %u\n", i, pctrl->groups[ i ].name, j, pctrl->groups[ i ].pins[ j ] );
+			dev_dbg( dev, "group[ %u ]: '%s', pin[ %u ]: %u\n", i, pctrl->groups[ i ].name, j, pctrl->groups[ i ].pins[ j ] );
 		}
 	}
 
@@ -235,11 +240,12 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 	pctrl->nmuxes = r;
 
 	if ( 0 == pctrl->nmuxes ) {
+		dev_err( dev, "'pinctrl-fake-pin-muxes' is zero-length\n" );
 		r = -EINVAL;
 		goto free_pctrl;
 	}
 
-	dev_info( dev, "allocating %u muxes\n", pctrl->nmuxes );
+	dev_dbg( dev, "allocating %u muxes\n", pctrl->nmuxes );
 	pctrl->muxes = kzalloc( pctrl->nmuxes * sizeof( struct pinctrl_fake_pmx_func ), GFP_KERNEL );
 	if ( NULL == pctrl->muxes ) {
 		dev_err( dev, "unable to allocate array of 'struct pinctrl_fake_pmx_func'\n" );
@@ -268,7 +274,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 
 		pin_number = pctrl->muxes[ i ].ngroups * sizeof( char * );
 
-		dev_info( dev, "allocating %u groups for mux %u '%s' (%u bytes)\n", pctrl->muxes[ i ].ngroups, i, pctrl->muxes[ i ].name, pin_number );
+		dev_dbg( dev, "allocating %u groups for mux %u '%s' (%u bytes)\n", pctrl->muxes[ i ].ngroups, i, pctrl->muxes[ i ].name, pin_number );
 
 		pctrl->muxes[ i ].groups = kzalloc( pin_number, GFP_KERNEL );
 		if ( NULL == pctrl->muxes[ i ].groups ) {
@@ -278,13 +284,79 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 		}
 
 		for( j = 0; j < pctrl->muxes[ i ].ngroups; j++ ) {
-			dev_info( dev, "of_property_read_string_index() of prop '%s' at index %u\n", buf, j );
+			dev_dbg( dev, "of_property_read_string_index() of prop '%s' at index %u\n", buf, j );
 			r = of_property_read_string_index( np, (const char *) buf, j, (const char **) & pctrl->muxes[ i ].groups[ j ] );
 			if ( r < 0 ) {
 				dev_err( dev, "unable to read '%s' array at index %d\n", buf, j );
 				goto free_pctrl;
 			}
-			dev_info( dev, "mux[ %u ]: '%s', group[ %u ]: '%s'\n", i, pctrl->muxes[ i ].name, j, pctrl->muxes[ i ].groups[ j ] );
+			dev_dbg( dev, "mux[ %u ]: '%s', group[ %u ]: '%s'\n", i, pctrl->muxes[ i ].name, j, pctrl->muxes[ i ].groups[ j ] );
+		}
+	}
+
+	//
+	// mappings
+	//
+
+	r = of_property_count_strings(  np, "pinctrl-fake-mappings" );
+	if ( r <= 0 ) {
+		dev_warn( dev, "'pinctrl-fake-mappings' array not found or is zero-length\n" );
+		r = 0;
+	}
+	pctrl->nmappings = r;
+
+	if ( 0 != pctrl->nmappings % 4 ) {
+		pctrl->nmappings = 0;
+		dev_err( dev, "'pinctrl-fake-mappings' array length is not a multiple of 4\n" );
+		r = -EINVAL;
+		goto free_pctrl;
+	}
+	pctrl->nmappings /= 4;
+
+	if ( 0 == pctrl->nmappings ) {
+		dev_err( dev, "'pinctrl-fake-mappings' is zero-length\n" );
+		r = -EINVAL;
+		goto free_pctrl;
+	}
+
+	dev_dbg( dev, "allocating %u mappings\n", pctrl->nmappings );
+	pctrl->mappings = kzalloc( pctrl->nmappings * sizeof( struct pinctrl_map ), GFP_KERNEL );
+	if ( NULL == pctrl->mappings ) {
+		dev_err( dev, "unable to allocate array of 'struct pinctrl_map'\n" );
+		r = -ENOMEM;
+		goto free_pctrl;
+	}
+
+	for( i = 0; i < pctrl->nmappings; i++ ) {
+
+		pctrl->mappings[ i ].ctrl_dev_name = dev_name( dev );
+		pctrl->mappings[ i ].type = PIN_MAP_TYPE_MUX_GROUP;
+
+		for( j = 0; j < 4; j++ ) {
+			switch( j ) {
+			case 0:
+				charp = (char **) & pctrl->mappings[ i ].dev_name;
+				break;
+			case 1:
+				charp = (char **) & pctrl->mappings[ i ].name;
+				break;
+			case 2:
+				charp = (char **) & pctrl->mappings[ i ].data.mux.function;
+				break;
+			case 3:
+				charp = (char **) & pctrl->mappings[ i ].data.mux.group;
+				break;
+			default:
+				BUG_ON( j != 0 );
+				break;
+			}
+
+			r = of_property_read_string_index( np, "pinctrl-fake-mappings", i*4 + j, (const char **) charp );
+			if ( r < 0 || 0 == strlen( *charp ) ) {
+				dev_err( dev, "unable to read 'pinctrl-fake-mappings' array at index %d\n", i*4 + j );
+				goto free_pctrl;
+			}
+			dev_dbg( dev, "'pinctrl-fake-mappings'[ %u ] = '%s'\n", i*4 + j, *charp );
 		}
 	}
 
@@ -313,47 +385,54 @@ static void pinctrl_fake_free( struct device *dev, struct pinctrl_fake **ppctrl 
 		goto out;
 	}
 
+	if ( pctrl->nmappings > 0 && NULL != pctrl->mappings ) {
+		dev_dbg( dev, "freeing %u mappings\n", pctrl->nmappings );
+		kfree( pctrl->mappings );
+		pctrl->mappings = NULL;
+		pctrl->nmappings = 0;
+	}
+
 	if ( pctrl->nmuxes > 0 && NULL != pctrl->muxes ) {
-		dev_info( dev, "freeing %u muxes\n", pctrl->nmuxes );
+		dev_dbg( dev, "freeing %u muxes\n", pctrl->nmuxes );
 		for( i = 0; i < pctrl->nmuxes; i++ ) {
 			if ( NULL != pctrl->muxes[ i ].groups ) {
-				dev_info( dev, "calling 'kfree( pctrl->muxes[ %u ].groups )'\n", i );
+				dev_dbg( dev, "calling 'kfree( pctrl->muxes[ %u ].groups )'\n", i );
 				kfree( pctrl->muxes[ i ].groups );
 				pctrl->muxes[ i ].groups = NULL;
 				pctrl->muxes[ i ].ngroups = 0;
 			}
 		}
-		dev_info( dev, "calling 'kfree( pctrl->muxes )'\n" );
+		dev_dbg( dev, "calling 'kfree( pctrl->muxes )'\n" );
 		kfree( pctrl->muxes );
 		pctrl->muxes = NULL;
 		pctrl->nmuxes = 0;
 	}
 
 	if ( pctrl->ngroups > 0 && NULL != pctrl->groups ) {
-		dev_info( dev, "freeing %u groups\n", pctrl->ngroups );
+		dev_dbg( dev, "freeing %u groups\n", pctrl->ngroups );
 		for( i = 0; i < pctrl->ngroups; i++ ) {
-			dev_info( dev, "might free pctrl->groups[ %u ].pins'\n", i );
+			dev_dbg( dev, "might free pctrl->groups[ %u ].pins'\n", i );
 			if ( pctrl->groups[ i ].npins > 0 && NULL != pctrl->groups[ i ].pins ) {
-				dev_info( dev, "calling 'kfree( pctrl->groups[ %u ].pins )'\n", i );
-				//kfree( (void *) pctrl->groups[ i ].pins );
+				dev_dbg( dev, "calling 'kfree( pctrl->groups[ %u ].pins )'\n", i );
+				kfree( (void *) pctrl->groups[ i ].pins );
 				pctrl->groups[ i ].pins = NULL;
 				pctrl->groups[ i ].npins = 0;
 			}
 		}
-		dev_info( dev, "calling 'kfree( pctrl->groups )'\n" );
+		dev_dbg( dev, "calling 'kfree( pctrl->groups )'\n" );
 		kfree( pctrl->groups );
 		pctrl->groups = NULL;
 		pctrl->ngroups = 0;
 	}
 
 	if ( pctrl->pctldesc.npins > 0 && NULL != pctrl->pctldesc.pins ) {
-		dev_info( dev, "calling 'kfree( pctrl->pctldesc.pins )'\n" );
+		dev_dbg( dev, "calling 'kfree( pctrl->pctldesc.pins )'\n" );
 		kfree( (void *) pctrl->pctldesc.pins );
 		pctrl->pctldesc.pins = NULL;
 		pctrl->pctldesc.npins = 0;
 	}
 
-	dev_info( dev, "calling 'kfree( pctrl )'\n" );
+	dev_dbg( dev, "calling 'kfree( pctrl )'\n" );
 	kfree( pctrl );
 	pctrl = NULL;
 
@@ -636,16 +715,30 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		goto remove_from_list;
 	}
 
+	r = pinctrl_register_mappings( (struct pinctrl_map const *) pctrl->mappings, pctrl->nmappings );
+	if ( EXIT_SUCCESS != r ) {
+		dev_err( dev, "failed to register pinctrl mappings (%d)\n", r );
+		goto unregister_pctrl;
+	}
+
 	r = of_platform_populate( dev->of_node, NULL, NULL, dev );
 	if ( EXIT_SUCCESS != r ) {
 		dev_err( dev, "failed to populate platform devices (%d)\n", r );
-		goto remove_from_list;
+		goto unregister_map;
 	}
 
 	dev_info( dev, "Added pinctrl_fake @ %p, pdev @ %p, dev @ %p\n", pctrl, pdev, dev );
 
 	r = EXIT_SUCCESS;
 	goto out;
+
+unregister_map:
+	// FIXME: this function does not exist yet, but it needs to be implemented (1)
+	// pinctrl_unregister_mappings( pctrl->mappings );
+
+unregister_pctrl:
+	pinctrl_unregister( pctrl->pctldev );
+	pctrl->pctldev = NULL;
 
 remove_from_list:
 	list_del( & pctrl->head );
@@ -668,7 +761,7 @@ static int pinctrl_fake_remove( struct platform_device *pdev )
 
 	list_for_each_entry( pctrl, & pinctrl_fake_list_head.head, head ) {
 
-		dev_info( dev, "evaluating pinctrl @ %p\n", pctrl );
+		dev_dbg( dev, "evaluating pinctrl @ %p\n", pctrl );
 
 		if ( dev == pctrl->dev ) {
 
@@ -676,11 +769,11 @@ static int pinctrl_fake_remove( struct platform_device *pdev )
 
 			list_del( & pctrl->head );
 
-			dev_info( dev, "Calling pinctrl_unregister( %p )\n", pctrl->pctldev );
+			dev_dbg( dev, "Calling pinctrl_unregister( %p )\n", pctrl->pctldev );
 
 			pinctrl_unregister( pctrl->pctldev );
 
-			dev_info( dev, "Setting pctldesc pins to NULL and npins to 0\n" );
+			dev_dbg( dev, "Setting pctldesc pins to NULL and npins to 0\n" );
 
 			// pinctrl_unregister frees the pins associated with the device but leaves pointers dangling
 			pctrl->pctldesc.pins = NULL;
@@ -752,27 +845,27 @@ static void __exit pinctrl_fake_exit( void )
 
 	for( ; ! list_empty( & pinctrl_fake_list_head.head ); ) {
 
-		_pr_info( "calling list_first_entry()..\n" );
+		_pr_dbg( "calling list_first_entry()..\n" );
 
 		pctrl = list_first_entry( & pinctrl_fake_list_head.head, struct pinctrl_fake, head );
 
-		_pr_info( "pctrl = %p\n", pctrl );
+		_pr_dbg( "pctrl = %p\n", pctrl );
 
 		pdev = container_of( pctrl->dev, struct platform_device, dev );
 
-		_pr_info( "pdev = %p\n", pdev );
+		_pr_dbg( "pdev = %p\n", pdev );
 
 		r = pinctrl_fake_remove( pdev );
 		if ( EXIT_SUCCESS != r ) {
 			_pr_err( "Unable to remove platform device @ %p\n", pdev );
 		}
 
-		_pr_info( "removed pdev %p\n", pdev );
+		_pr_dbg( "Removed pdev %p\n", pdev );
 	}
 
 	BUG_ON( ! list_empty( & pinctrl_fake_list_head.head ) );
 
-	_pr_info( "unregistering\n" );
+	_pr_info( "Unregistering..\n" );
 
 	platform_driver_unregister( & pinctrl_fake_driver );
 
@@ -783,3 +876,344 @@ module_exit( pinctrl_fake_exit );
 MODULE_AUTHOR( "Christopher Friedt <chrisfriedt@gmail.com>" );
 MODULE_DESCRIPTION( MODULE_DESC );
 MODULE_LICENSE( "GPL v2" );
+
+/*
+(1)
+# cat /sys/kernel/debug/pinctrl/pinctrl-maps
+Pinctrl maps:
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+
+device spi-fake.0
+state pos-A
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_0
+function spi0
+
+device spi-fake.0
+state pos-B
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group spi0_1
+function spi0
+
+device i2c-fake.0
+state i2c0
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group i2c0
+function i2c0
+
+device mmc-fake.0
+state 2bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_0
+function mmc0
+
+device mmc-fake.0
+state 4bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_1
+function mmc0
+
+device mmc-fake.0
+state 8bit
+type MUX_GROUP (2)
+controlling device pinctrl-fake@0
+group mmc0_2
+function mmc0
+ */

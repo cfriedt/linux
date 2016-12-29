@@ -29,8 +29,10 @@
 
 / {
 	compatible = "simple-bus";
+	#address-cells = <1>;
+	#size-cells = <0>;
 	
-	pinctrl: pinctrl {
+	pinctrl_fake0: pinctrl-fake@0 {
 
 		/*
 		 * In contrast to devicetree bindings for concrete pin controller
@@ -45,6 +47,8 @@
 		compatible = "pinctrl-fake";
 		#address-cells = <1>;
 		#size-cells = <0>;
+		reg = <0>;
+		#pinctrl-cells = <0>;
 
 		/*
 		 * First, we define a set of fake pins and name those pins.
@@ -106,7 +110,7 @@
 		>;
 
 		/*
-		 * And, lastly, we define pinmux functions
+		 * Then we define pinmux functions.
 		 */
 		 
 		 pinctrl-fake-pin-muxes =
@@ -128,6 +132,21 @@
 		 	"mmc0_0",
 			"mmc0_1",
 			"mmc0_2"
+		 ;
+
+		/*
+		 * And, lastly, we define state mappings.
+		 * This is a 4-tuple of strings:
+		 * dev_name, name, group, function 
+		 */
+		 
+		 pinctrl-fake-mappings =
+		 	"spi-fake.0", "pos-A", "spi0", "spi0_0",
+		 	"spi-fake.0", "pos-B", "spi0", "spi0_1",
+		 	"i2c-fake.0", "i2c0", "i2c0", "i2c0",
+		 	"mmc-fake.0", "2bit", "mmc0", "mmc0_0",
+		 	"mmc-fake.0", "4bit", "mmc0", "mmc0_1",
+		 	"mmc-fake.0", "8bit", "mmc0", "mmc0_2"
 		 ;
 
 		gpiochip0: gpiochip@0 {
