@@ -147,10 +147,12 @@ static void gpio_fake_worker_work_func( struct work_struct *work ) {
 	list_for_each( it, & expired ) {
 		worker = container_of( it, struct gpio_fake_worker_elem, ex_head );
 
+/*
 		if ( fchip->reserved[ worker->gpio_offset ] ) {
 			dev_info( pctrl->dev, "GPIO Worker: pin %u unchanged due to reservation\n", fchip->pins[ worker->gpio_offset ] );
 			continue;
 		}
+*/
 
 		fchip->values[ worker->gpio_offset ] ^= 1;
 

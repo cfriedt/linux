@@ -29,7 +29,11 @@
 
 #ifndef EXIT_SUCCESS
 #define EXIT_SUCCESS 0
-#endif // EXIT_SUCCESS
+#endif
+
+#ifndef VPUL
+#define VPUL (void *) (unsigned long)
+#endif
 
 static unsigned gpio_fake_offset_to_pin( struct gpio_chip *chip,
 				       unsigned offset)
@@ -38,6 +42,8 @@ static unsigned gpio_fake_offset_to_pin( struct gpio_chip *chip,
 	struct gpio_fake_chip *fchip;
 
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	BUG_ON( offset >= fchip->npins );
 
@@ -55,6 +61,9 @@ static int gpio_fake_get(struct gpio_chip *chip, unsigned offset)
 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	value = fchip->values[ offset ];
 
@@ -71,6 +80,9 @@ static void gpio_fake_set(struct gpio_chip *chip, unsigned offset, int value)
 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	fchip->values[ offset ] = value;
 
@@ -86,6 +98,9 @@ static int gpio_fake_get_direction(struct gpio_chip *chip, unsigned offset)
 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	direction = fchip->directions[ offset ];
 
@@ -102,6 +117,9 @@ static int gpio_fake_direction_input( struct gpio_chip *chip, unsigned offset )
 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	fchip->directions[ offset ] = GPIOF_DIR_IN;
 
@@ -124,12 +142,17 @@ static int gpio_fake_direction_output( struct gpio_chip *chip, unsigned offset, 
 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pin = gpio_fake_offset_to_pin( chip, offset );
 
+/*
 	if ( fchip->reserved[ offset ] ) {
 		r = -EPERM;
 		goto out;
 	}
+*/
 	fchip->directions[ offset ] = GPIOF_DIR_OUT;
 
 #ifdef CONFIG_GPIO_FAKE_WORKER
@@ -140,7 +163,6 @@ static int gpio_fake_direction_output( struct gpio_chip *chip, unsigned offset, 
 
 	r = EXIT_SUCCESS;
 
-out:
 	return r;
 }
 
@@ -231,6 +253,9 @@ static unsigned gpio_fake_irq_startup( struct irq_data *d ) {
 
 	chip = irq_data_get_irq_chip_data( d );
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pctrl = gpiochip_get_data( chip );
 	offset = irqd_to_hwirq( d );
 
@@ -260,6 +285,9 @@ static int gpio_fake_irq_type( struct irq_data *d, unsigned type )
 
 	chip = irq_data_get_irq_chip_data( d );
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+
+	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+
 	pctrl = gpiochip_get_data( chip );
 	offset = irqd_to_hwirq( d );
 
@@ -313,6 +341,7 @@ void gpio_fake_irq_handler(struct irq_desc *desc)
 	chained_irq_exit( irq_chip, desc );
 }
 
+#ifdef CONFIG_GPIO_FAKE_WORKER
 static void gpio_fake_tasklet( unsigned long data ) {
 	struct gpio_fake_chip *fchip;
 	struct irq_desc *desc;
@@ -336,29 +365,33 @@ static void gpio_fake_tasklet( unsigned long data ) {
 	}
 	local_irq_enable();
 }
+#endif // CONFIG_GPIO_FAKE_WORKER
 
-int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label ) {
+int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_fake_chip *fchip ) {
 
 	int r;
 
-	struct gpio_fake_chip *fchip;
+	struct gpio_chip *chip;
+	struct device *dev;
+	const char *label;
 	int irq;
 
-	memcpy( chip, & gpio_fake_chip_template, sizeof( *chip ) );
-	chip->label = label;
-	chip->ngpio = ngpio;
+	fchip->pctrl = pctrl;
+	chip = & fchip->gpiochip;
+	dev = pctrl->dev;
 
-	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
+	dev_info( dev, "In %s()\n", __FUNCTION__ );
 
-#ifdef CONFIG_CONFIG_GPIO_FAKE_WORKER
+#ifdef CONFIG_GPIO_FAKE_WORKER
 	INIT_LIST_HEAD( & fchip->worker_head );
-#endif // CONFIG_CONFIG_GPIO_FAKE_WORKER
+#endif // CONFIG_GPIO_FAKE_WORKER
 
 	r = gpiochip_add_data( chip, pctrl );
 	if ( EXIT_SUCCESS != r ) {
-		dev_err( fchip->gpiochip.gpiodev->mockdev, "failed to add pinctrl data to %s\n", label );
+		dev_err( dev, "failed to add pinctrl data to %s\n", label );
 		goto out;
 	}
+	dev = fchip->gpiochip.gpiodev->mockdev;
 
 	chip->parent = pctrl->dev;
 
@@ -366,23 +399,23 @@ int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16
 
 	r = gpiochip_add_pingroup_range( chip, pctrl->pctldev, 0, fchip->group );
 	if ( EXIT_SUCCESS != r ) {
-		dev_err( fchip->gpiochip.gpiodev->mockdev, "failed to add pingroup range to %s\n", label );
+		dev_err( dev, "failed to add pingroup range to %s\n", label );
 		goto out;
 	}
 
-	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "adding irq chip to %s\n", label );
+	dev_dbg( dev, "adding irq chip to %s\n", label );
 	r = gpiochip_irqchip_add( chip, &gpio_fake_irqchip, irq, handle_simple_irq, IRQ_TYPE_NONE );
 	if ( EXIT_SUCCESS != r ) {
-		dev_err( fchip->gpiochip.gpiodev->mockdev, "failed to add IRQ chip\n" );
+		dev_err( dev, "failed to add IRQ chip\n" );
 		goto out;
 	}
 
-	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "calling gpiochip_set_chained_irqchip()\n" );
+	dev_dbg( dev, "calling gpiochip_set_chained_irqchip()\n" );
 	gpiochip_set_chained_irqchip( chip, &gpio_fake_irqchip, irq, gpio_fake_irq_handler );
 
 	tasklet_init( & fchip->tasklet, gpio_fake_tasklet, (unsigned long) fchip );
 
-	dev_info( pctrl->dev, "added %s (%s)\n", dev_name( chip->gpiodev->mockdev ), chip->label );
+	dev_info( dev, "added %s (%s)\n", dev_name( chip->gpiodev->mockdev ), chip->label );
 
 #ifdef CONFIG_GPIO_FAKE_WORKER
 	gpio_fake_worker_init( fchip );
@@ -394,12 +427,13 @@ out:
 	return r;
 }
 
-void gpio_fake_chip_fini( struct gpio_chip *chip ) {
+void gpio_fake_chip_fini( struct gpio_fake_chip *fchip ) {
 	struct pinctrl_fake *pctrl;
+	struct gpio_chip *chip;
+
+	chip = & fchip->gpiochip;
 
 #ifdef CONFIG_GPIO_FAKE_WORKER
-	struct gpio_fake_chip *fchip;
-	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 	gpio_fake_worker_fini( fchip );
 #endif // CONFIG_GPIO_FAKE_WORKER
 
@@ -407,6 +441,136 @@ void gpio_fake_chip_fini( struct gpio_chip *chip ) {
 
 	dev_info( pctrl->dev, "removed %s (%s)\n", dev_name( chip->gpiodev->mockdev ), chip->label );
 }
+
+
+static int gpio_fake_of_parse( struct gpio_fake_chip *fchip ) {
+
+	static const char propname[] = "gpio-ranges";
+	static const char group_names_propname[] = "gpio-ranges-group-names";
+
+	int r;
+
+	struct gpio_chip *chip;
+	struct device_node *np; // child (gpio controller)
+	struct device_node *pnp; // parent (pin controller)
+	struct of_phandle_args pinspec;
+
+	int i;
+	int j;
+	int k;
+	const char *name;
+	struct property *group_names;
+	char pinctrl_fake_pin_group_name_buf[ 64 ];
+	u32 value;
+
+	chip = & fchip->gpiochip;
+	np = chip->of_node;
+	group_names = of_find_property( np, group_names_propname, NULL );
+
+	fchip->npins = 0;
+
+	for( i = 0, j = 0; ; i++ ) {
+		if ( i > 0 ) {
+			_pr_err( "%s: Currently, only 1 %s may be specified for gpio-fake DT bindings\n", np->full_name, propname );
+			break;
+		}
+
+		r = of_parse_phandle_with_fixed_args( np, propname, 3, i, &pinspec );
+		if ( IS_ERR( VPUL r ) ) {
+			_pr_err( "%s: Unable to find property '%s'\n", np->full_name, propname );
+			r = -EINVAL;
+			goto out;
+		}
+		pnp = pinspec.np;
+
+		if ( 0 != pinspec.args[ 2 ] ) {
+			_pr_err( "%s: Numeric GPIO ranges unsupported for gpio-fake. Please use 'gpio-ranges-group-names' instead.\n", np->full_name );
+			r = -EINVAL;
+			goto out;
+		}
+
+		// npins == 0: special range
+
+		if ( 0 != pinspec.args[ 1 ] ) {
+			_pr_err( "%s: Illegal gpio-range format.\n", np->full_name );
+			r = -EINVAL;
+			goto out;
+		}
+
+		if ( NULL == group_names ) {
+			_pr_err( "%s: GPIO group range requested but no %s property.\n", np->full_name, group_names_propname );
+			r = -EINVAL;
+			goto out;
+		}
+
+		r = of_property_read_string_index( np, group_names_propname, i, &name );
+		if ( IS_ERR( VPUL r ) ) {
+			goto out;
+		}
+
+		if ( 0 == strlen( name ) ) {
+			_pr_err( "%s: Group name of GPIO group range cannot be the empty string.\n", np->full_name );
+			r = -EINVAL;
+			goto out;
+		}
+
+		snprintf( pinctrl_fake_pin_group_name_buf, sizeof( pinctrl_fake_pin_group_name_buf ) - 1, "pinctrl-fake-pin-group-%s", name );
+
+		r = of_property_count_u32_elems( pnp, pinctrl_fake_pin_group_name_buf );
+		if ( IS_ERR_OR_NULL( VPUL r ) ) {
+			_pr_err( "%s: Cannot find property '%s' (%d).\n", pnp->full_name, pinctrl_fake_pin_group_name_buf, r );
+			r = EXIT_SUCCESS == r ? -EINVAL : r;
+			goto out;
+		}
+		fchip->npins = r;
+		fchip->gpiochip.ngpio = r;
+
+		fchip->pins = kzalloc( fchip->npins * sizeof( u16 ), GFP_KERNEL );
+		fchip->values = kzalloc( fchip->npins * sizeof( u8 ), GFP_KERNEL );
+		fchip->directions = kzalloc( fchip->npins * sizeof( u8 ), GFP_KERNEL );
+		fchip->irq_types = kzalloc( fchip->npins * sizeof( u8 ), GFP_KERNEL );
+		fchip->pended = kzalloc( fchip->npins * sizeof( u8 ), GFP_KERNEL );
+
+		fchip->group = kstrdup( name, GFP_KERNEL );
+
+		if (
+			false
+			|| NULL == fchip->pins
+			|| NULL == fchip->values
+			|| NULL == fchip->directions
+			|| NULL == fchip->irq_types
+			|| NULL == fchip->pended
+			|| NULL == fchip->group
+		) {
+			r = -ENOMEM;
+			goto out;
+		}
+
+		for( k = 0; k < r; k++, j++ ) {
+
+			r = of_property_read_u32_index( pnp, pinctrl_fake_pin_group_name_buf, k, &value );
+			if ( IS_ERR( VPUL r ) ) {
+				_pr_err( "%s: Cannot read %uth element of property '%s' (%d).\n", pnp->full_name, k, pinctrl_fake_pin_group_name_buf, r );
+				goto out;
+			}
+
+			*( (u16 *)( & fchip->pins[ j ] ) ) = (u16) value;
+			fchip->values[ j ] = 0;
+			fchip->directions[ j ] = GPIOF_DIR_IN;
+			fchip->irq_types[ j ] = IRQ_TYPE_NONE;
+			fchip->pended[ j ] = false;
+		}
+	}
+
+	r = EXIT_SUCCESS;
+
+out:
+	return r;
+}
+
+/*
+ * Device Probing
+ */
 
 static struct of_device_id gpio_fake_dt_ids[] = {
 	{
@@ -420,6 +584,93 @@ MODULE_DEVICE_TABLE(of, gpio_fake_dt_ids);
 
 static struct gpio_fake_chip gpio_fake_list_head;
 
+static void gpio_fake_free( struct gpio_fake_chip *fchip );
+
+static struct gpio_fake_chip *gpio_fake_allocate_from_dt( struct device *dev, struct device_node *np ) {
+
+	struct gpio_fake_chip *r;
+
+	int rr;
+	struct pinctrl_fake *pctrl;
+	struct device_node *pnp; // parent, np is child
+	struct gpio_chip *chip;
+
+    if ( ! of_match_device( gpio_fake_dt_ids, dev ) ) {
+		rr = -ENODEV;
+		goto out;
+    }
+
+	dev_info( dev, "In %s()\n", __FUNCTION__ );
+
+    dev_info( dev, "checking parent device\n" );
+
+	if (
+		! (
+			true
+			&& dev->parent
+			&& ( pctrl = dev_get_drvdata( dev->parent ) )
+			&& pinctrl_fake_valid_instance( pctrl )
+		)
+	) {
+		dev_err( dev, "No valid pinctrl-fake instance @ %p\n", pctrl );
+		rr = -ENODEV;
+		goto out;
+	}
+
+	dev_info( dev, "checking node pointer / parent node pointer\n" );
+
+	pnp = dev->parent->of_node;
+
+	dev_dbg( dev, "dev: %p, parent: %p, pctrl: %p\n", dev, dev->parent, pctrl );
+
+	//ngpio = of_property_count_u32_elems( pnp,  );
+
+	dev_info( dev, "allocating fchip\n" );
+
+	r = kzalloc( sizeof( struct gpio_fake_chip ), GFP_KERNEL );
+	if ( NULL == r ) {
+		dev_err( dev, "unable to allocate 'struct gpio_fake'\n" );
+		rr = -ENOMEM;
+		goto out;
+	}
+	chip = & r->gpiochip;
+
+	dev_info( dev, "copying template\n" );
+
+	memcpy( chip, & gpio_fake_chip_template, sizeof( *chip ) );
+	chip->of_node = np;
+	chip->label = np->full_name;
+
+	dev_info( dev, "parsing..\n" );
+
+	rr = gpio_fake_of_parse( r );
+	if ( IS_ERR( VPUL rr ) ) {
+		dev_err( dev, "failed to parse devicetree\n" );
+		goto out;
+	}
+
+	rr = EXIT_SUCCESS;
+
+out:
+	if ( EXIT_SUCCESS != rr ) {
+		gpio_fake_free( r );
+		r = ERR_PTR( rr );
+	}
+	return r;
+}
+
+static void gpio_fake_free( struct gpio_fake_chip *fchip ) {
+	if ( NULL != fchip ) {
+		kfree( fchip->group );
+		kfree( fchip->pins );
+		kfree( fchip->values );
+		kfree( fchip->directions );
+		kfree( fchip->irq_types );
+		kfree( fchip->pended );
+		kfree( fchip );
+	}
+}
+
 static int gpio_fake_probe(struct platform_device *pdev)
 {
 	int r;
@@ -429,132 +680,56 @@ static int gpio_fake_probe(struct platform_device *pdev)
 
 	struct device *dev;
 
-	struct device_node *np; // child
-	u32 pin_number;
-	int i;
-
 	dev = &pdev->dev;
 
-	dev_info( dev, "in gpio_fake_probe()\n" );
+	dev_info( dev, "In %s()\n", __FUNCTION__ );
 
-    if ( NULL == of_match_device( gpio_fake_dt_ids, dev ) ) {
-		r = -ENODEV;
+	fchip = gpio_fake_allocate_from_dt( dev, dev->of_node );
+	if ( IS_ERR_OR_NULL( fchip ) ) {
+		r = PTR_ERR( fchip );
+		r = EXIT_SUCCESS == r ? -ENOMEM : r;
 		goto out;
-    }
+	}
 
-	np = pdev->dev.of_node;
+	dev_info( dev, "adding to list..\n" );
+
+	INIT_LIST_HEAD( & fchip->head );
+	list_add( & fchip->head, & gpio_fake_list_head.head );
 
 	pctrl = dev_get_drvdata( dev->parent );
-	dev_info( dev, "dev: %p, parent: %p, pctrl: %p\n", dev, dev->parent, pctrl );
 
-	r = EXIT_SUCCESS;
-	goto out;
+	dev_info( dev, "initializing..\n" );
+	r = gpio_fake_chip_init( pctrl, fchip );
+	if ( IS_ERR( VPUL r ) ) {
+		goto out;
+	}
+
+	dev_info( dev, "Added gpio-fake @ %p, pdev @ %p, dev @ %p\n", fchip, pdev, dev );
 
 out:
 	return r;
-
-//	fchip = kzalloc( sizeof( struct gpio_fake ), GFP_KERNEL );
-//	if ( NULL == fchip ) {
-//		dev_err( dev, "unable to allocate 'struct gpio_fake'\n" );
-//		r = -ENOMEM;
-//		goto out;
-//	}
-//
-//	pctrl->pctldesc.npins = of_property_count_u32_elems(  np, "pin-numbers" );
-//	if ( pctrl->pctldesc.npins < 0 ) {
-//		dev_err( dev, "unable to determine length of 'pin-numbers' array\n" );
-//		r = pctrl->pctldesc.npins;
-//		goto free_pctrl;
-//	}
-//
-//	pctrl->pctldesc.pins = kzalloc( sizeof( struct pinctrl_pin_desc ), GFP_KERNEL );
-//	if ( NULL == pctrl->pctldesc.pins ) {
-//		dev_err( dev, "unable to allocate array of 'struct pinctrl_pin_desc'\n" );
-//		r = -ENOMEM;
-//		goto free_pctrl;
-//	}
-//
-//	for( i = 0; i < pctrl->pctldesc.npins; i++ ) {
-//		r = of_property_read_u32_index( np, "pin-numbers", i, & pin_number );
-//		if ( EXIT_SUCCESS != r ) {
-//			dev_err( dev, "unable to read 'pin-numbers' at index %d\n", i );
-//			goto free_pins;
-//		}
-//		*((unsigned *) & pctrl->pctldesc.pins[ i ].number) = pin_number;
-//		r = of_property_read_string_index( np, "pin-names", i, (const char **)& pctrl->pctldesc.pins[ i ].name );
-//		if ( EXIT_SUCCESS != r ) {
-//			dev_err( dev, "unable to read 'pin-numbers' at index %d\n", i );
-//			goto free_pins;
-//		}
-//		*((void **) & pctrl->pctldesc.pins[ i ].drv_data ) = pctrl;
-//	}
-//
-//	//raw_spin_lock_init( & pctrl->lock );
-//	pctrl->dev = dev;
-//	pctrl->pctldesc.name = dev_name( dev );
-//	pctrl->pctldesc.pctlops = &gpio_fake_ops,
-//	pctrl->pctldesc.pmxops = &gpio_fake_pinmux_ops,
-//	pctrl->pctldesc.confops = &gpio_fake_pinconf_ops,
-//	pctrl->pctldesc.owner = THIS_MODULE,
-//
-//	pctrl->pctldev = pinctrl_register( & pctrl->pctldesc, & pdev->dev, pctrl );
-//	if ( IS_ERR( pctrl->pctldev ) ) {
-//		r = PTR_ERR( pctrl->pctldev );
-//		dev_err( dev, "failed to register pinctrl driver (%d)\n", r );
-//		goto out;
-//	}
-//
-//	platform_set_drvdata( pdev, pctrl );
-//
-//	INIT_LIST_HEAD( & pctrl->head );
-//	list_add( & pctrl->head, & gpio_fake_list_head.head );
-//	dev_info( dev, "added gpio_fake @ %p\n", pctrl );
-//
-//	r = EXIT_SUCCESS;
-//
-//	goto out;
-//
-//free_pins:
-//	kfree( pctrl->pctldesc.pins );
-//	pctrl->pctldesc.pins = NULL;
-//
-//free_pctrl:
-//	kfree( pctrl );
-//	pctrl = NULL;
-//
-//out:
-//	return r;
 }
 
 static int gpio_fake_remove( struct platform_device *pdev )
 {
-//	struct gpio_fake *pctrl;
+	struct gpio_fake_chip *fchip;
 	struct device *dev;
 
-//	dev = & pdev->dev;
+	dev = & pdev->dev;
 
-//	for( ; ! list_empty( & gpio_fake_list_head.head ) ; ) {
-//		pctrl = list_first_entry( & gpio_fake_list_head.head, struct gpio_fake, head );
-//
-//		dev_info( dev, "removing gpio_fake @ %p\n", pctrl );
-//
-//		list_del( & pctrl->head );
-//
-//		dev_info( dev, "removed from list\n" );
-//
-//		pinctrl_unregister( pctrl->pctldev );
-//		pctrl->pctldev = NULL;
-//		dev_info( dev, "unregistered\n" );
-//
-//		memset( pctrl->pctldesc.pins, 0, pctrl->pctldesc.npins * sizeof(  struct pinctrl_pin_desc ) );
-//		kfree( pctrl->pctldesc.pins );
-//		pctrl->pctldesc.pins = NULL;
-//		pctrl->pctldesc.npins = 0;
-//		dev_info( dev, "freed pins\n" );
-//
-//		memset( pctrl, 0, sizeof( *pctrl ) );
-//		kfree( pctrl );
-//	}
+	for( ; ! list_empty( & gpio_fake_list_head.head ) ; ) {
+		fchip = list_first_entry( & gpio_fake_list_head.head, struct gpio_fake_chip, head );
+
+		dev_info( dev, "removing gpio_fake_chip @ %p\n", fchip );
+
+		list_del( & fchip->head );
+
+		dev_info( dev, "removed from list\n" );
+
+		gpio_fake_chip_fini( fchip );
+
+		gpio_fake_free( fchip );
+	}
 
 	return EXIT_SUCCESS;
 }
@@ -607,8 +782,15 @@ module_init( gpio_fake_init );
 
 static void __exit gpio_fake_exit( void )
 {
-	for( ; ! list_empty( & gpio_fake_list_head.head ); ) {
+	struct gpio_fake_chip *fchip;
+	struct platform_device *pdev;
 
+	for( ; ! list_empty( & gpio_fake_list_head.head ); ) {
+		fchip = list_first_entry( & gpio_fake_list_head.head, struct gpio_fake_chip, head );
+
+		pdev = container_of( & fchip->gpiochip.gpiodev->dev, struct platform_device, dev );
+
+		gpio_fake_remove( pdev );
 	}
 
 	platform_driver_unregister( & gpio_fake_driver );

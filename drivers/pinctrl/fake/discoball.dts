@@ -32,7 +32,7 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 	
-	pinctrl_fake0: pinctrl-fake@0 {
+	pinctrl0: pinctrl-fake@0 {
 
 		/*
 		 * In contrast to devicetree bindings for concrete pin controller
@@ -82,73 +82,216 @@
 		 */
 
 		pinctrl-fake-pin-groups =
-			"spi0_0",
-			"spi0_1",
-			"i2c0",
-			"mmc0_0",
-			"mmc0_1",
-			"mmc0_2"
+			"gpiochip0_grp",
+			"gpiochip1_grp",
+			"gpiochip2_grp",
+			"gpiochip3_grp",
+			"gpiochip4_grp",
+			"gpiochip5_grp",
+			"gpiochip6_grp",
+			"gpiochip7_grp",
+			"gpiochip8_grp",
+			"spi0_0_grp",
+			"spi0_1_grp",
+			"i2c0_grp",
+			"mmc0_0_grp",
+			"mmc0_1_grp",
+			"mmc0_2_grp"
 		;
-		pinctrl-fake-pin-group-0 = <
-			0 8 16 24
-		>;
-		pinctrl-fake-pin-group-1 = <
-			38 46 54 62
-		>;
-		pinctrl-fake-pin-group-2 = <
-			24 25
-		>;
-		pinctrl-fake-pin-group-3 = <
-			56 57
-		>;
-		pinctrl-fake-pin-group-4 = <
-			56 57 58 59
-		>;
-		pinctrl-fake-pin-group-5 = <
-			56 57 58 59
-			60 61 62 63
-		>;
+		pinctrl-fake-pin-group-gpiochip0_grp = < 0 8 16 >;
+		pinctrl-fake-pin-group-gpiochip1_grp = < 24 >;
+		pinctrl-fake-pin-group-gpiochip2_grp = < 25 >;
+		pinctrl-fake-pin-group-gpiochip3_grp = < 38 46 54 >;
+		pinctrl-fake-pin-group-gpiochip4_grp = < 56 57 >;
+		pinctrl-fake-pin-group-gpiochip5_grp = < 58 59 >;
+		pinctrl-fake-pin-group-gpiochip6_grp = < 60 61 >;
+		pinctrl-fake-pin-group-gpiochip7_grp = < 62 >;
+		pinctrl-fake-pin-group-gpiochip8_grp = < 63 >;
+		pinctrl-fake-pin-group-spi0_0_grp = < 0 8 16 24 >;
+		pinctrl-fake-pin-group-spi0_1_grp = < 38 46 54 62 >;
+		pinctrl-fake-pin-group-i2c0_grp = < 24 25 >;
+		pinctrl-fake-pin-group-mmc0_0_grp = < 56 57 >;
+		pinctrl-fake-pin-group-mmc0_1_grp = < 56 57 58 59 >;
+		pinctrl-fake-pin-group-mmc0_2_grp = < 56 57 58 59 60 61 62 63>;
 
 		/*
 		 * Then we define pinmux functions.
 		 */
 		 
-		 pinctrl-fake-pin-muxes =
-		 	"spi0",
-		 	"i2c0",
-		 	"mmc0"
-		 ;
-		 pinctrl-fake-pin-mux-0 =
-		 	"spi0_0",
-		 	"spi0_1"
-		 ;
-		 pinctrl-fake-pin-mux-1 =
-		 	"i2c0"
-		 ;
-		 pinctrl-fake-pin-mux-2 =
-		 	"mmc0_0",
-			"mmc0_1",
-			"mmc0_2"
-		 ;
+		pinctrl-fake-pin-muxes =
+			"gpiochip0",
+			"gpiochip1",
+			"gpiochip2",
+			"gpiochip3",
+			"gpiochip4",
+			"gpiochip5",
+			"gpiochip6",
+			"gpiochip7",
+			"gpiochip8",
+			"spi0",
+			"i2c0",
+			"mmc0"
+		;
+		pinctrl-fake-pin-mux-gpiochip0 = "gpiochip0_grp";
+		pinctrl-fake-pin-mux-gpiochip1 = "gpiochip1_grp";
+		pinctrl-fake-pin-mux-gpiochip2 = "gpiochip2_grp";
+		pinctrl-fake-pin-mux-gpiochip3 = "gpiochip3_grp";
+		pinctrl-fake-pin-mux-gpiochip4 = "gpiochip4_grp";
+		pinctrl-fake-pin-mux-gpiochip5 = "gpiochip5_grp";
+		pinctrl-fake-pin-mux-gpiochip6 = "gpiochip6_grp";
+		pinctrl-fake-pin-mux-gpiochip7 = "gpiochip7_grp";
+		pinctrl-fake-pin-mux-gpiochip8 = "gpiochip8_grp";
+		pinctrl-fake-pin-mux-spi0 = "spi0_0_grp", "spi0_1_grp";
+		pinctrl-fake-pin-mux-i2c0 = "i2c0_grp";
+		pinctrl-fake-pin-mux-mmc0 = "mmc0_0_grp", "mmc0_1_grp", "mmc0_2_grp";
 
 		/*
-		 * And, lastly, we define state mappings.
-		 * This is a 4-tuple of strings:
-		 * dev_name, name, group, function 
+		 * Then define pinctrl mappings. This is a list of 4-tuple strings.
+		 * dev-name, state, function, group
 		 */
-		 
-		 pinctrl-fake-mappings =
-		 	"spi-fake.0", "pos-A", "spi0", "spi0_0",
-		 	"spi-fake.0", "pos-B", "spi0", "spi0_1",
-		 	"i2c-fake.0", "i2c0", "i2c0", "i2c0",
-		 	"mmc-fake.0", "2bit", "mmc0", "mmc0_0",
-		 	"mmc-fake.0", "4bit", "mmc0", "mmc0_1",
-		 	"mmc-fake.0", "8bit", "mmc0", "mmc0_2"
-		 ;
 
+		pinctrl-fake-mappings =
+			"gpiochip-fake.0", "default", "gpiochip0", "gpiochip0_grp",
+			"gpiochip-fake.1", "default", "gpiochip1", "gpiochip1_grp",
+			"gpiochip-fake.2", "default", "gpiochip2", "gpiochip2_grp",
+			"gpiochip-fake.3", "default", "gpiochip3", "gpiochip3_grp",
+			"gpiochip-fake.4", "default", "gpiochip4", "gpiochip4_grp",
+			"gpiochip-fake.5", "default", "gpiochip5", "gpiochip5_grp",
+			"gpiochip-fake.6", "default", "gpiochip6", "gpiochip6_grp",
+			"gpiochip-fake.7", "default", "gpiochip7", "gpiochip7_grp",
+			"gpiochip-fake.8", "default", "gpiochip8", "gpiochip8_grp",
+			
+			"spi-fake.0", "pos-A", "spi0", "spi0_0_grp",
+			"spi-fake.0", "pos-B", "spi0", "spi0_1_grp",
+
+			"i2c-fake.0", "i2c0", "i2c0", "i2c0_grp",
+
+			"mmc-fake.0", "2bit", "mmc0", "mmc0_0_grp",
+			"mmc-fake.0", "4bit", "mmc0", "mmc0_1_grp",
+
+			"mmc-fake.0", "8bit", "mmc0", "mmc0_2_grp"
+		;
+
+		/*
+		 * Instantiate gpio controllers
+		 * (references parent mappings and pin-group data)
+		 */
 		gpiochip0: gpiochip@0 {
+			#gpio-cells = < 0 >;
 			compatible = "gpio-fake";
 			reg = <0>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip0_grp";		
 		};
+		gpiochip1: gpiochip@1 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <1>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip1_grp";		
+		};
+		gpiochip2: gpiochip@2 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <2>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip2_grp";		
+		};
+		gpiochip3: gpiochip@3 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <3>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip3_grp";		
+		};
+		gpiochip4: gpiochip@4 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <4>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip4_grp";		
+		};
+		gpiochip5: gpiochip@5 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <5>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip5_grp";		
+		};
+		gpiochip6: gpiochip@6 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <6>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip6_grp";		
+		};
+		gpiochip7: gpiochip@7 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <7>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip7_grp";		
+		};
+		gpiochip8: gpiochip@8 {
+			#gpio-cells = < 0 >;
+			compatible = "gpio-fake";
+			reg = <8>;
+			gpio-controller;
+			interrupt-controller;
+			gpio-ranges =
+				< &pinctrl0 0 0 0 >;
+			gpio-ranges-group-names =
+				"gpiochip8_grp";		
+		};
+
+		/*
+		 * Instantiate i2c controller(s)
+		 * (references parent mappings and pin-group data)
+		 */
+		i2c0: i2c@0 { compatible = "i2c-fake"; reg = <0>; };
+
+		/*
+		 * Instantiate spi controller(s)
+		 * (references parent mappings and pin-group data)
+		 */
+		spi0: spi@0 { compatible = "spi-fake"; reg = <0>; };
+
+		/*
+		 * Instantiate mmc controller(s)
+		 * (references parent mappings and pin-group data)
+		 */
+		mmc0: mmc@0 { compatible = "mmc-fake"; reg = <0>; };
 	};
 };

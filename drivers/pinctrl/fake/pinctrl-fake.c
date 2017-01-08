@@ -197,7 +197,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 		}
 
 		memset( buf, 0, sizeof( buf ) );
-		snprintf( buf, sizeof( buf ) - 1, "pinctrl-fake-pin-group-%u", i );
+		snprintf( buf, sizeof( buf ) - 1, "pinctrl-fake-pin-group-%s", pctrl->groups[ i ].name );
 
 		r = of_property_count_u32_elems( np, buf );
 		if ( r <= 0 ) {
@@ -262,7 +262,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 		}
 
 		memset( buf, 0, sizeof( buf ) );
-		snprintf( buf, sizeof( buf ) - 1, "pinctrl-fake-pin-mux-%u", i );
+		snprintf( buf, sizeof( buf ) - 1, "pinctrl-fake-pin-mux-%s", pctrl->muxes[ i ].name );
 
 		r = of_property_count_strings( np, buf );
 		if ( r <= 0 ) {
@@ -669,6 +669,22 @@ MODULE_DEVICE_TABLE(of, pinctrl_fake_dt_ids);
 
 static struct pinctrl_fake pinctrl_fake_list_head;
 
+bool pinctrl_fake_valid_instance( struct pinctrl_fake *pctrl ) {
+	bool r;
+	struct pinctrl_fake *it;
+
+	r = false;
+	list_for_each_entry( it, & pinctrl_fake_list_head.head, head ) {
+		if ( it == pctrl ) {
+			r = true;
+			break;
+		}
+	}
+
+	return r;
+}
+EXPORT_SYMBOL( pinctrl_fake_valid_instance );
+
 static int pinctrl_fake_probe(struct platform_device *pdev)
 {
 	int r;
@@ -727,7 +743,7 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		goto unregister_map;
 	}
 
-	dev_info( dev, "Added pinctrl_fake @ %p, pdev @ %p, dev @ %p\n", pctrl, pdev, dev );
+	dev_info( dev, "Added pinctrl-fake @ %p, pdev @ %p, dev @ %p\n", pctrl, pdev, dev );
 
 	r = EXIT_SUCCESS;
 	goto out;

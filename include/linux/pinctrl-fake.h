@@ -80,4 +80,6 @@ static inline struct pinctrl_fake *pinctrl_pin_desc_to_pinctrl_fake( struct pinc
 	return r;
 }
 
+bool pinctrl_fake_valid_instance( struct pinctrl_fake *pctrl );
+
 #endif // PINCTRL_FAKE_H_

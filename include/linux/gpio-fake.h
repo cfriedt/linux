@@ -20,10 +20,12 @@
  * @pins       - array of pin numbers, length @npins
  * @values     - array of pin value, length @npins
  * @directions - array of pin directions, length @npins. E.g. GPIOF_DIR_IN or GPIOF_DIR_OUT
- * @irq_types  - array of pin irq types, of length @npins
+ * @irq_types  - array of pin irq types, of length @npins. E.g. IRQ_TYPE_NONE, IRQ_TYPE_EDGE_RISING, IRQ_TYPE_EDGE_FALLING, IRQ_TYPE_EDGE_BOTH.
+ *
  */
 struct gpio_fake_chip {
 	struct gpio_chip gpiochip;
+	struct pinctrl_fake *pctrl;
 	const char *group;
 	u16 npins;
 	const u16 *pins;
@@ -31,7 +33,8 @@ struct gpio_fake_chip {
 	u8 *directions;
 	u8 *irq_types;
 	u8 *pended;
-	u8 *reserved;
+	// XXX: @CF: this should be handled by pinctrl subsystem now
+//	u8 *reserved;
 	struct tasklet_struct tasklet;
 #ifdef CONFIG_GPIO_FAKE_WORKER
 	struct delayed_work worker_dwork;
@@ -42,8 +45,8 @@ struct gpio_fake_chip {
 
 struct pinctrl_fake;
 
-int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_chip *chip, u16 ngpio, const char *label );
-void gpio_fake_chip_fini( struct gpio_chip *chip );
+int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_fake_chip *fchip );
+void gpio_fake_chip_fini( struct gpio_fake_chip *fchip );
 
 void gpio_fake_irq_handler( struct irq_desc *irq_desc );
 
