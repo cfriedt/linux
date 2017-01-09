@@ -43,7 +43,7 @@ static unsigned gpio_fake_offset_to_pin( struct gpio_chip *chip,
 
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	BUG_ON( offset >= fchip->npins );
 
@@ -62,7 +62,7 @@ static int gpio_fake_get(struct gpio_chip *chip, unsigned offset)
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	value = fchip->values[ offset ];
@@ -81,7 +81,7 @@ static void gpio_fake_set(struct gpio_chip *chip, unsigned offset, int value)
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	fchip->values[ offset ] = value;
@@ -99,7 +99,7 @@ static int gpio_fake_get_direction(struct gpio_chip *chip, unsigned offset)
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	direction = fchip->directions[ offset ];
@@ -118,7 +118,7 @@ static int gpio_fake_direction_input( struct gpio_chip *chip, unsigned offset )
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pin = gpio_fake_offset_to_pin( chip, offset );
 	fchip->directions[ offset ] = GPIOF_DIR_IN;
@@ -143,7 +143,7 @@ static int gpio_fake_direction_output( struct gpio_chip *chip, unsigned offset, 
 	pctrl = gpiochip_get_data(chip);
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pin = gpio_fake_offset_to_pin( chip, offset );
 
@@ -254,7 +254,7 @@ static unsigned gpio_fake_irq_startup( struct irq_data *d ) {
 	chip = irq_data_get_irq_chip_data( d );
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pctrl = gpiochip_get_data( chip );
 	offset = irqd_to_hwirq( d );
@@ -286,7 +286,7 @@ static int gpio_fake_irq_type( struct irq_data *d, unsigned type )
 	chip = irq_data_get_irq_chip_data( d );
 	fchip = container_of( chip, struct gpio_fake_chip, gpiochip );
 
-	dev_info( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( fchip->gpiochip.gpiodev->mockdev, "In %s()\n", __FUNCTION__ );
 
 	pctrl = gpiochip_get_data( chip );
 	offset = irqd_to_hwirq( d );
@@ -380,7 +380,7 @@ int gpio_fake_chip_init( struct pinctrl_fake *pctrl, struct gpio_fake_chip *fchi
 	chip = & fchip->gpiochip;
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 #ifdef CONFIG_GPIO_FAKE_WORKER
 	INIT_LIST_HEAD( & fchip->worker_head );
@@ -440,6 +440,8 @@ void gpio_fake_chip_fini( struct gpio_fake_chip *fchip ) {
 	pctrl = gpiochip_get_data( chip );
 
 	dev_info( pctrl->dev, "removed %s (%s)\n", dev_name( chip->gpiodev->mockdev ), chip->label );
+
+	gpiochip_remove( chip );
 }
 
 
@@ -600,9 +602,9 @@ static struct gpio_fake_chip *gpio_fake_allocate_from_dt( struct device *dev, st
 		goto out;
     }
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
-    dev_info( dev, "checking parent device\n" );
+    dev_dbg( dev, "checking parent device\n" );
 
 	if (
 		! (
@@ -617,7 +619,7 @@ static struct gpio_fake_chip *gpio_fake_allocate_from_dt( struct device *dev, st
 		goto out;
 	}
 
-	dev_info( dev, "checking node pointer / parent node pointer\n" );
+	dev_dbg( dev, "checking node pointer / parent node pointer\n" );
 
 	pnp = dev->parent->of_node;
 
@@ -625,7 +627,7 @@ static struct gpio_fake_chip *gpio_fake_allocate_from_dt( struct device *dev, st
 
 	//ngpio = of_property_count_u32_elems( pnp,  );
 
-	dev_info( dev, "allocating fchip\n" );
+	dev_dbg( dev, "allocating fchip\n" );
 
 	r = kzalloc( sizeof( struct gpio_fake_chip ), GFP_KERNEL );
 	if ( NULL == r ) {
@@ -635,13 +637,13 @@ static struct gpio_fake_chip *gpio_fake_allocate_from_dt( struct device *dev, st
 	}
 	chip = & r->gpiochip;
 
-	dev_info( dev, "copying template\n" );
+	dev_dbg( dev, "copying template\n" );
 
 	memcpy( chip, & gpio_fake_chip_template, sizeof( *chip ) );
 	chip->of_node = np;
 	chip->label = np->full_name;
 
-	dev_info( dev, "parsing..\n" );
+	dev_dbg( dev, "parsing..\n" );
 
 	rr = gpio_fake_of_parse( r );
 	if ( IS_ERR( VPUL rr ) ) {
@@ -682,7 +684,7 @@ static int gpio_fake_probe(struct platform_device *pdev)
 
 	dev = &pdev->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	fchip = gpio_fake_allocate_from_dt( dev, dev->of_node );
 	if ( IS_ERR_OR_NULL( fchip ) ) {
@@ -691,14 +693,14 @@ static int gpio_fake_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	dev_info( dev, "adding to list..\n" );
+	dev_dbg( dev, "adding to list..\n" );
 
 	INIT_LIST_HEAD( & fchip->head );
 	list_add( & fchip->head, & gpio_fake_list_head.head );
 
 	pctrl = dev_get_drvdata( dev->parent );
 
-	dev_info( dev, "initializing..\n" );
+	dev_dbg( dev, "initializing..\n" );
 	r = gpio_fake_chip_init( pctrl, fchip );
 	if ( IS_ERR( VPUL r ) ) {
 		goto out;

@@ -108,7 +108,7 @@ static struct pinctrl_fake *pinctrl_fake_allocate_from_dt( struct device *dev, s
 	char buf[ 64 ];
 	char **charp;
 
-	dev_info( dev, "%s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	pctrl = kzalloc( sizeof( struct pinctrl_fake ), GFP_KERNEL );
 	if ( NULL == pctrl ) {
@@ -474,7 +474,7 @@ static int pinctrl_fake_get_groups_count(struct pinctrl_dev *pctldev)
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	r = pctrl->ngroups;
 
@@ -491,7 +491,7 @@ static const char *pinctrl_fake_get_group_name(struct pinctrl_dev *pctldev,
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	if ( group >= pctrl->ngroups ) {
 		r = NULL;
@@ -514,7 +514,7 @@ static int pinctrl_fake_get_group_pins(struct pinctrl_dev *pctldev, unsigned gro
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	if ( group >= pctrl->ngroups ) {
 		r = -EINVAL;
@@ -539,7 +539,7 @@ static void pinctrl_fake_pin_dbg_show(struct pinctrl_dev *pctldev, struct seq_fi
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	// see pinctrl-intel.c for example
 	return;
@@ -554,7 +554,7 @@ static int pinctrl_fake_get_functions_count(struct pinctrl_dev *pctldev)
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	r = pctrl->nmuxes;
 
@@ -571,7 +571,7 @@ static const char *pinctrl_fake_get_function_name(struct pinctrl_dev *pctldev,
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	if ( function >= pctrl->nmuxes ) {
 		r = NULL;
@@ -596,7 +596,7 @@ static int pinctrl_fake_get_function_groups(struct pinctrl_dev *pctldev,
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	if ( function >= pctrl->nmuxes ) {
 		r = -EINVAL;
@@ -620,7 +620,7 @@ static int pinctrl_fake_pinmux_set_mux(struct pinctrl_dev *pctldev, unsigned fun
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	// see pinctrl-intel.c for example
 	return EXIT_SUCCESS;
@@ -636,7 +636,7 @@ static int pinctrl_fake_config_get(struct pinctrl_dev *pctldev, unsigned pin,
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	// see pinctrl-intel.c for example
 	return EXIT_SUCCESS;
@@ -651,7 +651,7 @@ static int pinctrl_fake_config_set(struct pinctrl_dev *pctldev, unsigned pin,
 	pctrl = pinctrl_dev_get_drvdata( pctldev );
 	dev = pctrl->dev;
 
-	dev_info( dev, "In %s()\n", __FUNCTION__ );
+	dev_dbg( dev, "In %s()\n", __FUNCTION__ );
 
 	// see pinctrl-intel.c for example
 	return EXIT_SUCCESS;
@@ -711,18 +711,18 @@ static int pinctrl_fake_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	dev_info( dev, "pinctrl_fake_allocate_pinctrl_from_dt() was successful!\n" );
+	dev_dbg( dev, "pinctrl_fake_allocate_pinctrl_from_dt() was successful!\n" );
 
 //	raw_spin_lock_init( & pctrl->lock );
 	pctrl->dev = dev;
 	platform_set_drvdata( pdev, pctrl );
 
-	dev_info( dev, "adding to list..\n" );
+	dev_dbg( dev, "adding to list..\n" );
 
 	INIT_LIST_HEAD( & pctrl->head );
 	list_add( & pctrl->head, & pinctrl_fake_list_head.head );
 
-	dev_info( dev, "calling pinctrl_register()\n" );
+	dev_dbg( dev, "calling pinctrl_register()\n" );
 
 	pctrl->pctldev = pinctrl_register( & pctrl->pctldesc, & pdev->dev, pctrl );
 	if ( IS_ERR( pctrl->pctldev ) ) {
