@@ -167,8 +167,14 @@ unicode_oslm_strings(char **pbcc_area, const struct nls_table *nls_cp)
 	int bytes_ret = 0;
 
 	/* Copy OS version */
+#ifdef CONFIG_MACH_QNAPTS
+	/* for File Station remote mount */
+	bytes_ret = cifs_strtoUTF16((__le16 *)bcc_ptr, "QTS, Linux version ", 32,
+				    nls_cp);
+#else
 	bytes_ret = cifs_strtoUTF16((__le16 *)bcc_ptr, "Linux version ", 32,
 				    nls_cp);
+#endif
 	bcc_ptr += 2 * bytes_ret;
 	bytes_ret = cifs_strtoUTF16((__le16 *) bcc_ptr, init_utsname()->release,
 				    32, nls_cp);
@@ -198,7 +204,7 @@ static void unicode_domain_string(char **pbcc_area, struct cifs_ses *ses,
 		bytes_ret = 0;
 	} else
 		bytes_ret = cifs_strtoUTF16((__le16 *) bcc_ptr, ses->domainName,
-					    256, nls_cp);
+					    CIFS_MAX_DOMAINNAME_LEN, nls_cp);
 	bcc_ptr += 2 * bytes_ret;
 	bcc_ptr += 2;  /* account for null terminator */
 
@@ -256,8 +262,8 @@ static void ascii_ssetup_strings(char **pbcc_area, struct cifs_ses *ses,
 
 	/* copy domain */
 	if (ses->domainName != NULL) {
-		strncpy(bcc_ptr, ses->domainName, 256);
-		bcc_ptr += strnlen(ses->domainName, 256);
+		strncpy(bcc_ptr, ses->domainName, CIFS_MAX_DOMAINNAME_LEN);
+		bcc_ptr += strnlen(ses->domainName, CIFS_MAX_DOMAINNAME_LEN);
 	} /* else we will send a null domain name
 	     so the server will default to its own domain */
 	*bcc_ptr = 0;
@@ -533,10 +539,29 @@ int build_ntlmssp_auth_blob(unsigned char *pbuffer,
 		tmp += len;
 	}
 
+#ifdef CONFIG_MACH_QNAPTS
+	/* for File Station remote mount */
+	if (ses->netbiosName == NULL) {
+		sec_blob->WorkstationName.BufferOffset = cpu_to_le32(tmp - pbuffer);
+		sec_blob->WorkstationName.Length = 0;
+		sec_blob->WorkstationName.MaximumLength = 0;
+		tmp += 2;
+	} else {
+		int len;
+		len = cifs_strtoUTF16((__le16 *)tmp, ses->netbiosName,
+				      MAX_USERNAME_SIZE, nls_cp);
+		len *= 2; /* unicode is 2 bytes each */
+		sec_blob->WorkstationName.BufferOffset = cpu_to_le32(tmp - pbuffer);
+		sec_blob->WorkstationName.Length = cpu_to_le16(len);
+		sec_blob->WorkstationName.MaximumLength = cpu_to_le16(len);
+		tmp += len;
+	}
+#else
 	sec_blob->WorkstationName.BufferOffset = cpu_to_le32(tmp - pbuffer);
 	sec_blob->WorkstationName.Length = 0;
 	sec_blob->WorkstationName.MaximumLength = 0;
 	tmp += 2;
+#endif
 
 	if (((ses->ntlmssp->server_flags & NTLMSSP_NEGOTIATE_KEY_XCH) ||
 		(ses->ntlmssp->server_flags & NTLMSSP_NEGOTIATE_EXTENDED_SEC))

@@ -1230,6 +1230,9 @@ ieee80211_bss(struct wiphy *wiphy, struct iw_request_info *info,
 	int rem, i, sig;
 	bool ismesh = false;
 
+#ifdef CONFIG_MACH_QNAPTS //fix bug#46792
+	unsigned char type_11g=0,type_11b=1, have_11n=0, bitrate;
+#endif
 	memset(&iwe, 0, sizeof(iwe));
 	iwe.cmd = SIOCGIWAP;
 	iwe.u.ap_addr.sa_family = ARPHRD_ETHER;
@@ -1382,16 +1385,73 @@ ieee80211_bss(struct wiphy *wiphy, struct iw_request_info *info,
 			for (i = 0; i < ie[1]; i++) {
 				iwe.u.bitrate.value =
 					((ie[i + 2] & 0x7f) * 500000);
+#ifdef CONFIG_MACH_QNAPTS //fix bug#46792
+				bitrate=(ie[i + 2]);
+				if(bitrate == 0x8C || bitrate == 0x92 || bitrate >= 0x98)
+ 				{
+ 					type_11g=1;
+ 				} 
+ 				if(ie[0] == WLAN_EID_SUPP_RATES && ie[1] != 0x4)
+ 				{	
+ 					type_11b = 0;
+ 				}	
+ 				if(ie[0] == WLAN_EID_EXT_SUPP_RATES)
+ 				{	
+ 					type_11b = 0;
+ 				}	
+#endif
 				p = iwe_stream_add_value(info, current_ev, p,
 						end_buf, &iwe, IW_EV_PARAM_LEN);
 			}
 			current_ev = p;
 			break;
+#ifdef CONFIG_MACH_QNAPTS //fix bug#46792
+		case 0x2d:
+			have_11n = 1;	
+			break;	
+#endif
 		}
 		rem -= ie[1] + 2;
 		ie += ie[1] + 2;
 	}
 
+#ifdef CONFIG_MACH_QNAPTS //fix bug#46792
+	memset(&iwe, 0, sizeof(iwe));
+	iwe.cmd = SIOCGIWNAME;
+  	
+	if(bss->pub.channel->hw_value >= 14)
+	{
+		if (have_11n==1)
+			snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11an");
+		else	
+			snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11a");
+	}
+	else
+	{
+		if (have_11n==1)
+		{
+			if (type_11g==1)
+				snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11gn");
+			else
+				snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11bgn");
+		}
+		else
+		{
+			if (type_11g==1)
+				snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11g");
+			else
+			{
+				if (type_11b==1)
+					snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11b");
+				else
+					snprintf(iwe.u.name, IFNAMSIZ, "IEEE 802.11bg");
+			}
+		}
+	}	
+	
+	current_ev = iwe_stream_add_event(info, current_ev, end_buf, &iwe, IW_EV_CHAR_LEN);
+	
+#endif
 	if (bss->pub.capability & (WLAN_CAPABILITY_ESS | WLAN_CAPABILITY_IBSS) ||
 	    ismesh) {
 		memset(&iwe, 0, sizeof(iwe));

@@ -45,8 +45,12 @@ int iscsi_login_rx_data(
 
 	rx_got = rx_data(conn, &iov, 1, length);
 	if (rx_got != length) {
-		pr_err("rx_data returned %d, expecting %d.\n",
-				rx_got, length);
+#if defined(CONFIG_MACH_QNAPTS)
+		/* 2014/11/20, adamhsu, redmine 10761 */
+		pr_err("%s: rx_data returned %d, expecting %d.\n",
+				__func__, rx_got, length);
+#endif
+
 		return -1;
 	}
 
@@ -59,7 +63,7 @@ int iscsi_login_tx_data(
 	char *text_buf,
 	int text_length)
 {
-	int length, tx_sent, iov_cnt = 1;
+	int length, tx_sent;
 	struct kvec iov[2];
 
 	length = (ISCSI_HDR_LEN + text_length);
@@ -67,12 +71,8 @@ int iscsi_login_tx_data(
 	memset(&iov[0], 0, 2 * sizeof(struct kvec));
 	iov[0].iov_len		= ISCSI_HDR_LEN;
 	iov[0].iov_base		= pdu_buf;
-
-	if (text_buf && text_length) {
-		iov[1].iov_len	= text_length;
-		iov[1].iov_base	= text_buf;
-		iov_cnt++;
-	}
+	iov[1].iov_len		= text_length;
+	iov[1].iov_base		= text_buf;
 
 	/*
 	 * Initial Marker-less Interval.
@@ -81,10 +81,14 @@ int iscsi_login_tx_data(
 	 */
 	conn->if_marker += length;
 
-	tx_sent = tx_data(conn, &iov[0], iov_cnt, length);
+	tx_sent = tx_data(conn, &iov[0], 2, length);
 	if (tx_sent != length) {
-		pr_err("tx_data returned %d, expecting %d.\n",
-				tx_sent, length);
+#if defined(CONFIG_MACH_QNAPTS)
+		/* 2014/11/20, adamhsu, redmine 10761 */
+		pr_err("%s: tx_data returned %d, expecting %d.\n",
+					__func__, tx_sent, length);
+#endif
+
 		return -1;
 	}
 
@@ -158,18 +162,22 @@ static struct iscsi_param *iscsi_set_default_param(struct iscsi_param_list *para
 	}
 	INIT_LIST_HEAD(&param->p_list);
 
-	param->name = kstrdup(name, GFP_KERNEL);
+	param->name = kzalloc(strlen(name) + 1, GFP_KERNEL);
 	if (!param->name) {
 		pr_err("Unable to allocate memory for parameter name.\n");
 		goto out;
 	}
 
-	param->value = kstrdup(value, GFP_KERNEL);
+	param->value = kzalloc(strlen(value) + 1, GFP_KERNEL);
 	if (!param->value) {
 		pr_err("Unable to allocate memory for parameter value.\n");
 		goto out;
 	}
 
+	memcpy(param->name, name, strlen(name));
+	param->name[strlen(name)] = '\0';
+	memcpy(param->value, value, strlen(value));
+	param->value[strlen(value)] = '\0';
 	param->phase		= phase;
 	param->scope		= scope;
 	param->sender		= sender;
@@ -334,13 +342,6 @@ int iscsi_create_default_params(struct iscsi_param_list **param_list_ptr)
 	if (!param)
 		goto out;
 
-	param = iscsi_set_default_param(pl, MAXXMITDATASEGMENTLENGTH,
-			INITIAL_MAXXMITDATASEGMENTLENGTH,
-			PHASE_OPERATIONAL, SCOPE_CONNECTION_ONLY, SENDER_BOTH,
-			TYPERANGE_512_TO_16777215, USE_ALL);
-	if (!param)
-		goto out;
-
 	param = iscsi_set_default_param(pl, MAXRECVDATASEGMENTLENGTH,
 			INITIAL_MAXRECVDATASEGMENTLENGTH,
 			PHASE_OPERATIONAL, SCOPE_CONNECTION_ONLY, SENDER_BOTH,
@@ -433,28 +434,6 @@ int iscsi_create_default_params(struct iscsi_param_list **param_list_ptr)
 			TYPERANGE_MARKINT, USE_INITIAL_ONLY);
 	if (!param)
 		goto out;
-	/*
-	 * Extra parameters for ISER from RFC-5046
-	 */
-	param = iscsi_set_default_param(pl, RDMAEXTENSIONS, INITIAL_RDMAEXTENSIONS,
-			PHASE_OPERATIONAL, SCOPE_SESSION_WIDE, SENDER_BOTH,
-			TYPERANGE_BOOL_AND, USE_LEADING_ONLY);
-	if (!param)
-		goto out;
-
-	param = iscsi_set_default_param(pl, INITIATORRECVDATASEGMENTLENGTH,
-			INITIAL_INITIATORRECVDATASEGMENTLENGTH,
-			PHASE_OPERATIONAL, SCOPE_CONNECTION_ONLY, SENDER_BOTH,
-			TYPERANGE_512_TO_16777215, USE_ALL);
-	if (!param)
-		goto out;
-
-	param = iscsi_set_default_param(pl, TARGETRECVDATASEGMENTLENGTH,
-			INITIAL_TARGETRECVDATASEGMENTLENGTH,
-			PHASE_OPERATIONAL, SCOPE_CONNECTION_ONLY, SENDER_BOTH,
-			TYPERANGE_512_TO_16777215, USE_ALL);
-	if (!param)
-		goto out;
 
 	*param_list_ptr = pl;
 	return 0;
@@ -464,23 +443,19 @@ out:
 }
 
 int iscsi_set_keys_to_negotiate(
-	struct iscsi_param_list *param_list,
-	bool iser)
+	int sessiontype,
+	struct iscsi_param_list *param_list)
 {
 	struct iscsi_param *param;
-
-	param_list->iser = iser;
 
 	list_for_each_entry(param, &param_list->param_list, p_list) {
 		param->state = 0;
 		if (!strcmp(param->name, AUTHMETHOD)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, HEADERDIGEST)) {
-			if (iser == false)
-				SET_PSTATE_NEGOTIATE(param);
+			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, DATADIGEST)) {
-			if (iser == false)
-				SET_PSTATE_NEGOTIATE(param);
+			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXCONNECTIONS)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, TARGETNAME)) {
@@ -499,10 +474,7 @@ int iscsi_set_keys_to_negotiate(
 		} else if (!strcmp(param->name, IMMEDIATEDATA)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
-			if (iser == false)
-				SET_PSTATE_NEGOTIATE(param);
-		} else if (!strcmp(param->name, MAXXMITDATASEGMENTLENGTH)) {
-			continue;
+			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, MAXBURSTLENGTH)) {
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, FIRSTBURSTLENGTH)) {
@@ -529,15 +501,6 @@ int iscsi_set_keys_to_negotiate(
 			SET_PSTATE_NEGOTIATE(param);
 		} else if (!strcmp(param->name, OFMARKINT)) {
 			SET_PSTATE_NEGOTIATE(param);
-		} else if (!strcmp(param->name, RDMAEXTENSIONS)) {
-			if (iser == true)
-				SET_PSTATE_NEGOTIATE(param);
-		} else if (!strcmp(param->name, INITIATORRECVDATASEGMENTLENGTH)) {
-			if (iser == true)
-				SET_PSTATE_NEGOTIATE(param);
-		} else if (!strcmp(param->name, TARGETRECVDATASEGMENTLENGTH)) {
-			if (iser == true)
-				SET_PSTATE_NEGOTIATE(param);
 		}
 	}
 
@@ -580,12 +543,6 @@ int iscsi_set_keys_irrelevant_for_discovery(
 			param->state &= ~PSTATE_NEGOTIATE;
 		else if (!strcmp(param->name, OFMARKINT))
 			param->state &= ~PSTATE_NEGOTIATE;
-		else if (!strcmp(param->name, RDMAEXTENSIONS))
-			param->state &= ~PSTATE_NEGOTIATE;
-		else if (!strcmp(param->name, INITIATORRECVDATASEGMENTLENGTH))
-			param->state &= ~PSTATE_NEGOTIATE;
-		else if (!strcmp(param->name, TARGETRECVDATASEGMENTLENGTH))
-			param->state &= ~PSTATE_NEGOTIATE;
 	}
 
 	return 0;
@@ -612,7 +569,8 @@ int iscsi_copy_param_list(
 		if (!leading && (param->scope & SCOPE_SESSION_WIDE)) {
 			if ((strcmp(param->name, "TargetName") != 0) &&
 			    (strcmp(param->name, "InitiatorName") != 0) &&
-			    (strcmp(param->name, "TargetPortalGroupTag") != 0))
+			    (strcmp(param->name, "TargetPortalGroupTag") != 0) &&
+                            (strcmp(param->name, "TargetAlias") != 0))
 				continue;
 		}
 
@@ -677,8 +635,11 @@ void iscsi_release_param_list(struct iscsi_param_list *param_list)
 		list_del(&param->p_list);
 
 		kfree(param->name);
+		param->name = NULL;
 		kfree(param->value);
+		param->value = NULL;
 		kfree(param);
+		param = NULL;
 	}
 
 	iscsi_release_extra_responses(param_list);
@@ -698,8 +659,15 @@ struct iscsi_param *iscsi_find_param_from_key(
 	}
 
 	list_for_each_entry(param, &param_list->param_list, p_list) {
+#ifdef CONFIG_MACH_QNAPTS   // Benjamin 20110418 for bug #19339: Broadcom HW Initiator login failure 
+        if (!strcmp(key, param->name)) {
+            param->nego = 1;
+            return param;
+        }
+#else
 		if (!strcmp(key, param->name))
 			return param;
+#endif /* #ifdef CONFIG_MACH_QNAPTS  */                
 	}
 
 	pr_err("Unable to locate key \"%s\".\n", key);
@@ -710,7 +678,7 @@ int iscsi_extract_key_value(char *textbuf, char **key, char **value)
 {
 	*value = strchr(textbuf, '=');
 	if (!*value) {
-		pr_err("Unable to locate \"=\" separator for key,"
+		pr_err("Unable to locate \"=\" seperator for key,"
 				" ignoring request.\n");
 		return -1;
 	}
@@ -726,11 +694,14 @@ int iscsi_update_param_value(struct iscsi_param *param, char *value)
 {
 	kfree(param->value);
 
-	param->value = kstrdup(value, GFP_KERNEL);
+	param->value = kzalloc(strlen(value) + 1, GFP_KERNEL);
 	if (!param->value) {
 		pr_err("Unable to allocate memory for value.\n");
-		return -ENOMEM;
+		return -1;
 	}
+
+	memcpy(param->value, value, strlen(value));
+	param->value[strlen(value)] = '\0';
 
 	pr_debug("iSCSI Parameter updated to %s=%s\n",
 			param->name, param->value);
@@ -758,9 +729,9 @@ static int iscsi_add_notunderstood_response(
 	}
 	INIT_LIST_HEAD(&extra_response->er_list);
 
-	strlcpy(extra_response->key, key, sizeof(extra_response->key));
-	strlcpy(extra_response->value, NOTUNDERSTOOD,
-		sizeof(extra_response->value));
+	strncpy(extra_response->key, key, strlen(key) + 1);
+	strncpy(extra_response->value, NOTUNDERSTOOD,
+			strlen(NOTUNDERSTOOD) + 1);
 
 	list_add_tail(&extra_response->er_list,
 			&param_list->extra_response_list);
@@ -848,6 +819,14 @@ static int iscsi_check_numerical_value(struct iscsi_param *param, char *value_pt
 
 	value = simple_strtoul(value_ptr, &tmpptr, 0);
 
+/* #warning FIXME: Fix this */
+#if 0
+	if (strspn(endptr, WHITE_SPACE) != strlen(endptr)) {
+		pr_err("Illegal value \"%s\" for \"%s\".\n",
+			value, param->name);
+		return -1;
+	}
+#endif
 	if (IS_TYPERANGE_0_TO_2(param)) {
 		if ((value < 0) || (value > 2)) {
 			pr_err("Illegal value for \"%s\", must be"
@@ -1082,6 +1061,13 @@ static char *iscsi_check_valuelist_for_support(
 			tmp2 = strchr(acceptor_values, ',');
 			if (tmp2)
 				*tmp2 = '\0';
+			if (!acceptor_values || !proposer_values) {
+				if (tmp1)
+					*tmp1 = ',';
+				if (tmp2)
+					*tmp2 = ',';
+				return NULL;
+			}
 			if (!strcmp(acceptor_values, proposer_values)) {
 				if (tmp2)
 					*tmp2 = ',';
@@ -1091,6 +1077,8 @@ static char *iscsi_check_valuelist_for_support(
 				*tmp2++ = ',';
 
 			acceptor_values = tmp2;
+			if (!acceptor_values)
+				break;
 		} while (acceptor_values);
 		if (tmp1)
 			*tmp1++ = ',';
@@ -1101,8 +1089,7 @@ out:
 	return proposer_values;
 }
 
-static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value,
-				struct iscsi_conn *conn)
+static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value)
 {
 	u8 acceptor_boolean_value = 0, proposer_boolean_value = 0;
 	char *negoitated_value = NULL;
@@ -1141,11 +1128,11 @@ static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value,
 				SET_PSTATE_REPLY_OPTIONAL(param);
 		}
 	} else if (IS_TYPE_NUMBER(param)) {
-		char *tmpptr, buf[11];
+		char *tmpptr, buf[10];
 		u32 acceptor_value = simple_strtoul(param->value, &tmpptr, 0);
 		u32 proposer_value = simple_strtoul(value, &tmpptr, 0);
 
-		memset(buf, 0, sizeof(buf));
+		memset(buf, 0, 10);
 
 		if (!strcmp(param->name, MAXCONNECTIONS) ||
 		    !strcmp(param->name, MAXBURSTLENGTH) ||
@@ -1177,35 +1164,14 @@ static int iscsi_check_acceptor_state(struct iscsi_param *param, char *value,
 				return -1;
 		}
 
-		if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
-			struct iscsi_param *param_mxdsl;
-			unsigned long long tmp;
-			int rc;
-
-			rc = strict_strtoull(param->value, 0, &tmp);
-			if (rc < 0)
-				return -1;
-
-			conn->conn_ops->MaxRecvDataSegmentLength = tmp;
-			pr_debug("Saving op->MaxRecvDataSegmentLength from"
-				" original initiator received value: %u\n",
-				conn->conn_ops->MaxRecvDataSegmentLength);
-
-			param_mxdsl = iscsi_find_param_from_key(
-						MAXXMITDATASEGMENTLENGTH,
-						conn->param_list);
-			if (!param_mxdsl)
-				return -1;
-
-			rc = iscsi_update_param_value(param,
-						param_mxdsl->value);
-			if (rc < 0)
-				return -1;
-
-			pr_debug("Updated %s to target MXDSL value: %s\n",
-					param->name, param->value);
-		}
-
+#ifndef CONFIG_MACH_QNAPTS  // Benjamin 20121017 for BUG 24545: The iSCSI performance tested by AJA test is slow and unstable with 10GbE network
+		/* RFC 3720 Section 5.2.2. Simple-value Negotiations
+		 *  For simple-value negotiations, the accepting party MUST answer with the same key. 
+		 *  The value it selects becomes the negotiation result.
+		 */
+		if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH))
+			SET_PSTATE_REPLY_OPTIONAL(param);
+#endif        
 	} else if (IS_TYPE_NUMBER_RANGE(param)) {
 		negoitated_value = iscsi_get_value_from_number_range(
 					param, value);
@@ -1342,7 +1308,7 @@ static int iscsi_check_value(struct iscsi_param *param, char *value)
 		comma_ptr = strchr(value, ',');
 
 		if (comma_ptr && !IS_TYPE_VALUE_LIST(param)) {
-			pr_err("Detected value separator \",\", but"
+			pr_err("Detected value seperator \",\", but"
 				" key \"%s\" does not allow a value list,"
 				" protocol error.\n", param->name);
 			return -1;
@@ -1468,7 +1434,6 @@ static struct iscsi_param *iscsi_check_key(
 			break;
 		case PHASE_OPERATIONAL:
 			pr_debug("Operational phase.\n");
-			break;
 		default:
 			pr_debug("Unknown phase.\n");
 		}
@@ -1549,8 +1514,8 @@ static int iscsi_enforce_integrity_rules(
 			FirstBurstLength = simple_strtoul(param->value,
 					&tmpptr, 0);
 			if (FirstBurstLength > MaxBurstLength) {
-				char tmpbuf[11];
-				memset(tmpbuf, 0, sizeof(tmpbuf));
+				char tmpbuf[10];
+				memset(tmpbuf, 0, 10);
 				sprintf(tmpbuf, "%u", MaxBurstLength);
 				if (iscsi_update_param_value(param, tmpbuf))
 					return -1;
@@ -1600,10 +1565,12 @@ int iscsi_decode_text_input(
 	u8 sender,
 	char *textbuf,
 	u32 length,
-	struct iscsi_conn *conn)
+	struct iscsi_param_list *param_list)
 {
-	struct iscsi_param_list *param_list = conn->param_list;
 	char *tmpbuf, *start = NULL, *end = NULL;
+#ifdef CONFIG_MACH_QNAPTS   // Benjamin 20110418 for bug #19339: Broadcom HW Initiator login failure 
+	struct iscsi_param *paramP;
+#endif
 
 	tmpbuf = kzalloc(length + 1, GFP_KERNEL);
 	if (!tmpbuf) {
@@ -1616,9 +1583,22 @@ int iscsi_decode_text_input(
 	start = tmpbuf;
 	end = (start + length);
 
+#ifdef CONFIG_MACH_QNAPTS   // Benjamin 20110418 for bug #19339: Broadcom HW Initiator login failure 
+	list_for_each_entry(paramP, &param_list->param_list, p_list) {
+        paramP->nego = 0;
+    }
+#endif
+
 	while (start < end) {
 		char *key, *value;
 		struct iscsi_param *param;
+		char *check=NULL;
+
+		check=strchr(start,0);
+
+		if(check==NULL || ((check-tmpbuf)>=length) )
+			return (end-start)+1;
+
 
 		if (iscsi_extract_key_value(start, &key, &value) < 0) {
 			kfree(tmpbuf);
@@ -1629,6 +1609,8 @@ int iscsi_decode_text_input(
 
 		if (phase & PHASE_SECURITY) {
 			if (iscsi_check_for_auth_key(key) > 0) {
+				char *tmpptr = key + strlen(key);
+				*tmpptr = '=';
 				kfree(tmpbuf);
 				return 1;
 			}
@@ -1641,6 +1623,22 @@ int iscsi_decode_text_input(
 				kfree(tmpbuf);
 				return -1;
 			}
+#ifdef CONFIG_MACH_QNAPTS   
+			/* Benjamin 20121008 for BUG 27836: Add work-around for Bosch Dinion IPCam
+			 * RFC 3720 section 12.10. InitialR2T :
+			 * The default action is that R2T is required, unless both the initiator and the 
+			 * target send this key-pair attribute specifying InitialR2T=NO. 
+			 *
+			 *  On the other hand, Bosch Dinion IPCam cannot accept InitialR2T=YES. 
+			 *  It's one of the Bosch IPCam's BUGs, we add work-around here.
+			 */
+			if (strstr(key, ".bosch.")) {
+                printk("Work-around for Bosch Dinion IPCam.\n");
+                if ((paramP = iscsi_find_param_from_key(INITIALR2T, param_list))) {
+                    snprintf(paramP->value, sizeof(paramP->value), "%s", "NO");
+                }
+            }
+#endif             
 			start += strlen(key) + strlen(value) + 2;
 			continue;
 		}
@@ -1658,7 +1656,7 @@ int iscsi_decode_text_input(
 			}
 			SET_PSTATE_RESPONSE_GOT(param);
 		} else {
-			if (iscsi_check_acceptor_state(param, value, conn) < 0) {
+			if (iscsi_check_acceptor_state(param, value) < 0) {
 				kfree(tmpbuf);
 				return -1;
 			}
@@ -1689,6 +1687,19 @@ int iscsi_encode_text_output(
 	list_for_each_entry(param, &param_list->param_list, p_list) {
 		if (!(param->sender & sender))
 			continue;
+#ifdef CONFIG_MACH_QNAPTS   // Benjamin 20110418 for bug #19339: Broadcom HW Initiator login failure 
+        // Broadcom HW initiator will try to confirm the parameters which are not negotiated yet 
+        // (DefaultTime2Wait and DefaultTime2Retain) in login phase, but both initiator and target
+        // are accept to enter full feature phase. That's why the error occurs. It's Broadcom HW initiator's bug.
+        // Work-around:Use the default values directly instead of returning key-value pairs to 
+        // avoid to trigger the Broadcom HW initiator's bug.
+        if (!(param->nego) && (param->sender != SENDER_TARGET) &&
+            (!strcmp(DEFAULTTIME2WAIT, param->name) || 
+             !strcmp(DEFAULTTIME2RETAIN, param->name))) {
+			pr_debug("Bypass key: %s=%s\n", param->name, param->value);		
+			continue;
+        }        
+#endif        
 		if (IS_PSTATE_ACCEPTOR(param) &&
 		    !IS_PSTATE_RESPONSE_SENT(param) &&
 		    !IS_PSTATE_REPLY_OPTIONAL(param) &&
@@ -1793,21 +1804,6 @@ void iscsi_set_connection_parameters(
 	pr_debug("---------------------------------------------------"
 			"---------------\n");
 	list_for_each_entry(param, &param_list->param_list, p_list) {
-		/*
-		 * Special case to set MAXXMITDATASEGMENTLENGTH from the
-		 * target requested MaxRecvDataSegmentLength, even though
-		 * this key is not sent over the wire.
-		 */
-		if (!strcmp(param->name, MAXXMITDATASEGMENTLENGTH)) {
-			if (param_list->iser == true)
-				continue;
-
-			ops->MaxXmitDataSegmentLength =
-				simple_strtoul(param->value, &tmpptr, 0);
-			pr_debug("MaxXmitDataSegmentLength:     %s\n",
-				param->value);
-		}
-
 		if (!IS_PSTATE_ACCEPTOR(param) && !IS_PSTATE_PROPOSER(param))
 			continue;
 		if (!strcmp(param->name, AUTHMETHOD)) {
@@ -1822,13 +1818,10 @@ void iscsi_set_connection_parameters(
 			pr_debug("DataDigest:                   %s\n",
 				param->value);
 		} else if (!strcmp(param->name, MAXRECVDATASEGMENTLENGTH)) {
-			/*
-			 * At this point iscsi_check_acceptor_state() will have
-			 * set ops->MaxRecvDataSegmentLength from the original
-			 * initiator provided value.
-			 */
-			pr_debug("MaxRecvDataSegmentLength:     %u\n",
-				ops->MaxRecvDataSegmentLength);
+			ops->MaxRecvDataSegmentLength =
+				simple_strtoul(param->value, &tmpptr, 0);
+			pr_debug("MaxRecvDataSegmentLength:     %s\n",
+				param->value);
 		} else if (!strcmp(param->name, OFMARKER)) {
 			ops->OFMarker = !strcmp(param->value, YES);
 			pr_debug("OFMarker:                     %s\n",
@@ -1847,22 +1840,6 @@ void iscsi_set_connection_parameters(
 				simple_strtoul(param->value, &tmpptr, 0);
 			pr_debug("IFMarkInt:                    %s\n",
 				param->value);
-		} else if (!strcmp(param->name, INITIATORRECVDATASEGMENTLENGTH)) {
-			ops->InitiatorRecvDataSegmentLength =
-				simple_strtoul(param->value, &tmpptr, 0);
-			pr_debug("InitiatorRecvDataSegmentLength: %s\n",
-				param->value);
-			ops->MaxRecvDataSegmentLength =
-					ops->InitiatorRecvDataSegmentLength;
-			pr_debug("Set MRDSL from InitiatorRecvDataSegmentLength\n");
-		} else if (!strcmp(param->name, TARGETRECVDATASEGMENTLENGTH)) {
-			ops->TargetRecvDataSegmentLength =
-				simple_strtoul(param->value, &tmpptr, 0);
-			pr_debug("TargetRecvDataSegmentLength:  %s\n",
-				param->value);
-			ops->MaxXmitDataSegmentLength =
-					ops->TargetRecvDataSegmentLength;
-			pr_debug("Set MXDSL from TargetRecvDataSegmentLength\n");
 		}
 	}
 	pr_debug("----------------------------------------------------"
@@ -1974,10 +1951,6 @@ void iscsi_set_session_parameters(
 		} else if (!strcmp(param->name, SESSIONTYPE)) {
 			ops->SessionType = !strcmp(param->value, DISCOVERY);
 			pr_debug("SessionType:                  %s\n",
-				param->value);
-		} else if (!strcmp(param->name, RDMAEXTENSIONS)) {
-			ops->RDMAExtensions = !strcmp(param->value, YES);
-			pr_debug("RDMAExtensions:               %s\n",
 				param->value);
 		}
 	}

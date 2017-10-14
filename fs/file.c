@@ -22,6 +22,11 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+#include <linux/fnotify.h>
+#endif
+#endif
 
 int sysctl_nr_open __read_mostly = 1024*1024;
 int sysctl_nr_open_min = BITS_PER_LONG;
@@ -602,6 +607,18 @@ int __close_fd(struct files_struct *files, unsigned fd)
 	__clear_close_on_exec(fd, fdt);
 	__put_unused_fd(files, fd);
 	spin_unlock(&files->file_lock);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if ((FN_CLOSE & msys_nodify) && pfn_sys_file_notify)
+	{
+		T_FILE_STATUS  tfsOrg;
+		if (file->f_path.dentry)  FILE_STATUS_BY_INODE(file->f_path.dentry->d_inode, tfsOrg);
+		pfn_sys_file_notify(FN_CLOSE, MARG_1xI32, &file->f_path, NULL, 0, &tfsOrg, file->f_flags, 0, 0, 0);
+	}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 	return filp_close(file, files);
 
 out_unlock:

@@ -22,6 +22,7 @@
 #include <linux/highmem.h>
 #include "ctree.h"
 #include "disk-io.h"
+#include "csum.h"
 #include "transaction.h"
 #include "print-tree.h"
 
@@ -419,13 +420,13 @@ int btrfs_csum_one_bio(struct btrfs_root *root, struct inode *inode,
 	struct btrfs_ordered_sum *sums;
 	struct btrfs_sector_sum *sector_sum;
 	struct btrfs_ordered_extent *ordered;
-	char *data;
 	struct bio_vec *bvec = bio->bi_io_vec;
 	int bio_index = 0;
 	unsigned long total_bytes = 0;
 	unsigned long this_sum_bytes = 0;
 	u64 offset;
 	u64 disk_bytenr;
+	void *mpage_priv = btrfs_csum_mpage_init(bio->bi_vcnt);
 
 	WARN_ON(bio->bi_vcnt <= 0);
 	sums = kzalloc(btrfs_ordered_sum_size(root, bio->bi_size), GFP_NOFS);
@@ -470,14 +471,11 @@ int btrfs_csum_one_bio(struct btrfs_root *root, struct inode *inode,
 			sums->bytenr = ordered->start;
 		}
 
-		data = kmap_atomic(bvec->bv_page);
-		sector_sum->sum = ~(u32)0;
-		sector_sum->sum = btrfs_csum_data(data + bvec->bv_offset,
-						  sector_sum->sum,
-						  bvec->bv_len);
-		kunmap_atomic(data);
-		btrfs_csum_final(sector_sum->sum,
-				 (char *)&sector_sum->sum);
+		btrfs_csum_mpage_digest(mpage_priv,
+					bvec->bv_page,
+					bvec->bv_offset,
+					bvec->bv_len,
+					&sector_sum->sum);
 		sector_sum->bytenr = disk_bytenr;
 
 		sector_sum++;
@@ -488,6 +486,9 @@ int btrfs_csum_one_bio(struct btrfs_root *root, struct inode *inode,
 		offset += bvec->bv_len;
 		bvec++;
 	}
+
+	/* Blocks until checksum is calculated for all pages */
+	btrfs_csum_mpage_final(mpage_priv);
 	this_sum_bytes = 0;
 	btrfs_add_ordered_sum(inode, ordered, sums);
 	btrfs_put_ordered_extent(ordered);

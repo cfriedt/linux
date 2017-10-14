@@ -58,17 +58,24 @@ static void bdev_inode_switch_bdi(struct inode *inode,
 			struct backing_dev_info *dst)
 {
 	struct backing_dev_info *old = inode->i_data.backing_dev_info;
+	bool wakeup_bdi = false;
 
 	if (unlikely(dst == old))		/* deadlock avoidance */
 		return;
 	bdi_lock_two(&old->wb, &dst->wb);
 	spin_lock(&inode->i_lock);
 	inode->i_data.backing_dev_info = dst;
-	if (inode->i_state & I_DIRTY)
+	if (inode->i_state & I_DIRTY) {
+		if (bdi_cap_writeback_dirty(dst) && !wb_has_dirty_io(&dst->wb))
+			wakeup_bdi = true;
 		list_move(&inode->i_wb_list, &dst->wb.b_dirty);
+	}
 	spin_unlock(&inode->i_lock);
 	spin_unlock(&old->wb.list_lock);
 	spin_unlock(&dst->wb.list_lock);
+
+	if (wakeup_bdi)
+		bdi_wakeup_thread_delayed(dst);
 }
 
 /* Kill _all_ buffers and pagecache , dirty or not.. */
@@ -295,6 +302,28 @@ static int blkdev_readpage(struct file * file, struct page * page)
 {
 	return block_read_full_page(page, blkdev_get_block);
 }
+
+//George Wu, 20130629, blkdev_readpages
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef USE_BLKDEV_READPAGES
+static int blkdev_readpages(struct file *file, struct address_space *mapping, 
+                        struct list_head *pages, unsigned nr_pages) 
+{ 
+        return mpage_readpages(mapping, pages, nr_pages, blkdev_get_block); 
+}
+#endif
+#endif
+
+//George Wu, 20130721, blkdev_writepages
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef USE_BLKDEV_WRITEPAGES
+int blkdev_writepages(struct address_space *mapping, struct writeback_control *wbc)
+{
+		//printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "enter blkdev_writepages()@block_dev.c.\n");
+        return mpage_writepages(mapping, wbc, blkdev_get_block);
+}
+#endif
+#endif
 
 static int blkdev_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
@@ -1029,6 +1058,9 @@ int check_disk_change(struct block_device *bdev)
 
 EXPORT_SYMBOL(check_disk_change);
 
+#ifdef CONFIG_MACH_QNAPTS
+#define PAGE_SIZE_4K    4096  //TODO Fix: for test build. 4k blocksize 
+#endif
 void bd_set_size(struct block_device *bdev, loff_t size)
 {
 	unsigned bsize = bdev_logical_block_size(bdev);
@@ -1036,7 +1068,11 @@ void bd_set_size(struct block_device *bdev, loff_t size)
 	mutex_lock(&bdev->bd_inode->i_mutex);
 	i_size_write(bdev->bd_inode, size);
 	mutex_unlock(&bdev->bd_inode->i_mutex);
+#ifndef CONFIG_MACH_QNAPTS
 	while (bsize < PAGE_CACHE_SIZE) {
+#else
+    while(bsize < PAGE_SIZE_4K) {
+#endif
 		if (size & bsize)
 			break;
 		bsize <<= 1;
@@ -1580,6 +1616,12 @@ static const struct address_space_operations def_blk_aops = {
 	.writepage	= blkdev_writepage,
 	.write_begin	= blkdev_write_begin,
 	.write_end	= blkdev_write_end,
+	//George Wu, 20130629, blkdev_readpages
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef USE_BLKDEV_READPAGES
+	.readpages      = blkdev_readpages,
+#endif
+#endif
 	.writepages	= generic_writepages,
 	.releasepage	= blkdev_releasepage,
 	.direct_IO	= blkdev_direct_IO,

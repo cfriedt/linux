@@ -15,7 +15,11 @@
 #define NFSD_MAY_EXEC			0x001 /* == MAY_EXEC */
 #define NFSD_MAY_WRITE			0x002 /* == MAY_WRITE */
 #define NFSD_MAY_READ			0x004 /* == MAY_READ */
+#ifdef CONFIG_NFSV4_FS_RICHACL
+#define NFSD_MAY_TAKE_OWNERSHIP         0x008
+#else
 #define NFSD_MAY_SATTR			0x008
+#endif
 #define NFSD_MAY_TRUNC			0x010
 #define NFSD_MAY_LOCK			0x020
 #define NFSD_MAY_MASK			0x03f
@@ -29,7 +33,16 @@
 #define NFSD_MAY_READ_IF_EXEC		0x800
 
 #define NFSD_MAY_64BIT_COOKIE		0x1000 /* 64 bit readdir cookies for >= NFSv3 */
+#ifdef CONFIG_NFSV4_FS_RICHACL
+#define NFSD_MAY_CREATE_DIR             0x2000
+#define NFSD_MAY_CREATE_FILE		0x4000
+#define NFSD_MAY_CHMOD			0x8000
+#define NFSD_MAY_SET_TIMES		0x10000
+#define NFSD_MAY_DELETE_CHILD		0x20000
 
+#define NFSD_MAY_SATTR		(NFSD_MAY_TAKE_OWNERSHIP|NFSD_MAY_CHMOD| \
+				 NFSD_MAY_SET_TIMES)
+#endif
 #define NFSD_MAY_CREATE		(NFSD_MAY_EXEC|NFSD_MAY_WRITE)
 #define NFSD_MAY_REMOVE		(NFSD_MAY_EXEC|NFSD_MAY_WRITE|NFSD_MAY_TRUNC)
 
@@ -132,5 +145,16 @@ static inline __be32 fh_getattr(struct svc_fh *fh, struct kstat *stat)
 			 .dentry = fh->fh_dentry};
 	return nfserrno(vfs_getattr(&p, stat));
 }
+
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2013/03/27 Cindy Jen add for NFS VAAI
+void nfsd_free_clonefile_slab(void);
+int nfsd_init_clonefile_slab(void);
+__be32 nfsd_vfs_fallocate(struct file *, int, loff_t, loff_t);
+__be32 nfsd_reservespace(struct svc_rqst *, struct svc_fh *, loff_t, u64 *);
+__be32 nfsd_extendedstat(struct svc_rqst *, struct svc_fh *, u64 *, u64 *, u64 *);
+__be32 nfsd_clonefile(struct svc_rqst *, struct svc_fh *, struct svc_fh *, loff_t, u64 *, u32);
+#endif
+#endif
 
 #endif /* LINUX_NFSD_VFS_H */

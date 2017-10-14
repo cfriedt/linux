@@ -3148,9 +3148,9 @@ static int __extent_writepage(struct page *page, struct writeback_control *wbc,
 
 			set_range_writeback(tree, cur, cur + iosize - 1);
 			if (!PageWriteback(page)) {
-				printk(KERN_ERR "btrfs warning page %lu not "
+				printk(KERN_ERR "btrfs warning page %llu not "
 				       "writeback, cur %llu end %llu\n",
-				       page->index, (unsigned long long)cur,
+				       (unsigned long long)page->index, (unsigned long long)cur,
 				       (unsigned long long)end);
 			}
 

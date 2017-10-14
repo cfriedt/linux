@@ -11,7 +11,10 @@
  * Author:
  * L. Haag
  *
- * $Log: r3964.h,v $
+ * $Log: n_r3964.h,v $
+ * Revision 1.1.1.1  2014/03/19 13:55:43  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  * Revision 1.4  2005/12/21 19:54:24  Kurt Huwig <kurt huwig de>
  * Fixed HZ usage on 2.6 kernels
  * Removed unnecessary include

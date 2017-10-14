@@ -1,4 +1,4 @@
-/* $Id: os_capi.h,v 1.7 2003/04/12 21:40:49 schindler Exp $
+/* $Id: os_capi.h,v 1.1.1.1 2014/03/19 14:07:34 franklee Exp $
  *
  * ISDN interface module for Eicon active cards DIVA.
  * CAPI Interface OS include files

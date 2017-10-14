@@ -23,6 +23,9 @@
 
 /*
  * $Log: NCR5380.h,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:30  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #ifndef NCR5380_H

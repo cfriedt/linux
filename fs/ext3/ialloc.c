@@ -476,7 +476,13 @@ got:
 	/* This is the optimal IO size (for stat), not the fs block size */
 	inode->i_blocks = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME_SEC;
-
+//Patch by QNAP: fix ext3 birthtime issue
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef CONFIG_FS_QNAP_BIRTHTIME
+	inode->i_birthtime = CURRENT_TIME_SEC;
+#endif
+#endif
+//////////////////////////////////////////////////////////
 	memset(ei->i_data, 0, sizeof(ei->i_data));
 	ei->i_dir_start_lookup = 0;
 	ei->i_disksize = 0;

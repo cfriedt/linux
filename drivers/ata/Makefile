@@ -1,6 +1,8 @@
 
 obj-$(CONFIG_ATA)		+= libata.o
 
+KBUILD_CPPFLAGS += -Iarch/arm/mach-alpine/include/al_hal/
+
 # non-SFF interface
 obj-$(CONFIG_SATA_AHCI)		+= ahci.o libahci.o
 obj-$(CONFIG_SATA_ACARD_AHCI)	+= acard-ahci.o libahci.o

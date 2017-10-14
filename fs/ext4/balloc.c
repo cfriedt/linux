@@ -29,6 +29,13 @@ static unsigned ext4_num_base_meta_clusters(struct super_block *sb,
  * balloc.c contains the blocks allocation and deallocation routines
  */
 
+//Patch by QNAP:Fix iSCSI kernel thread use reserved block
+#if defined(CONFIG_MACH_QNAPTS)
+#define ISCSI_RESERVED_NAME "fbdisk"
+#define ISCSI_RESERVED_SIZE 32768 //128 MBytes
+#define RTRR_QSYNCD_RESERVED_NAME "qsyncd"
+#endif
+
 /*
  * Calculate block group number for a given block number
  */
@@ -38,8 +45,8 @@ ext4_group_t ext4_get_group_number(struct super_block *sb,
 	ext4_group_t group;
 
 	if (test_opt2(sb, STD_GROUP_SIZE))
-		group = (le32_to_cpu(EXT4_SB(sb)->s_es->s_first_data_block) +
-			 block) >>
+		group = (block -
+			 le32_to_cpu(EXT4_SB(sb)->s_es->s_first_data_block)) >>
 			(EXT4_BLOCK_SIZE_BITS(sb) + EXT4_CLUSTER_BITS(sb) + 3);
 	else
 		ext4_get_group_no_and_offset(sb, block, &group, NULL);
@@ -496,9 +503,17 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
  * Check if filesystem has nclusters free & available for allocation.
  * On success return 1, return 0 on failure.
  */
+#ifdef CONFIG_MACH_QNAPTS
+static int ext4_has_free_clusters(struct super_block *sb,
+				  s64 nclusters, unsigned int flags)
+#else
 static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 				  s64 nclusters, unsigned int flags)
+#endif
 {
+#ifdef CONFIG_MACH_QNAPTS
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+#endif
 	s64 free_clusters, dirty_clusters, rsv, resv_clusters;
 	struct percpu_counter *fcc = &sbi->s_freeclusters_counter;
 	struct percpu_counter *dcc = &sbi->s_dirtyclusters_counter;
@@ -519,9 +534,23 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 		free_clusters  = percpu_counter_sum_positive(fcc);
 		dirty_clusters = percpu_counter_sum_positive(dcc);
 	}
+	
 	/* Check whether we have space after accounting for current
 	 * dirty clusters & root reserved clusters.
 	 */
+	//Patch by QNAP:Fix iSCSI kernel thread use reserved block
+#if defined(CONFIG_MACH_QNAPTS)
+    if (!strncmp(current->comm, ISCSI_RESERVED_NAME , strlen(ISCSI_RESERVED_NAME)) ||
+		!strncmp(current->comm, RTRR_QSYNCD_RESERVED_NAME , strlen(RTRR_QSYNCD_RESERVED_NAME)))
+    {
+        if (free_clusters >= ((rsv + nclusters) + dirty_clusters + EXT4_B2C(sbi,ISCSI_RESERVED_SIZE)))
+            return 1;
+        else
+            return 0;
+    }
+#endif
+///////////////////////////////////////////////////////////
+
 	if (free_clusters >= (rsv + nclusters + dirty_clusters))
 		return 1;
 
@@ -541,13 +570,27 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 			return 1;
 	}
 
+#ifdef CONFIG_MACH_QNAPTS
+	pr_debug("ext4_has_free_clusters2: %s, %s, %lld, %lld, %lld\n", sb->s_id, current->comm, free_clusters, dirty_clusters, nclusters);
+#endif
+
 	return 0;
 }
 
+#ifdef CONFIG_MACH_QNAPTS
+int ext4_claim_free_clusters(struct super_block *sb,
+			     s64 nclusters, unsigned int flags)
+#else
 int ext4_claim_free_clusters(struct ext4_sb_info *sbi,
 			     s64 nclusters, unsigned int flags)
+#endif
 {
+#ifdef CONFIG_MACH_QNAPTS
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	if (ext4_has_free_clusters(sb, nclusters, flags)) {
+#else
 	if (ext4_has_free_clusters(sbi, nclusters, flags)) {
+#endif
 		percpu_counter_add(&sbi->s_dirtyclusters_counter, nclusters);
 		return 0;
 	} else
@@ -568,7 +611,11 @@ int ext4_claim_free_clusters(struct ext4_sb_info *sbi,
  */
 int ext4_should_retry_alloc(struct super_block *sb, int *retries)
 {
+#ifdef CONFIG_MACH_QNAPTS
+	if (!ext4_has_free_clusters(sb, 1, 0) ||
+#else
 	if (!ext4_has_free_clusters(EXT4_SB(sb), 1, 0) ||
+#endif
 	    (*retries)++ > 3 ||
 	    !EXT4_SB(sb)->s_journal)
 		return 0;

@@ -298,7 +298,7 @@ xfs_sb_validate_fsb_count(
 	ASSERT(sbp->sb_blocklog >= BBSHIFT);
 
 #if XFS_BIG_BLKNOS     /* Limited by ULONG_MAX of page cache index */
-	if (nblocks >> (PAGE_CACHE_SHIFT - sbp->sb_blocklog) > ULONG_MAX)
+	if (nblocks >> (PAGE_CACHE_SHIFT - sbp->sb_blocklog) > PGOFF_MAX)
 		return EFBIG;
 #else                  /* Limited by UINT_MAX of sectors */
 	if (nblocks << (sbp->sb_blocklog - BBSHIFT) > UINT_MAX)

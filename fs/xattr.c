@@ -24,6 +24,14 @@
 
 #include <asm/uaccess.h>
 
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+#include <linux/fnotify.h>
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
+
 /*
  * Check permissions for extended attribute access.  This is a bit complicated
  * because different namespaces have very different rules.
@@ -378,6 +386,20 @@ retry:
 	error = mnt_want_write(path.mnt);
 	if (!error) {
 		error = setxattr(path.dentry, name, value, size, flags);
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if (!error && (FN_XATTR & msys_nodify))
+		{
+			T_FILE_STATUS  tfsOrg;
+			FILE_STATUS_BY_INODE(path.dentry->d_inode, tfsOrg);
+			pfn_sys_file_notify(FN_XATTR, MARG_1xI32, &path, NULL, 0, &tfsOrg, 0, (int64_t)(unsigned int)name, 0, 0);
+		}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////////
+
 		mnt_drop_write(path.mnt);
 	}
 	path_put(&path);
@@ -402,6 +424,20 @@ retry:
 	error = mnt_want_write(path.mnt);
 	if (!error) {
 		error = setxattr(path.dentry, name, value, size, flags);
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if (!error && (FN_XATTR & msys_nodify))
+		{
+			T_FILE_STATUS  tfsOrg;
+			FILE_STATUS_BY_INODE(path.dentry->d_inode, tfsOrg);
+			pfn_sys_file_notify(FN_XATTR, MARG_1xI32, &path, NULL, 0, &tfsOrg, 0, (int64_t)(unsigned int)name, 0, 0);
+		}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////////
+
 		mnt_drop_write(path.mnt);
 	}
 	path_put(&path);
@@ -426,6 +462,20 @@ SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
 	error = mnt_want_write_file(f.file);
 	if (!error) {
 		error = setxattr(dentry, name, value, size, flags);
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if (!error && (FN_XATTR & msys_nodify))
+		{
+			T_FILE_STATUS  tfsOrg;
+			FILE_STATUS_BY_INODE(f.file->f_path.dentry->d_inode, tfsOrg);
+			pfn_sys_file_notify(FN_XATTR, MARG_1xI32, &f.file->f_path, NULL, 0, &tfsOrg, 0, (int64_t)(unsigned int)name, 0, 0);
+		}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////////
+
 		mnt_drop_write_file(f.file);
 	}
 	fdput(f);
@@ -653,6 +703,20 @@ retry:
 	error = mnt_want_write(path.mnt);
 	if (!error) {
 		error = removexattr(path.dentry, name);
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if (!error && (FN_XATTR & msys_nodify))
+		{
+			T_FILE_STATUS  tfsOrg;
+			FILE_STATUS_BY_INODE(path.dentry->d_inode, tfsOrg);
+			pfn_sys_file_notify(FN_XATTR, MARG_1xI32, &path, NULL, 0, &tfsOrg, 1, (int64_t)(unsigned int)name, 0, 0);
+		}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////////
+
 		mnt_drop_write(path.mnt);
 	}
 	path_put(&path);
@@ -676,6 +740,20 @@ retry:
 	error = mnt_want_write(path.mnt);
 	if (!error) {
 		error = removexattr(path.dentry, name);
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if (!error && (FN_XATTR & msys_nodify))
+		{
+			T_FILE_STATUS  tfsOrg;
+			FILE_STATUS_BY_INODE(path.dentry->d_inode, tfsOrg);
+			pfn_sys_file_notify(FN_XATTR, MARG_1xI32, &path, NULL, 0, &tfsOrg, 1, (int64_t)(unsigned int)name, 0, 0);
+		}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////////
+
 		mnt_drop_write(path.mnt);
 	}
 	path_put(&path);
@@ -699,6 +777,20 @@ SYSCALL_DEFINE2(fremovexattr, int, fd, const char __user *, name)
 	error = mnt_want_write_file(f.file);
 	if (!error) {
 		error = removexattr(dentry, name);
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if (!error && (FN_XATTR & msys_nodify))
+		{
+			T_FILE_STATUS  tfsOrg;
+			FILE_STATUS_BY_INODE(f.file->f_path.dentry->d_inode, tfsOrg);
+			pfn_sys_file_notify(FN_XATTR, MARG_1xI32, &f.file->f_path, NULL, 0, &tfsOrg, 1, (int64_t)(unsigned int)name, 0, 0);
+		}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////////
+
 		mnt_drop_write_file(f.file);
 	}
 	fdput(f);

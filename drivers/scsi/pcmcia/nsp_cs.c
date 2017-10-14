@@ -1342,7 +1342,7 @@ static struct Scsi_Host *nsp_detect(struct scsi_host_template *sht)
 
 	snprintf(data->nspinfo,
 		 sizeof(data->nspinfo),
-		 "NinjaSCSI-3/32Bi Driver $Revision: 1.23 $ IO:0x%04lx-0x%04lx MMIO(virt addr):0x%04lx IRQ:%02d",
+		 "NinjaSCSI-3/32Bi Driver $Revision: 1.1.1.1 $ IO:0x%04lx-0x%04lx MMIO(virt addr):0x%04lx IRQ:%02d",
 		 host->io_port, host->io_port + host->n_io_port - 1,
 		 host->base,
 		 host->irq);
@@ -1379,7 +1379,7 @@ static int nsp_show_info(struct seq_file *m, struct Scsi_Host *host)
 	data = (nsp_hw_data *)host->hostdata;
 
 	SPRINTF("NinjaSCSI status\n\n");
-	SPRINTF("Driver version:        $Revision: 1.23 $\n");
+	SPRINTF("Driver version:        $Revision: 1.1.1.1 $\n");
 	SPRINTF("SCSI host No.:         %d\n",          hostno);
 	SPRINTF("IRQ:                   %d\n",          host->irq);
 	SPRINTF("IO:                    0x%lx-0x%lx\n", host->io_port, host->io_port + host->n_io_port - 1);

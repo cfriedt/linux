@@ -255,6 +255,9 @@ enum {
 	ATA_CMD_VERIFY_EXT	= 0x42,
 	ATA_CMD_WRITE_UNCORR_EXT = 0x45,
 	ATA_CMD_STANDBYNOW1	= 0xE0,
+//Patch by QNAP:fix SSD standby issue
+   	ATA_CMD_STANDBYNOW1_RETIRED	= 0x94, 
+///////////////////////////////////
 	ATA_CMD_IDLEIMMEDIATE	= 0xE1,
 	ATA_CMD_SLEEP		= 0xE6,
 	ATA_CMD_INIT_DEV_PARAMS	= 0x91,
@@ -751,6 +754,23 @@ static inline bool ata_id_has_pm(const u16 *id)
 		return false;
 	return id[ATA_ID_COMMAND_SET_1] & (1 << 3);
 }
+
+//Patch by QNAP:fix SSD standby issue
+static inline int ata_id_smart_support(const u16 *id)
+{
+	return id[ATA_ID_COMMAND_SET_1] & (1 << 0);
+}
+
+static inline int ata_id_smart_selftest_support(const u16 *id)
+{
+	return id[ATA_ID_CFSSE] & (1 << 1);
+}
+
+static inline int ata_id_smart_errorlog_support(const u16 *id)
+{
+	return id[ATA_ID_CFSSE] & (1 << 0);
+}
+////////////////////////////////////////////
 
 static inline bool ata_id_rahead_enabled(const u16 *id)
 {

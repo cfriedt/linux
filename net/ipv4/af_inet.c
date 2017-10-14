@@ -263,10 +263,8 @@ void build_ehash_secret(void)
 		get_random_bytes(&rnd, sizeof(rnd));
 	} while (rnd == 0);
 
-	if (cmpxchg(&inet_ehash_secret, 0, rnd) == 0) {
+	if (cmpxchg(&inet_ehash_secret, 0, rnd) == 0)
 		get_random_bytes(&ipv6_hash_secret, sizeof(ipv6_hash_secret));
-		net_secret_init();
-	}
 }
 EXPORT_SYMBOL(build_ehash_secret);
 
@@ -1865,4 +1863,10 @@ static int __init ipv4_proc_init(void)
 #endif /* CONFIG_PROC_FS */
 
 MODULE_ALIAS_NETPROTO(PF_INET);
+//Patch by QNAP:seperate bonding driver from ipv6
+#include "../../drivers/net/bonding/bonding.h"
 
+
+int bond_net_id __read_mostly;
+EXPORT_SYMBOL(bond_net_id);
+//////////////////////////////////////////////////////////////////

@@ -39,6 +39,12 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
 
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+// hal_event header
+#include <qnap/hal_event.h>
+extern int send_hal_netlink(NETLINK_EVT *event);
+#endif
+
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
 int sysctl_oom_dump_tasks = 1;
@@ -411,6 +417,11 @@ void oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	unsigned int victim_points = 0;
 	static DEFINE_RATELIMIT_STATE(oom_rs, DEFAULT_RATELIMIT_INTERVAL,
 					      DEFAULT_RATELIMIT_BURST);
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    NETLINK_EVT *hal_event;
+    int pid;
+    char comm[32] = {0};
+#endif
 
 	/*
 	 * If the task is already exiting, don't alarm the sysadmin or kill
@@ -469,6 +480,11 @@ void oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		put_task_struct(victim);
 		victim = p;
 	}
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    pid = task_pid_nr(victim);
+    strncpy(comm, victim->comm, sizeof(comm));
+    comm[31] = '\0';
+#endif
 
 	/* mm cannot safely be dereferenced after task_unlock(victim) */
 	mm = victim->mm;
@@ -504,6 +520,26 @@ void oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 	set_tsk_thread_flag(victim, TIF_MEMDIE);
 	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, victim, true);
 	put_task_struct(victim);
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    // Set hal_event
+    hal_event = kmalloc(sizeof(NETLINK_EVT),GFP_ATOMIC);
+    if (hal_event)
+    {
+        hal_event->type = HAL_EVENT_ENCLOSURE;
+        hal_event->arg.action = OOM_KILLED;
+        hal_event->arg.param.oom_cb.pid = pid;
+        strncpy(hal_event->arg.param.oom_cb.comm, comm, sizeof(hal_event->arg.param.oom_cb.comm));
+        // Send hal_event after killed process
+        send_hal_netlink(hal_event);
+
+        kfree(hal_event);
+    }
+    else
+    {
+        pr_err("Send oom event failed\n");
+    }
+
+#endif
 }
 #undef K
 

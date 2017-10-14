@@ -846,6 +846,10 @@ dma_cookie_t dma_async_memcpy_buf_to_pg(struct dma_chan *chan,
 dma_cookie_t dma_async_memcpy_pg_to_pg(struct dma_chan *chan,
 	struct page *dest_pg, unsigned int dest_off, struct page *src_pg,
 	unsigned int src_off, size_t len);
+dma_cookie_t dma_async_memcpy_sg_to_sg(struct dma_chan *chan,
+	struct scatterlist *dst_sg, unsigned int dst_nents,
+	struct scatterlist *src_sg, unsigned int src_nents);
+
 void dma_async_tx_descriptor_init(struct dma_async_tx_descriptor *tx,
 	struct dma_chan *chan);
 
@@ -1028,12 +1032,21 @@ struct dma_page_list {
 };
 
 struct dma_pinned_list {
+	int kernel;
 	int nr_iovecs;
+	int nr_pages;
+	struct sg_table	*sgts;
 	struct dma_page_list page_list[0];
 };
 
-struct dma_pinned_list *dma_pin_iovec_pages(struct iovec *iov, size_t len);
+struct tcp_sock;
+int dma_pin_iovec_pages(struct tcp_sock *tp, struct iovec *iov, size_t len);
 void dma_unpin_iovec_pages(struct dma_pinned_list* pinned_list);
+void dma_free_iovec_data(struct tcp_sock *tp);
+
+int dma_memcpy_fill_sg_from_iovec(struct dma_chan *chan, struct iovec *iov,
+	struct dma_pinned_list *pinned_list, struct scatterlist *dst_sg,
+	unsigned int offset,size_t len);
 
 dma_cookie_t dma_memcpy_to_iovec(struct dma_chan *chan, struct iovec *iov,
 	struct dma_pinned_list *pinned_list, unsigned char *kdata, size_t len);

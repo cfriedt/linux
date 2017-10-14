@@ -1459,7 +1459,7 @@ static int nsp32_show_info(struct seq_file *m, struct Scsi_Host *host)
 	base = host->io_port;
 
 	SPRINTF("NinjaSCSI-32 status\n\n");
-	SPRINTF("Driver version:        %s, $Revision: 1.33 $\n", nsp32_release_version);
+	SPRINTF("Driver version:        %s, $Revision: 1.1.1.1 $\n", nsp32_release_version);
 	SPRINTF("SCSI host No.:         %d\n",		hostno);
 	SPRINTF("IRQ:                   %d\n",		host->irq);
 	SPRINTF("IO:                    0x%lx-0x%lx\n", host->io_port, host->io_port + host->n_io_port - 1);
@@ -2899,7 +2899,7 @@ static void nsp32_do_bus_reset(nsp32_hw_data *data)
 	 * reset SCSI bus
 	 */
 	nsp32_write1(base, SCSI_BUS_CONTROL, BUSCTL_RST);
-	udelay(RESET_HOLD_TIME);
+	mdelay(RESET_HOLD_TIME / 1000);
 	nsp32_write1(base, SCSI_BUS_CONTROL, 0);
 	for(i = 0; i < 5; i++) {
 		intrdat = nsp32_read2(base, IRQ_STATUS); /* dummy read */

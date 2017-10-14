@@ -44,6 +44,7 @@
 #define MAX_TREE_SIZE (2 + MAX_SERVER_SIZE + 1 + MAX_SHARE_SIZE + 1)
 #define MAX_SERVER_SIZE 15
 #define MAX_SHARE_SIZE 80
+#define CIFS_MAX_DOMAINNAME_LEN 256 /* max domain name length */
 #define MAX_USERNAME_SIZE 256	/* reasonable maximum for current servers */
 #define MAX_PASSWORD_SIZE 512	/* max for windows seems to be 256 wide chars */
 
@@ -718,6 +719,9 @@ struct cifs_ses {
 #ifdef CONFIG_CIFS_SMB2
 	__u16 session_flags;
 #endif /* CONFIG_CIFS_SMB2 */
+#ifdef CONFIG_MACH_QNAPTS
+	char *netbiosName;
+#endif
 };
 
 /* no more than one of the following three session flags may be set */
@@ -945,6 +949,15 @@ struct cifsFileInfo {
 	struct mutex fh_mutex; /* prevents reopen race after dead ses*/
 	struct cifs_search_info srch_inf;
 	struct work_struct oplock_break; /* work for oplock breaks */
+#ifdef CONFIG_MACH_QNAPTS
+	/* Bug#87650, strict cache read performance too slow. Page cache never
+	 * used in sequence reading.So we skip page cache if there are 6
+	 * consecutive reads.
+	 * */
+	loff_t preoffset;
+	loff_t curoffset;
+	unsigned int co;
+#endif
 };
 
 struct cifs_io_parms {

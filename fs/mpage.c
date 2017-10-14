@@ -63,7 +63,7 @@ static void mpage_end_io(struct bio *bio, int err)
 			if (!uptodate) {
 				SetPageError(page);
 				if (page->mapping)
-					set_bit(AS_EIO, &page->mapping->flags);
+					mapping_set_error(page->mapping, err);
 			}
 			end_page_writeback(page);
 		}
@@ -109,8 +109,8 @@ mpage_alloc(struct block_device *bdev,
  * them.  So when the buffer is up to date and the page size == block size,
  * this marks the page up to date instead of adding new buffers.
  */
-static void 
-map_buffer_to_page(struct page *page, struct buffer_head *bh, int page_block) 
+static void
+map_buffer_to_page(struct page *page, struct buffer_head *bh, int page_block)
 {
 	struct inode *inode = page->mapping->host;
 	struct buffer_head *page_bh, *head;
@@ -121,9 +121,9 @@ map_buffer_to_page(struct page *page, struct buffer_head *bh, int page_block)
 		 * don't make any buffers if there is only one buffer on
 		 * the page and the page just needs to be set up to date
 		 */
-		if (inode->i_blkbits == PAGE_CACHE_SHIFT && 
+		if (inode->i_blkbits == PAGE_CACHE_SHIFT &&
 		    buffer_uptodate(bh)) {
-			SetPageUptodate(page);    
+			SetPageUptodate(page);
 			return;
 		}
 		create_empty_buffers(page, 1 << inode->i_blkbits, 0);
@@ -240,7 +240,7 @@ do_mpage_readpage(struct bio *bio, struct page *page, unsigned nr_pages,
 			map_buffer_to_page(page, map_bh, page_block);
 			goto confused;
 		}
-	
+
 		if (first_hole != blocks_per_page)
 			goto confused;		/* hole -> non-hole */
 
@@ -427,7 +427,7 @@ EXPORT_SYMBOL(mpage_readpage);
  *
  * If all blocks are found to be contiguous then the page can go into the
  * BIO.  Otherwise fall back to the mapping's writepage().
- * 
+ *
  * FIXME: This code wants an estimate of how many pages are still to be
  * written, so it can intelligently allocate a suitably-sized BIO.  For now,
  * just allocate full-size (16-page) BIOs.
@@ -471,6 +471,17 @@ static int __mpage_writepage(struct page *page, struct writeback_control *wbc,
 		/* If they're all mapped and dirty, do it */
 		page_block = 0;
 		do {
+			//George Wu, 20130708, BLKDEV_WRITEPAGES work-around
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef USE_BLKDEV_WRITEPAGES
+			if(buffer_locked(bh))
+			{
+				//printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "buffer_locked(%lx)=%d\n", (void *)bh, buffer_locked(bh));
+                wait_on_buffer(bh);
+				//printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "wait_on_buffer(%lx) is finished\n", (void *)bh);
+			}
+#endif
+#endif
 			BUG_ON(buffer_locked(bh));
 			if (!buffer_mapped(bh)) {
 				/*

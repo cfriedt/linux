@@ -255,26 +255,26 @@ enum edac_type {
  * SCRUB_HW_TUNABLE:		Hardware scrub frequency is tunable
  */
 enum scrub_type {
-	SCRUB_UNKNOWN =	0,
-	SCRUB_NONE,
-	SCRUB_SW_PROG,
-	SCRUB_SW_SRC,
-	SCRUB_SW_PROG_SRC,
-	SCRUB_SW_TUNABLE,
-	SCRUB_HW_PROG,
-	SCRUB_HW_SRC,
-	SCRUB_HW_PROG_SRC,
-	SCRUB_HW_TUNABLE
+	SCRUB_UNKNOWN		= BIT(0),
+	SCRUB_NONE		= BIT(1),
+	SCRUB_SW_PROG		= BIT(2),
+	SCRUB_SW_SRC		= BIT(3),
+	SCRUB_SW_PROG_SRC	= BIT(4),
+	SCRUB_SW_TUNABLE	= BIT(5),
+	SCRUB_HW_PROG		= BIT(6),
+	SCRUB_HW_SRC		= BIT(7),
+	SCRUB_HW_PROG_SRC	= BIT(8),
+	SCRUB_HW_TUNABLE	= BIT(9),
 };
 
-#define SCRUB_FLAG_SW_PROG	BIT(SCRUB_SW_PROG)
-#define SCRUB_FLAG_SW_SRC	BIT(SCRUB_SW_SRC)
-#define SCRUB_FLAG_SW_PROG_SRC	BIT(SCRUB_SW_PROG_SRC)
-#define SCRUB_FLAG_SW_TUN	BIT(SCRUB_SW_SCRUB_TUNABLE)
-#define SCRUB_FLAG_HW_PROG	BIT(SCRUB_HW_PROG)
-#define SCRUB_FLAG_HW_SRC	BIT(SCRUB_HW_SRC)
-#define SCRUB_FLAG_HW_PROG_SRC	BIT(SCRUB_HW_PROG_SRC)
-#define SCRUB_FLAG_HW_TUN	BIT(SCRUB_HW_TUNABLE)
+#define SCRUB_FLAG_SW_PROG	SCRUB_SW_PROG
+#define SCRUB_FLAG_SW_SRC	SCRUB_SW_SRC
+#define SCRUB_FLAG_SW_PROG_SRC	SCRUB_SW_PROG_SRC
+#define SCRUB_FLAG_SW_TUN	SCRUB_SW_SCRUB_TUNABLE
+#define SCRUB_FLAG_HW_PROG	SCRUB_HW_PROG
+#define SCRUB_FLAG_HW_SRC	SCRUB_HW_SRC
+#define SCRUB_FLAG_HW_PROG_SRC	SCRUB_HW_PROG_SRC
+#define SCRUB_FLAG_HW_TUN	SCRUB_HW_TUNABLE
 
 /* FIXME - should have notify capabilities: NMI, LOG, PROC, etc */
 
@@ -622,7 +622,7 @@ struct edac_raw_error_desc {
  */
 struct mem_ctl_info {
 	struct device			dev;
-	struct bus_type			bus;
+	struct bus_type			*bus;
 
 	struct list_head link;	/* for global list of mem_ctl_info structs */
 
@@ -741,5 +741,10 @@ struct mem_ctl_info {
 	u16 fake_inject_count;
 #endif
 };
+
+/*
+ * Maximum number of memory controllers in the coherent fabric.
+ */
+#define EDAC_MAX_MCS	16
 
 #endif

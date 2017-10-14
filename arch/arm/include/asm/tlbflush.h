@@ -374,12 +374,19 @@ local_flush_tlb_page(struct vm_area_struct *vma, unsigned long uaddr)
 {
 	const int zero = 0;
 	const unsigned int __tlb_flag = __cpu_tlb_flags;
+	unsigned long uaddr_last;
 
 	uaddr = (uaddr & PAGE_MASK) | ASID(vma->vm_mm);
+	uaddr_last = uaddr+PAGE_SIZE;
 
 	if (tlb_flag(TLB_WB))
 		dsb();
 
+	/*
+	 * normal case is HW_PAGE_SIZE==PAGE_SIZE,
+	 * After optimization, the for-loop will be gone
+	 */
+	for (; uaddr < uaddr_last; uaddr += HW_PAGE_SIZE) {
 	if (possible_tlb_flags & (TLB_V4_U_PAGE|TLB_V4_D_PAGE|TLB_V4_I_PAGE|TLB_V4_I_FULL) &&
 	    cpumask_test_cpu(smp_processor_id(), mm_cpumask(vma->vm_mm))) {
 		tlb_op(TLB_V4_U_PAGE, "c8, c7, 1", uaddr);
@@ -397,6 +404,7 @@ local_flush_tlb_page(struct vm_area_struct *vma, unsigned long uaddr)
 #else
 	tlb_op(TLB_V7_UIS_PAGE, "c8, c3, 1", uaddr);
 #endif
+	}
 
 	if (tlb_flag(TLB_BARRIER))
 		dsb();
@@ -406,12 +414,15 @@ static inline void local_flush_tlb_kernel_page(unsigned long kaddr)
 {
 	const int zero = 0;
 	const unsigned int __tlb_flag = __cpu_tlb_flags;
+	unsigned long kaddr_last;
 
 	kaddr &= PAGE_MASK;
+	kaddr_last = kaddr+PAGE_SIZE;
 
 	if (tlb_flag(TLB_WB))
 		dsb();
 
+	for (; kaddr < kaddr_last; kaddr += HW_PAGE_SIZE) {
 	tlb_op(TLB_V4_U_PAGE, "c8, c7, 1", kaddr);
 	tlb_op(TLB_V4_D_PAGE, "c8, c6, 1", kaddr);
 	tlb_op(TLB_V4_I_PAGE, "c8, c5, 1", kaddr);
@@ -422,6 +433,7 @@ static inline void local_flush_tlb_kernel_page(unsigned long kaddr)
 	tlb_op(TLB_V6_D_PAGE, "c8, c6, 1", kaddr);
 	tlb_op(TLB_V6_I_PAGE, "c8, c5, 1", kaddr);
 	tlb_op(TLB_V7_UIS_PAGE, "c8, c3, 1", kaddr);
+	}
 
 	if (tlb_flag(TLB_BARRIER)) {
 		dsb();

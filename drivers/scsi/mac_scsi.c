@@ -26,7 +26,10 @@
  */
 
 /*
- * $Log: mac_NCR5380.c,v $
+ * $Log: mac_scsi.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:40  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #include <linux/types.h>

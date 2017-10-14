@@ -19,7 +19,6 @@ config ARM
 	select GENERIC_STRNCPY_FROM_USER
 	select GENERIC_STRNLEN_USER
 	select HARDIRQS_SW_RESEND
-	select HAVE_AOUT
 	select HAVE_ARCH_JUMP_LABEL if !XIP_KERNEL
 	select HAVE_ARCH_KGDB
 	select HAVE_ARCH_SECCOMP_FILTER
@@ -101,6 +100,14 @@ config ARM_DMA_IOMMU_ALIGNMENT
 
 endif
 
+config ARM_HWCC_FLAG
+	bool
+	default n
+	help
+	  Select if you want the ARM specific device structure to inclue a flag
+	  for determining whether HW cache coherency is enabled.
+	  If unsure, say 'N'.
+
 config HAVE_PWM
 	bool
 
@@ -168,6 +175,10 @@ config ARCH_HAS_ILOG2_U32
 config ARCH_HAS_ILOG2_U64
 	bool
 
+config ARCH_LONG_LONG_ATOMIC
+	bool
+	default n
+
 config ARCH_HAS_CPUFREQ
 	bool
 	help
@@ -213,7 +224,8 @@ config VECTORS_BASE
 	default DRAM_BASE if REMAP_VECTORS_TO_RAM
 	default 0x00000000
 	help
-	  The base address of exception vectors.
+	  The base address of exception vectors.  This must be two pages
+	  in size.
 
 config ARM_PATCH_PHYS_VIRT
 	bool "Patch physical to virtual translations at runtime" if EMBEDDED
@@ -864,6 +876,33 @@ config ARCH_OMAP1
 	help
 	  Support for older TI OMAP1 (omap7xx, omap15xx or omap16xx)
 
+config ARCH_ALPINE
+        bool "AnnapurnaLabs Alpine SOCs with Device Tree support"
+        select ARCH_WANT_OPTIONAL_GPIOLIB
+        select ARM_AMBA
+		select SPARSE_IRQ
+        select ARM_TIMER_SP804
+        select CLKDEV_LOOKUP
+        select GENERIC_CLOCKEVENTS
+		select GENERIC_IRQ_CHIP
+        select HAVE_CLK
+        select HAVE_SMP 
+        select HAVE_SCHED_CLOCK
+        select ARCH_SCHED_CLOCK
+        select ICST
+        select CPU_V7
+        select ARM_GIC
+        select HAVE_ARCH_TIMERS
+        select COMMON_CLK
+        select PCI
+	select PCI_DOMAINS
+        select ARCH_SUPPORTS_MSI
+	select ARM_HWCC_FLAG
+	select ARCH_LONG_LONG_ATOMIC
+	select ARM_HAS_SG_CHAIN
+        help
+          This enables support for the AnnapurnaLabs SoC Gen1 boards.
+
 endchoice
 
 menu "Multiple platform selection"
@@ -1024,6 +1063,8 @@ source "arch/arm/mach-virt/Kconfig"
 
 source "arch/arm/mach-vt8500/Kconfig"
 
+source "arch/arm/mach-alpine/Kconfig"
+
 source "arch/arm/mach-w90x900/Kconfig"
 
 source "arch/arm/mach-zynq/Kconfig"
@@ -1059,6 +1100,9 @@ config ARM_TIMER_SP804
 	select CLKSRC_OF if OF
 
 source arch/arm/mm/Kconfig
+
+config MACH_QNAPTS
+        bool "QNAP TS Series"
 
 config ARM_NR_BANKS
 	int
@@ -1537,6 +1581,16 @@ choice
 	config VMSPLIT_1G
 		bool "1G/3G user/kernel split"
 endchoice
+
+config FUNC_REORDER
+	bool "Function reordering support"
+	default n
+	help
+	  Support for function reordering based on functionlist found in
+	  arch/arm/kernel/functionlist.
+	  Function reordering can be used to increase locality on the I-cache.
+	  This option add the flag -ffunction-sections to the compilation
+	  flags.
 
 config PAGE_OFFSET
 	hex

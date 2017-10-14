@@ -1,10 +1,8 @@
 #ifndef ISCSI_PARAMETERS_H
 #define ISCSI_PARAMETERS_H
 
-#include <scsi/iscsi_proto.h>
-
 struct iscsi_extra_response {
-	char key[KEY_MAXLEN];
+	char key[64];
 	char value[32];
 	struct list_head er_list;
 } ____cacheline_aligned;
@@ -20,6 +18,9 @@ struct iscsi_param {
 	u8 use;
 	u16 type_range;
 	u32 state;
+#ifdef CONFIG_MACH_QNAPTS   // Benjamin 20110418 for bug #19339: Broadcom HW Initiator login failure 
+    u32 nego;
+#endif     
 	struct list_head p_list;
 } ____cacheline_aligned;
 
@@ -29,7 +30,7 @@ extern void iscsi_dump_conn_ops(struct iscsi_conn_ops *);
 extern void iscsi_dump_sess_ops(struct iscsi_sess_ops *);
 extern void iscsi_print_params(struct iscsi_param_list *);
 extern int iscsi_create_default_params(struct iscsi_param_list **);
-extern int iscsi_set_keys_to_negotiate(struct iscsi_param_list *, bool);
+extern int iscsi_set_keys_to_negotiate(int, struct iscsi_param_list *);
 extern int iscsi_set_keys_irrelevant_for_discovery(struct iscsi_param_list *);
 extern int iscsi_copy_param_list(struct iscsi_param_list **,
 			struct iscsi_param_list *, int);
@@ -38,7 +39,7 @@ extern void iscsi_release_param_list(struct iscsi_param_list *);
 extern struct iscsi_param *iscsi_find_param_from_key(char *, struct iscsi_param_list *);
 extern int iscsi_extract_key_value(char *, char **, char **);
 extern int iscsi_update_param_value(struct iscsi_param *, char *);
-extern int iscsi_decode_text_input(u8, u8, char *, u32, struct iscsi_conn *);
+extern int iscsi_decode_text_input(u8, u8, char *, u32, struct iscsi_param_list *);
 extern int iscsi_encode_text_output(u8, u8, char *, u32 *,
 			struct iscsi_param_list *);
 extern int iscsi_check_negotiated_keys(struct iscsi_param_list *);
@@ -72,7 +73,6 @@ extern void iscsi_set_session_parameters(struct iscsi_sess_ops *,
 #define INITIALR2T			"InitialR2T"
 #define IMMEDIATEDATA			"ImmediateData"
 #define MAXRECVDATASEGMENTLENGTH	"MaxRecvDataSegmentLength"
-#define MAXXMITDATASEGMENTLENGTH	"MaxXmitDataSegmentLength"
 #define MAXBURSTLENGTH			"MaxBurstLength"
 #define FIRSTBURSTLENGTH		"FirstBurstLength"
 #define DEFAULTTIME2WAIT		"DefaultTime2Wait"
@@ -91,13 +91,6 @@ extern void iscsi_set_session_parameters(struct iscsi_sess_ops *,
 #define X_EXTENSIONKEY_CISCO_OLD	"X-com.cisco.iscsi.draft"
 
 /*
- * Parameter names of iSCSI Extentions for RDMA (iSER).  See RFC-5046
- */
-#define RDMAEXTENSIONS			"RDMAExtensions"
-#define INITIATORRECVDATASEGMENTLENGTH	"InitiatorRecvDataSegmentLength"
-#define TARGETRECVDATASEGMENTLENGTH	"TargetRecvDataSegmentLength"
-
-/*
  * For AuthMethod.
  */
 #define KRB5				"KRB5"
@@ -112,21 +105,36 @@ extern void iscsi_set_session_parameters(struct iscsi_sess_ops *,
 #define INITIAL_AUTHMETHOD			CHAP
 #define INITIAL_HEADERDIGEST			"CRC32C,None"
 #define INITIAL_DATADIGEST			"CRC32C,None"
+#ifdef CONFIG_MACH_QNAPTS
+#define INITIAL_MAXCONNECTIONS			"8"
+#else
 #define INITIAL_MAXCONNECTIONS			"1"
+#endif
+
 #define INITIAL_SENDTARGETS			ALL
+#ifdef CONFIG_MACH_QNAPTS // 2009/10/12 Nike Chen
+#if defined(IS_G) && !defined(Athens)
+#define INITIAL_TARGETNAME			"NAS.Target"
+#define INITIAL_INITIATORNAME			"NAS.Initiator"
+#define INITIAL_TARGETALIAS			"NAS Target"
+#define INITIAL_INITIATORALIAS			"NAS Initiator"
+#else
+#define INITIAL_TARGETNAME			"QNAP.Target"
+#define INITIAL_INITIATORNAME			"QNAP.Initiator"
+#define INITIAL_TARGETALIAS			"QNAP Target"
+#define INITIAL_INITIATORALIAS			"QNAP Initiator"
+#endif /* #if defined(IS_G) && !defined(Athens) */
+#else
 #define INITIAL_TARGETNAME			"LIO.Target"
 #define INITIAL_INITIATORNAME			"LIO.Initiator"
 #define INITIAL_TARGETALIAS			"LIO Target"
 #define INITIAL_INITIATORALIAS			"LIO Initiator"
+#endif /* #ifdef CONFIG_MACH_QNAPTS  */
 #define INITIAL_TARGETADDRESS			"0.0.0.0:0000,0"
 #define INITIAL_TARGETPORTALGROUPTAG		"1"
 #define INITIAL_INITIALR2T			YES
 #define INITIAL_IMMEDIATEDATA			YES
 #define INITIAL_MAXRECVDATASEGMENTLENGTH	"8192"
-/*
- * Match outgoing MXDSL default to incoming Open-iSCSI default
- */
-#define INITIAL_MAXXMITDATASEGMENTLENGTH	"262144"
 #define INITIAL_MAXBURSTLENGTH			"262144"
 #define INITIAL_FIRSTBURSTLENGTH		"65536"
 #define INITIAL_DEFAULTTIME2WAIT		"2"
@@ -142,13 +150,6 @@ extern void iscsi_set_session_parameters(struct iscsi_sess_ops *,
 #define INITIAL_OFMARKINT			"2048~65535"
 
 /*
- * Initial values for iSER parameters following RFC-5046 Section 6
- */
-#define INITIAL_RDMAEXTENSIONS			NO
-#define INITIAL_INITIATORRECVDATASEGMENTLENGTH	"262144"
-#define INITIAL_TARGETRECVDATASEGMENTLENGTH	"8192"
-
-/*
  * For [Header,Data]Digests.
  */
 #define CRC32C				"CRC32C"
@@ -158,6 +159,10 @@ extern void iscsi_set_session_parameters(struct iscsi_sess_ops *,
  */
 #define DISCOVERY			"Discovery"
 #define NORMAL				"Normal"
+#ifdef CONFIG_MACH_QNAPTS   // Benjamin 20110322
+// RF3720 section 5.3, "The initial Login Request of the first connection of a session MAY include the SessionType key=value pair."
+#define SESSION_TYPE        "SessionType"
+#endif
 
 /*
  * struct iscsi_param->use

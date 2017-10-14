@@ -308,7 +308,7 @@ int filemap_fdatawait_range(struct address_space *mapping, loff_t start_byte,
 	}
 out:
 	ret2 = filemap_check_errors(mapping);
-	if (!ret)
+	if (!ret || (ret == -EIO && ret2 == -ENOSPC))
 		ret = ret2;
 
 	return ret;
@@ -1503,7 +1503,7 @@ EXPORT_SYMBOL(generic_file_aio_read);
 static int page_cache_read(struct file *file, pgoff_t offset)
 {
 	struct address_space *mapping = file->f_mapping;
-	struct page *page; 
+	struct page *page;
 	int ret;
 
 	do {
@@ -1520,7 +1520,7 @@ static int page_cache_read(struct file *file, pgoff_t offset)
 		page_cache_release(page);
 
 	} while (ret == AOP_TRUNCATED_PAGE);
-		
+
 	return ret;
 }
 
@@ -1565,7 +1565,11 @@ static void do_sync_mmap_readahead(struct vm_area_struct *vma,
 	 * mmap read-around
 	 */
 	ra_pages = max_sane_readahead(ra->ra_pages);
+#ifdef CONFIG_LFS_ON_32CPU
+	ra->start = max_t(long long, 0, offset - ra_pages / 2);
+#else
 	ra->start = max_t(long, 0, offset - ra_pages / 2);
+#endif
 	ra->size = ra_pages;
 	ra->async_size = ra_pages / 4;
 	ra_submit(ra, mapping, file);
@@ -2405,7 +2409,7 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
 		written += status;
 		*ppos = pos + status;
   	}
-	
+
 	return written ? written : status;
 }
 EXPORT_SYMBOL(generic_file_buffered_write);

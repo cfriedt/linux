@@ -50,7 +50,7 @@ struct dm_transaction_manager *dm_tm_create_non_blocking_clone(struct dm_transac
  */
 int dm_tm_pre_commit(struct dm_transaction_manager *tm);
 int dm_tm_commit(struct dm_transaction_manager *tm, struct dm_block *root);
-
+int dm_tm_backup_commit(struct dm_transaction_manager *tm, struct dm_block *root);
 /*
  * These methods are the only way to get hold of a writeable block.
  */
@@ -120,6 +120,7 @@ struct dm_block_manager *dm_tm_get_bm(struct dm_transaction_manager *tm);
  * shouldn't be used.
  */
 int dm_tm_create_with_sm(struct dm_block_manager *bm, dm_block_t sb_location,
+			 dm_block_t backup_reserved,
 			 struct dm_transaction_manager **tm,
 			 struct dm_space_map **sm);
 

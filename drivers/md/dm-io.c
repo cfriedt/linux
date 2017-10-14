@@ -298,7 +298,7 @@ static void do_region(int rw, unsigned region, struct dm_io_region *where,
 		/*
 		 * Allocate a suitably sized-bio.
 		 */
-		if ((rw & REQ_DISCARD) || (rw & REQ_WRITE_SAME))
+		if ((rw & REQ_DISCARD) || (rw & REQ_WRITE_SAME) || (rw & REQ_QNAP_MAP_ZERO))
 			num_bvecs = 1;
 		else
 			num_bvecs = min_t(int, bio_get_nr_vecs(where->bdev),
@@ -310,7 +310,7 @@ static void do_region(int rw, unsigned region, struct dm_io_region *where,
 		bio->bi_end_io = endio;
 		store_io_and_region_in_bio(bio, io, region);
 
-		if (rw & REQ_DISCARD) {
+		if (rw & (REQ_DISCARD | REQ_QNAP_MAP_ZERO)) {
 			num_sectors = min_t(sector_t, q->limits.max_discard_sectors, remaining);
 			bio->bi_size = num_sectors << SECTOR_SHIFT;
 			remaining -= num_sectors;

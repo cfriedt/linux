@@ -28,6 +28,7 @@ struct sm_disk {
 	struct ll_disk old_ll;
 
 	dm_block_t begin;
+	dm_block_t reserved;
 	dm_block_t nr_allocated_this_transaction;
 };
 
@@ -56,7 +57,7 @@ static int sm_disk_get_nr_blocks(struct dm_space_map *sm, dm_block_t *count)
 static int sm_disk_get_nr_free(struct dm_space_map *sm, dm_block_t *count)
 {
 	struct sm_disk *smd = container_of(sm, struct sm_disk, sm);
-	*count = (smd->old_ll.nr_blocks - smd->old_ll.nr_allocated) - smd->nr_allocated_this_transaction;
+	*count = (smd->old_ll.nr_blocks - smd->old_ll.nr_allocated) - smd->nr_allocated_this_transaction - smd->reserved;
 
 	return 0;
 }
@@ -183,6 +184,28 @@ static int sm_disk_new_block(struct dm_space_map *sm, dm_block_t *b)
 	return r;
 }
 
+static int sm_disk_new_reserve_block(struct dm_space_map *sm, dm_block_t *b)
+{
+    int r;
+    enum allocation_event ev;
+    struct sm_disk *smd = container_of(sm, struct sm_disk, sm);
+
+    /* FIXME: we should loop round a couple of times */
+    r = sm_ll_find_free_block(&smd->old_ll, smd->begin, smd->old_ll.nr_blocks, b);
+    if (r)
+        return r;
+
+    smd->begin = *b + 1;
+    r = sm_ll_inc(&smd->ll, *b, &ev);
+    if (!r) {
+        BUG_ON(ev != SM_ALLOC);
+        smd->nr_allocated_this_transaction++;
+        smd->reserved--;
+    }
+
+    return r;
+}
+
 static int sm_disk_commit(struct dm_space_map *sm)
 {
 	int r;
@@ -233,8 +256,28 @@ static int sm_disk_copy_root(struct dm_space_map *sm, void *where_le, size_t max
 	return 0;
 }
 
-/*----------------------------------------------------------------*/
+static int sm_disk_reserve(struct dm_space_map *sm, dm_block_t size, dm_block_t threshold)
+{
+    struct sm_disk *smd = container_of(sm, struct sm_disk, sm);
+    dm_block_t free_blks;
 
+    if (size == ULLONG_MAX) {
+        DMERR("%s: reset reserve space, old value = %llu", __func__, smd->reserved);
+        smd->reserved = 0;
+        return 0;
+    }
+
+    sm_disk_get_nr_free(sm, &free_blks);
+
+    if (free_blks >= threshold + size) {
+        smd->reserved += size;
+        DMERR("%s: set reserve space, free_blks = %llu new value = %llu", __func__, free_blks, smd->reserved);
+        return 0;
+    } else
+        return -ENOSPC;
+}
+
+/*----------------------------------------------------------------*/
 static struct dm_space_map ops = {
 	.destroy = sm_disk_destroy,
 	.extend = sm_disk_extend,
@@ -246,10 +289,12 @@ static struct dm_space_map ops = {
 	.inc_block = sm_disk_inc_block,
 	.dec_block = sm_disk_dec_block,
 	.new_block = sm_disk_new_block,
+	.new_reserve_block = sm_disk_new_reserve_block,
 	.commit = sm_disk_commit,
 	.root_size = sm_disk_root_size,
 	.copy_root = sm_disk_copy_root,
-	.register_threshold_callback = NULL
+    .register_threshold_callback = NULL,
+    .reserve = sm_disk_reserve
 };
 
 struct dm_space_map *dm_sm_disk_create(struct dm_transaction_manager *tm,
@@ -263,6 +308,7 @@ struct dm_space_map *dm_sm_disk_create(struct dm_transaction_manager *tm,
 		return ERR_PTR(-ENOMEM);
 
 	smd->begin = 0;
+	smd->reserved = 0;
 	smd->nr_allocated_this_transaction = 0;
 	memcpy(&smd->sm, &ops, sizeof(smd->sm));
 
@@ -297,6 +343,7 @@ struct dm_space_map *dm_sm_disk_open(struct dm_transaction_manager *tm,
 		return ERR_PTR(-ENOMEM);
 
 	smd->begin = 0;
+	smd->reserved = 0;
 	smd->nr_allocated_this_transaction = 0;
 	memcpy(&smd->sm, &ops, sizeof(smd->sm));
 

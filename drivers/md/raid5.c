@@ -59,12 +59,26 @@
 #include "raid5.h"
 #include "raid0.h"
 #include "bitmap.h"
+//Patch by QNAP: Robust RAID - ReadOnly function
+#ifdef CONFIG_MACH_QNAPTS
+#include <linux/fs.h>
+#endif
+#if defined(CONFIG_MACH_QNAPTS) && !defined(QNAP_HAL)
+#include <qnap/pic.h>
+#endif
+///////////////////////////////////////////////
 
 /*
  * Stripe cache
  */
 
+//Patch by QNAP:fix raid5 performance
+#ifdef CONFIG_MACH_QNAPTS
+#define NR_STRIPES      (PAGE_SIZE>(2<<12)?1024:4096)
+#else
 #define NR_STRIPES		256
+#endif
+/////////////////////////////////
 #define STRIPE_SIZE		PAGE_SIZE
 #define STRIPE_SHIFT		(PAGE_SHIFT - 9)
 #define STRIPE_SECTORS		(STRIPE_SIZE>>9)
@@ -295,6 +309,7 @@ static void shrink_buffers(struct stripe_head *sh)
 	int num = sh->raid_conf->pool_size;
 
 	for (i = 0; i < num ; i++) {
+		WARN_ON(sh->dev[i].page != sh->dev[i].orig_page);
 		p = sh->dev[i].page;
 		if (!p)
 			continue;
@@ -315,6 +330,7 @@ static int grow_buffers(struct stripe_head *sh)
 			return 1;
 		}
 		sh->dev[i].page = page;
+		sh->dev[i].orig_page = page;
 	}
 	return 0;
 }
@@ -663,11 +679,21 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 						 + rdev->data_offset);
 			if (test_bit(R5_ReadNoMerge, &sh->dev[i].flags))
 				bi->bi_rw |= REQ_FLUSH;
-
+/* Bug#87657 - kernel log shows call trace when Nas rebuild volumn with multiple I/O, remove for bettern performance on TS-1635
+			if (test_bit(R5_SkipCopy, &sh->dev[i].flags))
+				pr_warn_ratelimited("Warning! raid456 skip copy issue. The device flag should not be R5_UPTODATE here.\n");
+*/
+			sh->dev[i].vec.bv_page = sh->dev[i].page;
 			bi->bi_vcnt = 1;
 			bi->bi_io_vec[0].bv_len = STRIPE_SIZE;
 			bi->bi_io_vec[0].bv_offset = 0;
 			bi->bi_size = STRIPE_SIZE;
+			/*
+			 * If this is discard request, set bi_vcnt 0. We don't
+			 * want to confuse SCSI because SCSI will replace payload
+			 */
+			if (rw & REQ_DISCARD)
+				bi->bi_vcnt = 0;
 			if (rrdev)
 				set_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags);
 
@@ -702,10 +728,19 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 			else
 				rbi->bi_sector = (sh->sector
 						  + rrdev->data_offset);
+			if (test_bit(R5_SkipCopy, &sh->dev[i].flags))
+				WARN_ON(test_bit(R5_UPTODATE, &sh->dev[i].flags));
+			sh->dev[i].rvec.bv_page = sh->dev[i].page;
 			rbi->bi_vcnt = 1;
 			rbi->bi_io_vec[0].bv_len = STRIPE_SIZE;
 			rbi->bi_io_vec[0].bv_offset = 0;
 			rbi->bi_size = STRIPE_SIZE;
+			/*
+			 * If this is discard request, set bi_vcnt 0. We don't
+			 * want to confuse SCSI because SCSI will replace payload
+			 */
+			if (rw & REQ_DISCARD)
+				rbi->bi_vcnt = 0;
 			if (conf->mddev->gendisk)
 				trace_block_bio_remap(bdev_get_queue(rbi->bi_bdev),
 						      rbi, disk_devt(conf->mddev->gendisk),
@@ -724,8 +759,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 }
 
 static struct dma_async_tx_descriptor *
-async_copy_data(int frombio, struct bio *bio, struct page *page,
-	sector_t sector, struct dma_async_tx_descriptor *tx)
+async_copy_data(int frombio, struct bio *bio, struct page **page,
+	sector_t sector, struct dma_async_tx_descriptor *tx,
+	struct stripe_head *sh)
 {
 	struct bio_vec *bvl;
 	struct page *bio_page;
@@ -762,11 +798,16 @@ async_copy_data(int frombio, struct bio *bio, struct page *page,
 		if (clen > 0) {
 			b_offset += bvl->bv_offset;
 			bio_page = bvl->bv_page;
-			if (frombio)
-				tx = async_memcpy(page, bio_page, page_offset,
+			if (frombio) {
+				if (sh->raid_conf->skip_copy &&
+				    b_offset == 0 && page_offset == 0 &&
+				    clen == STRIPE_SIZE)
+					*page = bio_page;
+				else
+					tx = async_memcpy(*page, bio_page, page_offset,
 						  b_offset, clen, &submit);
-			else
-				tx = async_memcpy(bio_page, page, b_offset,
+			} else
+				tx = async_memcpy(bio_page, *page, b_offset,
 						  page_offset, clen, &submit);
 		}
 		/* chain the operations */
@@ -842,8 +883,8 @@ static void ops_run_biofill(struct stripe_head *sh)
 			spin_unlock_irq(&sh->stripe_lock);
 			while (rbi && rbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				tx = async_copy_data(0, rbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_data(0, rbi, &dev->page,
+					dev->sector, tx, sh);
 				rbi = r5_next_bio(rbi, dev->sector);
 			}
 		}
@@ -1180,6 +1221,7 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 			dev->towrite = NULL;
 			BUG_ON(dev->written);
 			wbi = dev->written = chosen;
+			WARN_ON(dev->page != dev->orig_page);
 			spin_unlock_irq(&sh->stripe_lock);
 
 			while (wbi && wbi->bi_sector <
@@ -1190,9 +1232,15 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 					set_bit(R5_SyncIO, &dev->flags);
 				if (wbi->bi_rw & REQ_DISCARD)
 					set_bit(R5_Discard, &dev->flags);
-				else
-					tx = async_copy_data(1, wbi, dev->page,
-						dev->sector, tx);
+				else {
+					tx = async_copy_data(1, wbi, &dev->page,
+						dev->sector, tx, sh);
+					if (dev->page != dev->orig_page) {
+						set_bit(R5_SkipCopy, &dev->flags);
+						clear_bit(R5_UPTODATE, &dev->flags);
+						clear_bit(R5_OVERWRITE, &dev->flags);
+					}
+				}
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
 		}
@@ -1223,7 +1271,7 @@ static void ops_complete_reconstruct(void *stripe_head_ref)
 		struct r5dev *dev = &sh->dev[i];
 
 		if (dev->written || i == pd_idx || i == qd_idx) {
-			if (!discard)
+			if (!discard && !test_bit(R5_SkipCopy, &dev->flags))
 				set_bit(R5_UPTODATE, &dev->flags);
 			if (fua)
 				set_bit(R5_WantFUA, &dev->flags);
@@ -1626,8 +1674,10 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 		osh = get_free_stripe(conf);
 		spin_unlock_irq(&conf->device_lock);
 		atomic_set(&nsh->count, 1);
-		for(i=0; i<conf->pool_size; i++)
+		for(i=0; i<conf->pool_size; i++) {
 			nsh->dev[i].page = osh->dev[i].page;
+			nsh->dev[i].orig_page = osh->dev[i].page;
+		}
 		for( ; i<newsize; i++)
 			nsh->dev[i].page = NULL;
 		kmem_cache_free(conf->slab_cache, osh);
@@ -1676,6 +1726,7 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 			if (nsh->dev[i].page == NULL) {
 				struct page *p = alloc_page(GFP_NOIO);
 				nsh->dev[i].page = p;
+				nsh->dev[i].orig_page = p;
 				if (!p)
 					err = -ENOMEM;
 			}
@@ -1724,6 +1775,10 @@ static void raid5_end_read_request(struct bio * bi, int error)
 	char b[BDEVNAME_SIZE];
 	struct md_rdev *rdev = NULL;
 	sector_t s;
+#if defined(CONFIG_MACH_QNAPTS)
+    NETLINK_EVT hal_event;
+#endif
+
 
 	for (i=0 ; i<disks; i++)
 		if (bi == &sh->dev[i].req)
@@ -1745,7 +1800,11 @@ static void raid5_end_read_request(struct bio * bi, int error)
 		rdev = conf->disks[i].replacement;
 	if (!rdev)
 		rdev = conf->disks[i].rdev;
-
+//patch by QNAP: fix bug #986 on mantis, kernel panic caused by sleeping when interrupt
+#if defined(CONFIG_MACH_QNAPTS)
+    if(error == -ENODEV)
+        set_bit(QNAP_NoDev, &rdev->flags);
+#endif
 	if (use_new_offset(conf, sh))
 		s = sh->sector + rdev->new_data_offset;
 	else
@@ -1767,6 +1826,17 @@ static void raid5_end_read_request(struct bio * bi, int error)
 			atomic_add(STRIPE_SECTORS, &rdev->corrected_errors);
 			clear_bit(R5_ReadError, &sh->dev[i].flags);
 			clear_bit(R5_ReWrite, &sh->dev[i].flags);
+//Patch by QNAP: enhance error handler
+#if defined(CONFIG_MACH_QNAPTS)
+            memset(&hal_event, 0, sizeof(NETLINK_EVT));
+            hal_event.type = HAL_EVENT_RAID;
+            hal_event.arg.action = REPAIR_RAID_READ_ERROR;
+            hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(conf->mddev) + strlen("md"), NULL, 0);    
+            hal_event.arg.param.netlink_raid.pd_repair_sector = (unsigned long long)(sh->sector + rdev->data_offset);    
+            snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name, 
+                    sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(rdev->bdev, b));
+            send_hal_netlink(&hal_event);
+#endif   			
 		} else if (test_bit(R5_ReadNoMerge, &sh->dev[i].flags))
 			clear_bit(R5_ReadNoMerge, &sh->dev[i].flags);
 
@@ -1820,6 +1890,13 @@ static void raid5_end_read_request(struct bio * bi, int error)
 			} else
 				set_bit(R5_ReadNoMerge, &sh->dev[i].flags);
 		else {
+//Patch by QNAP: enhance HAL error handler
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+            if(test_bit(MD_QNAP_FROZEN, &conf->mddev->recovery))
+			    set_bit(R5_ReadError, &sh->dev[i].flags);
+            else 
+#endif            
+/////////////////////            
 			clear_bit(R5_ReadError, &sh->dev[i].flags);
 			clear_bit(R5_ReWrite, &sh->dev[i].flags);
 			if (!(set_bad
@@ -1871,6 +1948,11 @@ static void raid5_end_write_request(struct bio *bi, int error)
 		BUG();
 		return;
 	}
+//patch by QNAP: fix bug #986 on mantis, kernel panic caused by sleeping when interrupt
+#if defined(CONFIG_MACH_QNAPTS)
+    if(error == -ENODEV)
+        set_bit(QNAP_NoDev, &rdev->flags);
+#endif
 
 	if (replacement) {
 		if (!uptodate)
@@ -1914,17 +1996,13 @@ static void raid5_build_block(struct stripe_head *sh, int i, int previous)
 
 	bio_init(&dev->req);
 	dev->req.bi_io_vec = &dev->vec;
-	dev->req.bi_vcnt++;
-	dev->req.bi_max_vecs++;
+	dev->req.bi_max_vecs = 1;
 	dev->req.bi_private = sh;
-	dev->vec.bv_page = dev->page;
 
 	bio_init(&dev->rreq);
 	dev->rreq.bi_io_vec = &dev->rvec;
-	dev->rreq.bi_vcnt++;
-	dev->rreq.bi_max_vecs++;
+	dev->rreq.bi_max_vecs = 1;
 	dev->rreq.bi_private = sh;
-	dev->rvec.bv_page = dev->page;
 
 	dev->flags = 0;
 	dev->sector = compute_blocknr(sh, i, previous);
@@ -1935,7 +2013,118 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	char b[BDEVNAME_SIZE];
 	struct r5conf *conf = mddev->private;
 	unsigned long flags;
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    NETLINK_EVT hal_event;
+#endif
+
 	pr_debug("raid456: error called\n");
+//Patch by QNAP: Robust RAID - ReadOnly function
+#ifdef CONFIG_MACH_QNAPTS
+/*
+ * Don't fail the raid device, if it had been in degraded mode.
+ * Added by KenChen@QNAP
+ */
+
+    if (!test_bit(Faulty, &rdev->flags) && test_bit(In_sync, &rdev->flags)){
+    	if ( (mddev->degraded == 1 && conf->level == 5 ) || (mddev->degraded == 2 && conf->level == 6 ) )
+    	{
+    		char device_name[20];
+    		struct file *pFile;
+    		
+    		printk("raid%d: some error occurred in a active device:%d of %s.\n", conf->level, rdev->raid_disk, mdname(mddev));
+    		sprintf(device_name,"/dev/%s", bdevname(rdev->bdev,b));
+//Patch by QNAP: enhance HAL error handler
+#if defined(QNAP_HAL)
+            mddev->recovery_disabled = 1;
+#else  
+
+#if 0
+            pFile = filp_open(device_name,O_RDWR,0);
+            if ((IS_ERR(pFile))||(pFile==NULL)||(pFile->f_dentry==NULL))
+                goto error_normal;
+            else
+                filp_close(pFile,NULL);
+#endif
+            //fix bug #986 on mantis, kernel panic caused by sleeping when interrupt 
+			if(test_bit(QNAP_NoDev, &rdev->flags))
+                 goto error_normal;
+	
+#endif	//if defined(QNAP_HAL)
+
+            if (test_bit(MD_RECOVERY_SYNC, &mddev->recovery)){ 
+                printk("raid%d: Resync failed.\n", conf->level ); //This case(sync) should not happen.
+                goto error_normal;
+       	    }
+            else if (mddev->ro)
+                printk("raid%d: read-only.\n", conf->level);
+           	else if (!test_bit(QMD_ERR_SENT, &rdev->qflags)){
+       			int ts_caseno;
+    			printk("raid%d: Keep the raid device active in degraded mode but set readonly.\n", conf->level);   			
+//Patch by QNAP: enhance HAL error handler
+#if defined(QNAP_HAL)
+       			set_bit(MD_RECOVERY_FROZEN, &mddev->recovery);
+       			set_bit(MD_QNAP_FROZEN, &mddev->recovery);
+#else
+       			set_bit(MD_RECOVERY_INTR, &mddev->recovery);
+#endif
+       			set_bit(QMD_ERR_SENT, &rdev->qflags);
+//       			mddev->ro = 1;
+        		sprintf(device_name,"%s", bdevname(rdev->bdev,b));
+        		ts_caseno = device_name[2]-'a';
+#if defined(QNAP_HAL)
+                memset(&hal_event, 0, sizeof(NETLINK_EVT));
+                hal_event.type = HAL_EVENT_RAID;
+                hal_event.arg.action = SET_RAID_RO;
+                hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(mddev) + strlen("md"), NULL, 0);    
+                snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name,
+                        sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(rdev->bdev, b));
+                send_hal_netlink(&hal_event);
+#else
+#if defined(X86_SANDYBRIDGE) || defined(TS1259U) || defined(X86_CEDAVIEW)
+                send_message_to_app(QNAP_IOCTL_SATA_ERR + ts_caseno);
+#else                
+      			switch(ts_caseno){
+    				case 0:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV0);
+    					break;
+    				case 1:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV1);
+    					break;
+    				case 2:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV2);
+    					break;
+    				case 3:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV3);
+    					break;
+    				case 4:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV4);
+    					break;
+    				case 5:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV6);
+    					break;
+    				case 6:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV6);
+    					break;
+    				case 7:
+    					send_message_to_app(MD_ERR_RECOVERY_ACTDEV7);
+    					break;
+    				default:
+    					break;
+       			}
+#endif
+       			if (conf->level == 6)
+    					send_message_to_app(MD_ERR_DEGRADE_RAID6);
+    				else
+    					send_message_to_app(MD_ERR_DEGRADE_RAID5);
+#endif
+    		}
+    		return;
+
+    	}
+    }
+error_normal:
+#endif
+////////////////////////////////////////////////////////////////////
 
 	spin_lock_irqsave(&conf->device_lock, flags);
 	clear_bit(In_sync, &rdev->flags);
@@ -1953,6 +2142,16 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	       bdevname(rdev->bdev, b),
 	       mdname(mddev),
 	       conf->raid_disks - mddev->degraded);
+//Patch by QNAP: enhance HAL error handler
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    memset(&hal_event, 0, sizeof(NETLINK_EVT));
+    hal_event.type = HAL_EVENT_RAID;
+    hal_event.arg.action = SET_RAID_PD_ERROR;
+    hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(mddev) + strlen("md"), NULL, 0);    
+    snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name, 
+            sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(rdev->bdev, b));
+    send_hal_netlink(&hal_event);
+#endif        
 }
 
 /*
@@ -2524,6 +2723,10 @@ handle_failed_stripe(struct r5conf *conf, struct stripe_head *sh,
 		/* and fail all 'written' */
 		bi = sh->dev[i].written;
 		sh->dev[i].written = NULL;
+		if (test_and_clear_bit(R5_SkipCopy, &sh->dev[i].flags)) {
+			WARN_ON(test_bit(R5_UPTODATE, &sh->dev[i].flags));
+			sh->dev[i].page = sh->dev[i].orig_page;
+		}
 		if (bi) bitmap_end = 1;
 		while (bi && bi->bi_sector <
 		       sh->dev[i].sector + STRIPE_SECTORS) {
@@ -2765,12 +2968,18 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 			dev = &sh->dev[i];
 			if (!test_bit(R5_LOCKED, &dev->flags) &&
 			    (test_bit(R5_UPTODATE, &dev->flags) ||
-			     test_bit(R5_Discard, &dev->flags))) {
+			     test_bit(R5_Discard, &dev->flags) ||
+			     test_bit(R5_SkipCopy, &dev->flags))) {
 				/* We can return any write requests */
 				struct bio *wbi, *wbi2;
 				pr_debug("Return write for disc %d\n", i);
 				if (test_and_clear_bit(R5_Discard, &dev->flags))
 					clear_bit(R5_UPTODATE, &dev->flags);
+				if (test_and_clear_bit(R5_SkipCopy, &dev->flags)) {
+                    // Comment Warning
+					//WARN_ON(test_bit(R5_UPTODATE, &dev->flags));
+					dev->page = dev->orig_page;
+				}
 				wbi = dev->written;
 				dev->written = NULL;
 				while (wbi && wbi->bi_sector <
@@ -2789,6 +2998,9 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 						0);
 			} else if (test_bit(R5_Discard, &dev->flags))
 				discard_pending = 1;
+            // comment by al suggestion
+			//WARN_ON(test_bit(R5_SkipCopy, &dev->flags));
+			//WARN_ON(dev->page != dev->orig_page);
 		}
 	if (!discard_pending &&
 	    test_bit(R5_Discard, &sh->dev[sh->pd_idx].flags)) {
@@ -2800,6 +3012,14 @@ static void handle_stripe_clean_event(struct r5conf *conf,
 		}
 		/* now that discard is done we can proceed with any sync */
 		clear_bit(STRIPE_DISCARD, &sh->state);
+		/*
+		 * SCSI discard will change some bio fields and the stripe has
+		 * no updated data, so remove it from hash list and the stripe
+		 * will be reinitialized
+		 */
+		spin_lock_irq(&conf->device_lock);
+		remove_hash(sh);
+		spin_unlock_irq(&conf->device_lock);
 		if (test_bit(STRIPE_SYNC_REQUESTED, &sh->state))
 			set_bit(STRIPE_HANDLE, &sh->state);
 
@@ -3462,6 +3682,7 @@ static void handle_stripe(struct stripe_head *sh)
 		    test_and_clear_bit(STRIPE_SYNC_REQUESTED, &sh->state)) {
 			set_bit(STRIPE_SYNCING, &sh->state);
 			clear_bit(STRIPE_INSYNC, &sh->state);
+			clear_bit(STRIPE_REPLACED, &sh->state);
 		}
 		spin_unlock(&sh->stripe_lock);
 	}
@@ -3503,6 +3724,15 @@ static void handle_stripe(struct stripe_head *sh)
 	/* check if the array has lost more than max_degraded devices and,
 	 * if so, some requests might need to be failed.
 	 */
+//Patch by QNAP: enhance HAL error handler
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    if(test_bit(MD_QNAP_FROZEN, &conf->mddev->recovery) && s.syncing)
+    {
+		md_done_sync(conf->mddev, STRIPE_SECTORS,0);
+		clear_bit(STRIPE_SYNCING, &sh->state);
+		s.syncing = 0;
+    }
+#endif    	 
 	if (s.failed > conf->max_degraded) {
 		sh->check_state = 0;
 		sh->reconstruct_state = 0;
@@ -3538,6 +3768,8 @@ static void handle_stripe(struct stripe_head *sh)
 				pr_debug("Writing block %d\n", i);
 				set_bit(R5_Wantwrite, &dev->flags);
 				if (prexor)
+					continue;
+				if (s.failed > 1)
 					continue;
 				if (!test_bit(R5_Insync, &dev->flags) ||
 				    ((i == sh->pd_idx || i == sh->qd_idx)  &&
@@ -3607,19 +3839,23 @@ static void handle_stripe(struct stripe_head *sh)
 			handle_parity_checks5(conf, sh, &s, disks);
 	}
 
-	if (s.replacing && s.locked == 0
-	    && !test_bit(STRIPE_INSYNC, &sh->state)) {
+	if ((s.replacing || s.syncing) && s.locked == 0
+	    && !test_bit(STRIPE_COMPUTE_RUN, &sh->state)
+	    && !test_bit(STRIPE_REPLACED, &sh->state)) {
 		/* Write out to replacement devices where possible */
 		for (i = 0; i < conf->raid_disks; i++)
-			if (test_bit(R5_UPTODATE, &sh->dev[i].flags) &&
-			    test_bit(R5_NeedReplace, &sh->dev[i].flags)) {
+			if (test_bit(R5_NeedReplace, &sh->dev[i].flags)) {
+				WARN_ON(!test_bit(R5_UPTODATE, &sh->dev[i].flags));
 				set_bit(R5_WantReplace, &sh->dev[i].flags);
 				set_bit(R5_LOCKED, &sh->dev[i].flags);
 				s.locked++;
 			}
-		set_bit(STRIPE_INSYNC, &sh->state);
+		if (s.replacing)
+			set_bit(STRIPE_INSYNC, &sh->state);
+		set_bit(STRIPE_REPLACED, &sh->state);
 	}
 	if ((s.syncing || s.replacing) && s.locked == 0 &&
+	    !test_bit(STRIPE_COMPUTE_RUN, &sh->state) &&
 	    test_bit(STRIPE_INSYNC, &sh->state)) {
 		md_done_sync(conf->mddev, STRIPE_SECTORS, 1);
 		clear_bit(STRIPE_SYNCING, &sh->state);
@@ -4972,6 +5208,50 @@ raid5_preread_bypass_threshold = __ATTR(preread_bypass_threshold,
 					raid5_store_preread_threshold);
 
 static ssize_t
+raid5_show_skip_copy(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf = mddev->private;
+	if (conf)
+		return sprintf(page, "%d\n", conf->skip_copy);
+	else
+		return 0;
+}
+
+static ssize_t
+raid5_store_skip_copy(struct mddev *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf = mddev->private;
+	unsigned long new;
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (!conf)
+		return -ENODEV;
+
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	new = !!new;
+	if (new == conf->skip_copy)
+		return len;
+
+	mddev_suspend(mddev);
+	conf->skip_copy = new;
+	if (new)
+		mddev->queue->backing_dev_info.capabilities |=
+						BDI_CAP_STABLE_WRITES;
+	else
+		mddev->queue->backing_dev_info.capabilities &=
+						~BDI_CAP_STABLE_WRITES;
+	mddev_resume(mddev);
+	return len;
+}
+
+static struct md_sysfs_entry
+raid5_skip_copy = __ATTR(skip_copy, S_IRUGO | S_IWUSR,
+					raid5_show_skip_copy,
+					raid5_store_skip_copy);
+
+
+static ssize_t
 stripe_cache_active_show(struct mddev *mddev, char *page)
 {
 	struct r5conf *conf = mddev->private;
@@ -4988,6 +5268,7 @@ static struct attribute *raid5_attrs[] =  {
 	&raid5_stripecache_size.attr,
 	&raid5_stripecache_active.attr,
 	&raid5_preread_bypass_threshold.attr,
+	&raid5_skip_copy.attr,
 	NULL,
 };
 static struct attribute_group raid5_attrs_group = {
@@ -5163,6 +5444,8 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 	conf = kzalloc(sizeof(struct r5conf), GFP_KERNEL);
 	if (conf == NULL)
 		goto abort;
+    // enable skip_copy in default
+    conf->skip_copy = 1;
 	spin_lock_init(&conf->device_lock);
 	init_waitqueue_head(&conf->wait_for_stripe);
 	init_waitqueue_head(&conf->wait_for_overlap);
@@ -5611,6 +5894,11 @@ static int run(struct mddev *mddev)
 						limits.discard_zeroes_data)
 				discard_supported = false;
 		}
+		/* AL: temp workaround for crash when formatting raid5/6 over
+		 * three of more SSDs with discard support, we just disable
+		 * discard support for now */
+		discard_supported = false;
+
 
 		if (discard_supported &&
 		   mddev->queue->limits.max_discard_sectors >= stripe &&
@@ -5691,6 +5979,12 @@ static int raid5_spare_active(struct mddev *mddev)
 	struct disk_info *tmp;
 	int count = 0;
 	unsigned long flags;
+	//[SDMD START]csw: add variable for sending event
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    char b[BDEVNAME_SIZE];
+    NETLINK_EVT hal_event;
+#endif        
+	//[SDMD END]
 
 	for (i = 0; i < conf->raid_disks; i++) {
 		tmp = conf->disks + i;
@@ -5710,6 +6004,17 @@ static int raid5_spare_active(struct mddev *mddev)
 				set_bit(Faulty, &tmp->rdev->flags);
 				sysfs_notify_dirent_safe(
 					tmp->rdev->sysfs_state);
+//[SDMD START]csw: send replaced disk RAID_PD_HOTREPLACED affter hot-replace
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+                memset(&hal_event, 0, sizeof(NETLINK_EVT));
+                hal_event.type = HAL_EVENT_RAID;
+                hal_event.arg.action = RAID_PD_HOTREPLACED;
+                hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(mddev) + strlen("md"), NULL, 0);    
+                snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name, 
+                        sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(tmp->rdev->bdev,b));
+                send_hal_netlink(&hal_event);
+#endif        
+//[SDMD END]
 			}
 			sysfs_notify_dirent_safe(tmp->replacement->sysfs_state);
 		} else if (tmp->rdev

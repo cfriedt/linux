@@ -11,9 +11,21 @@
 #define _ASMARM_PAGE_H
 
 /* PAGE_SHIFT determines the page size */
+#ifdef CONFIG_ARM_PAGE_SIZE_LARGE
+#define PAGE_SHIFT		CONFIG_ARM_PAGE_SIZE_LARGE_SHIFT
+#else
 #define PAGE_SHIFT		12
+#endif
 #define PAGE_SIZE		(_AC(1,UL) << PAGE_SHIFT)
 #define PAGE_MASK		(~(PAGE_SIZE-1))
+
+/* H/W pages are always 4KB.
+ * A single linux page may be implemented using more than one H/W page.
+ */
+#define HW_PAGE_SHIFT		12
+#define HW_PAGE_SIZE		(1 << HW_PAGE_SHIFT)
+#define HW_PAGE_MASK		(~(HW_PAGE_SIZE-1))
+#define HW_PAGES_PER_PAGE	(1 << (PAGE_SHIFT - HW_PAGE_SHIFT))
 
 #ifndef __ASSEMBLY__
 
@@ -142,7 +154,9 @@ extern void __cpu_copy_user_highpage(struct page *to, struct page *from,
 #define clear_page(page)	memset((void *)(page), 0, PAGE_SIZE)
 extern void copy_page(void *to, const void *from);
 
+#ifdef CONFIG_KUSER_HELPERS
 #define __HAVE_ARCH_GATE_AREA 1
+#endif
 
 #ifdef CONFIG_ARM_LPAE
 #include <asm/pgtable-3level-types.h>

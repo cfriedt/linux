@@ -72,6 +72,15 @@
 #include "libata.h"
 #include "libata-transport.h"
 
+//Patch by QNAP: Disable write cache for some type of Seagate HD
+#ifdef CONFIG_MACH_QNAPTS
+#define DISABLE_WRITE_CACHE_MODEL	"ST31500341AS"
+#define DISABLE_WRITE_CACHE_FWSD15	"SD15"
+#define DISABLE_WRITE_CACHE_FWSD17	"SD17"
+#define DISABLE_WRITE_CACHE_FWSD18	"SD18"
+#endif
+////////////////////////////////////////////////////////////////
+
 /* debounce timing parameters in msecs { interval, duration, timeout } */
 const unsigned long sata_deb_timing_normal[]		= {   5,  100, 2000 };
 const unsigned long sata_deb_timing_hotplug[]		= {  25,  500, 2000 };
@@ -2303,6 +2312,18 @@ int ata_dev_configure(struct ata_device *dev)
 					(unsigned long long)dev->n_sectors,
 					dev->multi_count, lba_desc, ncq_desc);
 			}
+//Patch by QNAP: Disable write cache for some type of Seagate HD
+#ifdef CONFIG_MACH_QNAPTS
+			if(ata_id_has_wcache(dev->id) && ata_id_wcache_enabled(dev->id)){
+				if(!strncmp(modelbuf,DISABLE_WRITE_CACHE_MODEL,strlen(DISABLE_WRITE_CACHE_MODEL)) &&
+					(!strncmp(fwrevbuf,DISABLE_WRITE_CACHE_FWSD15,strlen(DISABLE_WRITE_CACHE_FWSD15)) ||
+					 !strncmp(fwrevbuf,DISABLE_WRITE_CACHE_FWSD17,strlen(DISABLE_WRITE_CACHE_FWSD17)) ||
+					 !strncmp(fwrevbuf,DISABLE_WRITE_CACHE_FWSD18,strlen(DISABLE_WRITE_CACHE_FWSD18)))){
+					ata_dev_set_feature(dev,SETFEATURES_WC_OFF,0);
+				}
+			}
+#endif			
+//////////////////////////////////////////////////
 		} else {
 			/* CHS */
 
@@ -2811,9 +2832,22 @@ static int __sata_set_spd_needed(struct ata_link *link, u32 *scontrol)
 		limit &= (1 << host_link->sata_spd) - 1;
 
 	if (limit == UINT_MAX)
-		target = 0;
+//Patch by QNAP:Fix speed negotiation fail issue:Crucial SSD can't negotiate successfully.
+	//	target = 0;
+		target = 3;
+////////////////////////////////////////////////        
 	else
 		target = fls(limit);
+
+#ifdef CONFIG_MACH_QNAPTS
+    // Speed down for ICRC, Disparity ,10B8B or Handshake BadCRC error 
+    if ((link->eh_context.i.serror & (SERR_10B_8B_ERR | SERR_DISPARITY | SERR_HANDSHAKE | SERR_CRC))
+        || (link->eh_context.i.err_mask & AC_ERR_ICRC))
+    {
+        printk("Speed down due to signal issue.\n");
+        target = (target > 1) ? target - 1 : target;
+    }
+#endif
 
 	spd = (*scontrol >> 4) & 0xf;
 	*scontrol = (*scontrol & ~0xf0) | ((target & 0xf) << 4);
@@ -3885,6 +3919,14 @@ void ata_std_postreset(struct ata_link *link, unsigned int *classes)
 	/* print link status */
 	sata_print_link_status(link);
 
+//Patch by QNAP:Fix speed negotiation fail issue
+    if(ata_phys_link_online(link) == 0)
+    {
+        //clear Scontrol for device negotiation issue.
+        sata_scr_write(link,SCR_CONTROL,0x304);
+        sata_scr_write(link,SCR_CONTROL,0x300);
+    }
+///////////////////////////////////////////
 	DPRINTK("EXIT\n");
 }
 
@@ -4117,6 +4159,15 @@ static const struct ata_blacklist_entry ata_device_blacklist [] = {
 	/* NCQ is slow */
 	{ "WDC WD740ADFD-00",	NULL,		ATA_HORKAGE_NONCQ },
 	{ "WDC WD740ADFD-00NLR1", NULL,		ATA_HORKAGE_NONCQ, },
+//Patch by QNAP:some WD drives disable NCQ
+#ifdef CONFIG_MACH_QNAPTS
+	{ "WDC WD2002FYPS*", NULL,		ATA_HORKAGE_NONCQ, },
+	{ "WDC WD20EADS*", NULL,		ATA_HORKAGE_NONCQ, },
+	{ "WDC WD15EADS*", NULL,		ATA_HORKAGE_NONCQ, },
+	{ "WDC WD10EADS*", NULL,		ATA_HORKAGE_NONCQ, },
+	{ "WDC WD1002FBYS*", NULL,		ATA_HORKAGE_NONCQ, },
+#endif	
+//////////////////////////////////////////////////////
 	/* http://thread.gmane.org/gmane.linux.ide/14907 */
 	{ "FUJITSU MHT2060BH",	NULL,		ATA_HORKAGE_NONCQ },
 	/* NCQ is broken */

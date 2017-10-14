@@ -299,3 +299,84 @@ int blkdev_issue_zeroout(struct block_device *bdev, sector_t sector,
 	return __blkdev_issue_zeroout(bdev, sector, nr_sects, gfp_mask);
 }
 EXPORT_SYMBOL(blkdev_issue_zeroout);
+
+int blkdev_issue_preallocate(struct block_device *bdev, sector_t sector,
+    	sector_t nr_sects, gfp_t gfp_mask, unsigned long flags)
+{
+	DECLARE_COMPLETION_ONSTACK(wait);
+	struct bio_batch bb;
+    struct request_queue *q = NULL;
+    int type = REQ_WRITE | REQ_QNAP_MAP;
+    unsigned int max_discard_sectors, granularity;
+    sector_t dividend;
+    struct bio *bio;
+    int ret = 0;
+
+    q = bdev_get_queue(bdev);
+    if (!q)
+        return -ENXIO;
+
+    if (!nr_sects)
+        return 0;
+
+    /* Zero-sector (unknown) and one-sector granularities are the same. */
+    granularity = max(q->limits.discard_granularity >> 9, 1U);
+	
+	dividend = sector;
+	sector -= sector_div(dividend, granularity);
+
+	dividend = sector;
+	nr_sects += sector_div(dividend, granularity);
+	
+	dividend = nr_sects + granularity - 1;
+	sector_div(dividend, granularity);
+	nr_sects = dividend * granularity;
+
+    /*
+    * Ensure that max_discard_sectors is of the proper
+    * granularity
+    */
+    max_discard_sectors = min(q->limits.max_discard_sectors, UINT_MAX >> 9);
+    max_discard_sectors -= max_discard_sectors % granularity;
+    if (unlikely(!max_discard_sectors))
+        /* Avoid infinite loop below. Being cautious never hurts. */
+        return -EOPNOTSUPP;
+
+    atomic_set(&bb.done, 1);
+    bb.flags = 1 << BIO_UPTODATE;
+    bb.wait = &wait;
+
+    while (nr_sects) {
+        bio = bio_alloc(gfp_mask, 1);
+        if (!bio) {/* Wait for bios in-flight */
+            ret = -ENOMEM;
+            break;
+        }
+
+        bio->bi_sector = sector;
+        bio->bi_end_io = bio_batch_end_io;
+        bio->bi_bdev = bdev;
+        bio->bi_private = &bb;
+
+        if (nr_sects > max_discard_sectors) {
+            bio->bi_size = max_discard_sectors << 9;
+            nr_sects -= max_discard_sectors;
+            sector += max_discard_sectors;
+        } else {
+            bio->bi_size = nr_sects << 9;
+            nr_sects = 0;
+        }
+        atomic_inc(&bb.done);
+        submit_bio(type, bio);
+    }
+
+    /* Wait for bios in-flight */
+    if (!atomic_dec_and_test(&bb.done))
+        wait_for_completion(&wait);
+
+    if (!test_bit(BIO_UPTODATE, &bb.flags))
+        ret = -EIO;
+
+    return ret;
+}
+EXPORT_SYMBOL(blkdev_issue_preallocate);

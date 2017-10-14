@@ -76,6 +76,16 @@
 #define JEDEC_MFR(_jedec_id)	((_jedec_id) >> 16)
 
 /****************************************************************************/
+#ifdef CONFIG_MACH_QNAPTS
+//Patch by QNAP: display flash info in /proc/tsinfo - refer pic.c
+unsigned int FlashDevId;
+unsigned int FlashVendorId;
+static int ignore_ro;
+extern int mtdpart_ignore_ro;
+module_param_named(ignore_ro, ignore_ro, int, 0444);
+MODULE_PARM_DESC(ignore_ro, "Ignore read only mode");
+#endif
+
 
 struct m25p {
 	struct spi_device	*spi;
@@ -708,6 +718,12 @@ struct flash_info {
  * have been converging on command sets which including JEDEC ID.
  */
 static const struct spi_device_id m25p_ids[] = {
+	/* spi_flash_jedec_detection --
+	 *   using this configuration means the user is counting on this driver
+	 *   to perform memory device detection automatically (using jedec
+	 *   probe).
+	 */
+	{ "spi_flash_jedec_detection", INFO(0xD373C7, 0, 0, 0, 0) },
 	/* Atmel -- some are (confusingly) marketed as "DataFlash" */
 	{ "at25fs010",  INFO(0x1f6601, 0, 32 * 1024,   4, SECT_4K) },
 	{ "at25fs040",  INFO(0x1f6604, 0, 64 * 1024,   8, SECT_4K) },
@@ -737,6 +753,9 @@ static const struct spi_device_id m25p_ids[] = {
 	/* GigaDevice */
 	{ "gd25q32", INFO(0xc84016, 0, 64 * 1024,  64, SECT_4K) },
 	{ "gd25q64", INFO(0xc84017, 0, 64 * 1024, 128, SECT_4K) },
+#ifdef CONFIG_MACH_QNAPTS
+    { "gd25lq16", INFO(0xc86015, 0, 64 * 1024, 32, SECT_4K) },
+#endif
 
 	/* Intel/Numonyx -- xxxs33b */
 	{ "160s33b",  INFO(0x898911, 0, 64 * 1024,  32, 0) },
@@ -752,6 +771,10 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "mx25l6405d",  INFO(0xc22017, 0, 64 * 1024, 128, 0) },
 	{ "mx25l12805d", INFO(0xc22018, 0, 64 * 1024, 256, 0) },
 	{ "mx25l12855e", INFO(0xc22618, 0, 64 * 1024, 256, 0) },
+#ifdef CONFIG_MACH_QNAPTS
+	{ "mx25u1635e",  INFO(0xc22535, 0, 64 * 1024,  32, 0) }, // Support 2MB SPI Flash
+#endif
+	{ "mx25u12835f", INFO(0xc22538, 0, 64 * 1024, 256, 0) },
 	{ "mx25l25635e", INFO(0xc22019, 0, 64 * 1024, 512, 0) },
 	{ "mx25l25655e", INFO(0xc22619, 0, 64 * 1024, 512, 0) },
 	{ "mx66l51235l", INFO(0xc2201a, 0, 64 * 1024, 1024, 0) },
@@ -885,6 +908,12 @@ static const struct spi_device_id *jedec_probe(struct spi_device *spi)
 	for (tmp = 0; tmp < ARRAY_SIZE(m25p_ids) - 1; tmp++) {
 		info = (void *)m25p_ids[tmp].driver_data;
 		if (info->jedec_id == jedec) {
+			#ifdef CONFIG_MACH_QNAPTS
+			//Patch by QNAP: display flash info in /proc/tsinfo - refer pic.c
+			FlashVendorId=(jedec>>16)&0xFF;
+			FlashDevId=jedec&0xFFFF;
+			//////////////////////////////////////////////////////////////
+			#endif
 			if (info->ext_id != 0 && info->ext_id != ext_jedec)
 				continue;
 			return &m25p_ids[tmp];
@@ -1068,6 +1097,11 @@ static int m25p_probe(struct spi_device *spi)
 				flash->mtd.eraseregions[i].erasesize / 1024,
 				flash->mtd.eraseregions[i].numblocks);
 
+//Patch by QNAP: Board initialization
+#ifdef CONFIG_MACH_QNAPTS		
+    if(ignore_ro)
+        mtdpart_ignore_ro = 1;
+#endif
 
 	/* partitions should match sector boundaries; and it may be good to
 	 * use readonly partitions for writeprotected sectors (BP2..BP0).

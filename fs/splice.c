@@ -17,6 +17,7 @@
  * Copyright (C) 2006 Ingo Molnar <mingo@elte.hu>
  *
  */
+
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/pagemap.h>
@@ -26,6 +27,8 @@
 #include <linux/swap.h>
 #include <linux/writeback.h>
 #include <linux/export.h>
+#include <linux/buffer_head.h>
+#include <linux/module.h>
 #include <linux/syscalls.h>
 #include <linux/uio.h>
 #include <linux/security.h>
@@ -33,6 +36,18 @@
 #include <linux/socket.h>
 #include <linux/compat.h>
 #include "internal.h"
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+#include <linux/fnotify.h>
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
+//Patch by QNAP:enhance performance from socket to file
+#ifdef CONFIG_MACH_QNAPTS
+#define ENHANCE_PERFORMANCE
+#endif
+/////////////////////////////////////////////////////////
 
 /*
  * Attempt to steal a page from a pipe buffer. This should perhaps go into
@@ -1121,6 +1136,168 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 	return ret;
 }
 
+//Patch by QNAP:enhance performance from socket to file
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef ENHANCE_PERFORMANCE
+#include <net/sock.h>
+#define vfs_check_frozen(sb, level) \
+	wait_event((sb)->s_writers.wait_unfrozen, ((sb)->s_writers.frozen < (level)))
+//////////////////////////////////////////////////////
+struct RECV_FILE_CONTROL_BLOCK
+{
+    struct page *rv_page;
+    loff_t rv_pos;
+    size_t  rv_count;
+    void *rv_fsdata;
+};
+
+static ssize_t do_splice_from_socket(struct file *file, struct socket *sock,loff_t __user *ppos,size_t count)
+{
+    struct address_space *mapping = file->f_mapping;
+    struct inode	*inode = mapping->host;
+    loff_t pos;
+    int count_tmp;
+    int err = 0;
+    int cPagePtr = 0;
+    int cPagesAllocated = 0;
+    struct RECV_FILE_CONTROL_BLOCK rv_cb[MAX_PAGES_PER_RECVFILE + 1];
+    struct kvec iov[MAX_PAGES_PER_RECVFILE + 1];
+    struct msghdr msg;
+    long rcvtimeo;
+    int ret;
+//Patch by QNAP: implement fnotify function
+	#ifdef	QNAP_FNOTIFY
+	T_FILE_STATUS  tfsOrg;
+	#endif	//QNAP_FNOTIFY
+///////////////////////////////////
+    if(copy_from_user(&pos, ppos, sizeof(loff_t)))
+        return -EFAULT;
+
+    if(count > MAX_PAGES_PER_RECVFILE * PAGE_SIZE){
+        printk("%s: %d: %s:count(%d) exceed maxinum\n",__FILE__,__LINE__,__func__,count);
+        return -EINVAL;
+    }
+    mutex_lock(&inode->i_mutex);
+
+    vfs_check_frozen(inode->i_sb, SB_FREEZE_WRITE);
+
+    /* We can write back this queue in page reclaim */
+    current->backing_dev_info = mapping->backing_dev_info;
+
+    err = generic_write_checks(file, &pos, &count, S_ISBLK(inode->i_mode));
+    if (err != 0 || count == 0)
+        goto done;
+
+    file_remove_suid(file);
+    file_update_time(file);
+
+    count_tmp = count;
+    do {
+        unsigned long bytes;	/* Bytes to write to page */
+        unsigned long offset;	/* Offset into pagecache page */
+        struct page *pageP;
+        void *fsdata;
+
+        offset = (pos & (PAGE_CACHE_SIZE - 1));
+        bytes = PAGE_CACHE_SIZE - offset;
+        if (bytes > count_tmp)
+        bytes = count_tmp;
+
+        //	printk("do socket write\n");
+        ret =  mapping->a_ops->write_begin(file, mapping, pos, bytes, AOP_FLAG_UNINTERRUPTIBLE,&pageP,&fsdata);
+
+        if (unlikely(ret)){
+            err = ret;
+            //-ENOSPC:No space left on device maybe happen
+            //          	printk("%s: %d: %s: error:%d\n",__FILE__,__LINE__,__func__,err);
+            for(cPagePtr = 0; cPagePtr < cPagesAllocated; cPagePtr++){
+                kunmap(rv_cb[cPagePtr].rv_page);
+                ret = mapping->a_ops->write_end(file, mapping, rv_cb[cPagePtr].rv_pos, rv_cb[cPagePtr].rv_count, rv_cb[cPagePtr].rv_count,
+                rv_cb[cPagePtr].rv_page, rv_cb[cPagePtr].rv_fsdata);
+            }
+            goto done;
+        }
+        rv_cb[cPagesAllocated].rv_page = pageP;
+        rv_cb[cPagesAllocated].rv_pos = pos;
+        rv_cb[cPagesAllocated].rv_count = bytes;
+        rv_cb[cPagesAllocated].rv_fsdata = fsdata;
+        iov[cPagesAllocated].iov_base = kmap(pageP) + offset;
+        iov[cPagesAllocated].iov_len = bytes;
+        cPagesAllocated++;
+        count_tmp -= bytes;
+        pos += bytes;
+    } while (count_tmp);
+
+    /* IOV is ready, receive the date from socket now */
+    msg.msg_name = NULL;
+    msg.msg_namelen = 0;
+    msg.msg_iov = (struct iovec *)&iov[0];
+    msg.msg_iovlen = cPagesAllocated ;
+    msg.msg_control = NULL;
+    msg.msg_controllen = 0;
+    msg.msg_flags = MSG_KERNSPACE;
+    rcvtimeo = sock->sk->sk_rcvtimeo;
+    sock->sk->sk_rcvtimeo = 3 * HZ;
+
+    ret = kernel_recvmsg(sock, &msg, &iov[0], cPagesAllocated, count, MSG_WAITALL | MSG_NOCATCHSIGNAL);
+
+    sock->sk->sk_rcvtimeo = rcvtimeo;
+//Patch by QNAP: implement fnotify function
+#ifdef	QNAP_FNOTIFY
+	if ((FN_WRITE & msys_nodify) && file && file->f_path.dentry)  FILE_STATUS_BY_INODE(file->f_path.dentry->d_inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+/////////////////////////////////////
+    if(unlikely(ret < 0)){
+        err = ret;
+//        printk("%s: %d: %s: kernel_recvmsg error,estimate %d,real %d\n",__FILE__,__LINE__,__func__,count,err);
+        for(cPagePtr = 0; cPagePtr < cPagesAllocated; cPagePtr++){
+            kunmap(rv_cb[cPagePtr].rv_page);
+            ret = mapping->a_ops->write_end(file, mapping, rv_cb[cPagePtr].rv_pos, rv_cb[cPagePtr].rv_count, rv_cb[cPagePtr].rv_count,
+            rv_cb[cPagePtr].rv_page, rv_cb[cPagePtr].rv_fsdata);
+        }
+        goto done;
+    }
+    else{
+        err = 0;
+//        if(ret != count)
+//            printk("%s: %d: %s: kernel_recvmsg error,estimate %d,real %d\n",__FILE__,__LINE__,__func__,count,ret);
+        pos = pos - count + ret;
+        count = ret;
+    }
+
+    for(cPagePtr=0;cPagePtr < cPagesAllocated;cPagePtr++){
+    //		flush_dcache_page(pageP);
+        kunmap(rv_cb[cPagePtr].rv_page);
+        ret = mapping->a_ops->write_end(file, mapping, rv_cb[cPagePtr].rv_pos, rv_cb[cPagePtr].rv_count, rv_cb[cPagePtr].rv_count,
+        rv_cb[cPagePtr].rv_page, rv_cb[cPagePtr].rv_fsdata);
+
+        if (unlikely(ret < 0))
+            printk("%s: %d: %s: write_end fail,ret = %d\n",__FILE__,__LINE__,__func__,ret);
+        //		cond_resched();
+    }
+    //	balance_dirty_pages_ratelimited_nr(mapping, cPagesAllocated);
+    balance_dirty_pages_ratelimited(mapping);
+    copy_to_user(ppos,&pos,sizeof(loff_t));
+
+//Patch by QNAP: implement fnotify function
+#ifdef	QNAP_FNOTIFY
+    if ((0 < ret) && (FN_WRITE & msys_nodify) && file)
+        pfn_sys_file_notify(FN_WRITE, MARG_2xI64, &file->f_path, NULL, 0, &tfsOrg, count, pos-count, 0, 0);
+#endif	//QNAP_FNOTIFY
+///////////////////////////////////
+done:
+    current->backing_dev_info = NULL;
+    mutex_unlock(&inode->i_mutex);
+
+    if(err)
+        return err;
+    else
+        return count;
+}
+#endif
+#endif
+//////////////////////
+
 /*
  * Attempt to initiate a splice from a file to a pipe.
  */
@@ -1295,24 +1472,38 @@ static int direct_splice_actor(struct pipe_inode_info *pipe,
  *
  */
 long do_splice_direct(struct file *in, loff_t *ppos, struct file *out,
-		      loff_t *opos, size_t len, unsigned int flags)
+                      loff_t *opos, size_t len, unsigned int flags)
 {
-	struct splice_desc sd = {
-		.len		= len,
-		.total_len	= len,
-		.flags		= flags,
-		.pos		= *ppos,
-		.u.file		= out,
-		.opos		= opos,
-	};
-	long ret;
+    struct splice_desc sd = {
+        .len        = len,
+        .total_len  = len,
+        .flags      = flags,
+        .pos        = *ppos,
+        .u.file     = out,
+        .opos       = opos,
+    };
+    long ret;
+
+    if (unlikely(!(out->f_mode & FMODE_WRITE))) {
+        return -EBADF;
+    }
+
+    if (unlikely(out->f_flags & O_APPEND)) {
+        return -EINVAL;
+    }
+
+    ret = rw_verify_area(WRITE, out, opos, len);
+    if (unlikely(ret < 0)) {
+        return ret;
+    }
 
 	ret = splice_direct_to_actor(in, &sd, direct_splice_actor);
-	if (ret > 0)
+	if (ret > 0) {
 		*ppos = sd.pos;
-
+	}
 	return ret;
 }
+
 
 static int splice_pipe_to_pipe(struct pipe_inode_info *ipipe,
 			       struct pipe_inode_info *opipe,
@@ -1329,6 +1520,13 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 	struct pipe_inode_info *opipe;
 	loff_t offset;
 	long ret;
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		T_FILE_STATUS  tfsOrg;
+#endif	//QNAP_FNOTIF
+#endif
+///////////////////////////////////
 
 	ipipe = get_pipe_info(in);
 	opipe = get_pipe_info(out);
@@ -1361,8 +1559,22 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 		} else {
 			offset = out->f_pos;
 		}
-
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if ((FN_WRITE & msys_nodify) && out && out->f_path.dentry)  FILE_STATUS_BY_INODE(out->f_path.dentry->d_inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 		ret = do_splice_from(ipipe, out, &offset, len, flags);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if ((0 < ret) && (FN_WRITE & msys_nodify) && out)
+			pfn_sys_file_notify(FN_WRITE, MARG_2xI64, &out->f_path, NULL, 0, &tfsOrg, len, offset-len, 0, 0);
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 
 		if (!off_out)
 			out->f_pos = offset;
@@ -1383,8 +1595,23 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 		} else {
 			offset = in->f_pos;
 		}
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if ((FN_READ & msys_nodify) && in && in->f_path.dentry)  FILE_STATUS_BY_INODE(in->f_path.dentry->d_inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 
 		ret = do_splice_to(in, &offset, opipe, len, flags);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		if ((0 < ret) && (FN_READ & msys_nodify) && in)
+			pfn_sys_file_notify(FN_READ, MARG_2xI64, &in->f_path, NULL, 0, &tfsOrg, len, offset-len, 0, 0);
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 
 		if (!off_in)
 			in->f_pos = offset;
@@ -1724,11 +1951,41 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 {
 	struct fd in, out;
 	long error;
+//Patch by QNAP:enhance performance from socket to file
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef ENHANCE_PERFORMANCE
+    struct socket *sock = NULL;
+#endif
+#endif
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
+
+#ifdef ENHANCE_PERFORMANCE
+    /* check fd_in is socket fd */
+	sock = sockfd_lookup(fd_in, (int *)&error);
+    if(sock){
+        //	out = NULL;
+        if(!sock->sk)
+            goto done;
+        out = fdget(fd_out);
+
+        if (out.file) {
+            if (!(out.file->f_mode & FMODE_WRITE))
+                goto done;
+            error = do_splice_from_socket(out.file, sock, off_out,len);
+        }
+done:
+        if(out.file)
+            fdput(out);
+        fput(sock->file);
+        return error;
+    }
+#endif
+/////////////////////////////////////////////////////////////////////
+
 	in = fdget(fd_in);
 	if (in.file) {
 		if (in.file->f_mode & FMODE_READ) {

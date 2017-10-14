@@ -94,7 +94,7 @@ struct irq_chip gic_arch_extn = {
 };
 
 #ifndef MAX_GIC_NR
-#define MAX_GIC_NR	1
+#define MAX_GIC_NR	2
 #endif
 
 static struct gic_chip_data gic_data[MAX_GIC_NR] __read_mostly;
@@ -588,6 +588,23 @@ static void gic_cpu_restore(unsigned int gic_nr)
 	writel_relaxed(1, cpu_base + GIC_CPU_CTRL);
 }
 
+static void gic_cpu_mask(unsigned int gic_nr)
+{
+	void __iomem *cpu_base;
+
+	if (gic_nr >= MAX_GIC_NR)
+		BUG();
+
+	cpu_base = gic_data_cpu_base(&gic_data[gic_nr]);
+
+	if (!cpu_base)
+		return;
+
+	/* do not raise any interrupt from cpu interface.
+	 * do not bypass to legacy_irq and legacy_fiq legs*/
+	writel_relaxed(0 | (3<<5), cpu_base + GIC_CPU_CTRL);
+}
+
 static int gic_notifier(struct notifier_block *self, unsigned long cmd,	void *v)
 {
 	int i;
@@ -615,6 +632,10 @@ static int gic_notifier(struct notifier_block *self, unsigned long cmd,	void *v)
 			break;
 		}
 	}
+
+	/*do not accept interrupt from main gic*/
+	if (cmd == CPU_PM_ENTER)
+		gic_cpu_mask(0);
 
 	return NOTIFY_OK;
 }

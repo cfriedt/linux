@@ -21,7 +21,8 @@ struct dm_space_map *dm_sm_metadata_init(void);
 int dm_sm_metadata_create(struct dm_space_map *sm,
 			  struct dm_transaction_manager *tm,
 			  dm_block_t nr_blocks,
-			  dm_block_t superblock);
+			  dm_block_t superblock,
+			  dm_block_t sb_backup);
 
 /*
  * Open from a previously-recorded root.

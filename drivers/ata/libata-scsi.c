@@ -54,6 +54,12 @@
 
 #include "libata.h"
 #include "libata-transport.h"
+//
+//Patch by QNAP: only for HAL application
+#if defined(CONFIG_MACH_QNAPTS)
+#include <qnap/hal_event.h>
+extern int send_hal_netlink(NETLINK_EVT *event);
+#endif
 
 #define ATA_SCSI_RBUF_SIZE	4096
 
@@ -104,6 +110,133 @@ static const u8 def_control_mpage[CONTROL_MPAGE_LEN] = {
 	0, 0, 0, 0, 0xff, 0xff,
 	0, 30	/* extended self test time, see 05-359r1 */
 };
+
+//Patch by QNAP:fix SGPIO led issue
+#if defined(CONFIG_MACH_QNAPTS)
+#define SGPIO_RETRY_MAX 15
+static void ata_port_led(struct ata_port *ap,u8 on)
+{
+	int rc = 0;
+	int retry=0;
+	if (ap->ops->em_store && (ap->flags & ATA_FLAG_EM)){
+//Patch by QNAP:fix TS-x79 eSATA active led issue  
+#if defined(IS400)
+#elif defined(X86_SANDYBRIDGE) || defined(X86_CEDAVIEW)
+        if(ap->port_no == 4 || ap->port_no == 5)
+            return;
+#endif            
+///////////        
+	    for(retry = 0 ; retry < SGPIO_RETRY_MAX ; retry++){
+		    rc = ap->ops->em_store(ap, on ? "0x80000" : "0x0", 4);
+            if (rc == -EBUSY)
+            	udelay(100);
+            else
+            	break;    
+        }
+
+	}
+	if(retry == SGPIO_RETRY_MAX)
+	    printk("%s:SGPIO always busy\n",__func__);
+}
+
+#ifdef QNAP_HAL
+// qnap NCQ enable scheme
+static ssize_t ata_scsi_ncq_show(struct device *device, struct device_attribute *attr,
+		char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(device);
+	struct ata_port *ap;
+	struct ata_device *dev;
+	unsigned long flags;
+    int value = 0;
+	int rc = 0;
+
+	ap = ata_shost_to_port(sdev->host);
+
+	spin_lock_irqsave(ap->lock, flags);
+	dev = ata_scsi_find_dev(ap, sdev);
+	if (!dev) 
+    {
+		rc = -ENODEV;
+	}
+    else
+    {
+        if (!(dev->flags & ATA_DFLAG_NCQ ))
+        {
+            value = -1;
+        }
+        else if (dev->flags & ATA_DFLAG_NCQ_OFF) 
+        {
+            value = 0;
+        }
+        else
+        {
+            value = 1;
+        }
+    }
+
+	spin_unlock_irq(ap->lock);
+
+	return rc < 0 ? rc : snprintf(buf, 20, "%d\n", value);
+}
+
+static ssize_t
+ata_scsi_ncq_store(struct device *device, struct device_attribute *attr,
+	const char *buf, size_t len)
+{
+	struct scsi_device *sdev = to_scsi_device(device);
+	struct ata_port *ap;
+	struct ata_device *dev;
+	long int input;
+	unsigned long flags;
+	int rc;
+
+	rc = kstrtol(buf, 10, &input);
+	if (rc)
+		return rc;
+	if (input < 0)
+		return -EINVAL;
+
+	ap = ata_shost_to_port(sdev->host);
+
+	spin_lock_irqsave(ap->lock, flags);
+	dev = ata_scsi_find_dev(ap, sdev);
+	if (unlikely(!dev)) 
+    {
+		rc = -ENODEV;
+	}
+    else
+    {
+        if (!(dev->flags & ATA_DFLAG_NCQ))
+        {
+            rc = -EINVAL;
+        }
+        else
+        {
+            if (input == 0)
+            {
+                dev->flags |= ATA_DFLAG_NCQ_OFF;
+            }
+            else
+            {
+                dev->flags &= ~ATA_DFLAG_NCQ_OFF;
+            }
+        }
+    }
+	spin_unlock_irqrestore(ap->lock, flags);
+
+
+	return rc ? rc : len;
+}
+
+DEVICE_ATTR(qnap_ncq, S_IRUGO | S_IWUSR,
+	    ata_scsi_ncq_show, ata_scsi_ncq_store);
+EXPORT_SYMBOL_GPL(dev_attr_qnap_ncq);
+#endif
+#endif
+///////////////////////////////////////////////////////////
+
+
 
 static const char *ata_lpm_policy_names[] = {
 	[ATA_LPM_UNKNOWN]	= "max_performance",
@@ -520,6 +653,15 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 
 	/* Good values for timeout and retries?  Values below
 	   from scsi_ioctl_send_command() for default case... */
+//QNAP-Aaron>
+//#30315: if SMART command, set timeout to 30 S
+ #if defined(CONFIG_MACH_QNAPTS)
+		if (args[0] == ATA_CMD_SMART)
+			cmd_result = scsi_execute(scsidev, scsi_cmd, data_dir, argbuf, argsize,
+			    sensebuf, (30*HZ), 5, 0, NULL);
+		else
+#endif
+//QNAP-Aaron<
 	cmd_result = scsi_execute(scsidev, scsi_cmd, data_dir, argbuf, argsize,
 				  sensebuf, (10*HZ), 5, 0, NULL);
 
@@ -554,6 +696,15 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 		rc = -EIO;
 		goto error;
 	}
+#if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARM)
+	if(argbuf != NULL)
+	if( args[0]==0xec ){ // 0xec is ATA_IDENTIFY_DEVICE cmd
+		u16 *word_raw = argbuf;
+		char byte_buf[ATA_ID_SERNO_LEN]={0};
+		ata_id_string(argbuf,byte_buf, ATA_ID_SERNO, ATA_ID_SERNO_LEN);
+		memcpy((char*)&word_raw[ATA_ID_SERNO],byte_buf,ATA_ID_SERNO_LEN);
+	}
+#endif 
 
 	if ((argbuf)
 	 && copy_to_user(arg + sizeof(args), argbuf, argsize))
@@ -861,7 +1012,11 @@ static void ata_to_sense_error(unsigned id, u8 drv_stat, u8 drv_err, u8 *sk,
 		/* ECC */
 		{0x40, 		MEDIUM_ERROR, 0x11, 0x04}, 	// Uncorrectable ECC error      Unrecovered read error
 		/* BBD - block marked bad */
+#ifdef CONFIG_MACH_QNAPTS
+		{0x80, 		ABORTED_COMMAND, 0x47, 0x03}, 	// ICRC error       Abort command with asc/ascq 0x47/0x03 (INFORMATION UNIT iuCRC ERROR DETECTED)
+#else
 		{0x80, 		MEDIUM_ERROR, 0x11, 0x04}, 	// Block marked bad		  Medium error, unrecovered read error
+#endif
 		{0xFF, 0xFF, 0xFF, 0xFF}, // END mark
 	};
 	static const unsigned char stat_table[][4] = {
@@ -1071,7 +1226,22 @@ static void ata_scsi_sdev_config(struct scsi_device *sdev)
 	 * prevent SCSI midlayer from automatically deferring
 	 * requests.
 	 */
+//Patch by QNAP:fix drive standby and wake up issue
+//Not to retry command after 1 second, it wastes too much time for broken hard drive when booting.
+//#ifdef CONFIG_MACH_QNAPTS
+#if 0
+	// Kevin Liao 20120328: unplug_delay has been removed since 2.6.39. Check the following links.
+	// http://kernelnewbies.org/Linux_2_6_39#head-94702761f78c20a4548a3f33faabfea39e6f3957
+	// http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=ae1b1539622fb46e51b4d13b3f9e5f4c713f86ae
+	// http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=7eaceaccab5f40bbfda044629a6298616aeaed50
+	// I use msecs_to_jiffies(3) to replace unplug_delay by now.
+	// TBD - To review the correctness...
+	sdev->max_device_blocked = (1 * HZ) / msecs_to_jiffies(3) ;
+	//sdev->max_device_blocked = (1 * HZ) / (sdev->request_queue->unplug_delay) ;
+#else
 	sdev->max_device_blocked = 1;
+#endif	
+//////////////////////////////////////////	
 }
 
 /**
@@ -1104,6 +1274,10 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 			       struct ata_device *dev)
 {
 	struct request_queue *q = sdev->request_queue;
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    // qnap NCQ enable scheme
+    int ret = 0;
+#endif
 
 	if (!ata_id_has_unload(dev->id))
 		dev->flags |= ATA_DFLAG_NO_UNLOAD;
@@ -1154,6 +1328,11 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 
 		depth = min(sdev->host->can_queue, ata_id_queue_depth(dev->id));
 		depth = min(ATA_MAX_QUEUE - 1, depth);
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+        // qnap NCQ enable scheme
+        dev->flags |= ATA_DFLAG_NCQ_OFF;
+        ata_dev_info(dev, "set queue depth = %d\n", depth);
+#endif
 		scsi_adjust_queue_depth(sdev, MSG_SIMPLE_TAG, depth);
 	}
 
@@ -1244,6 +1423,11 @@ int __ata_change_queue_depth(struct ata_port *ap, struct scsi_device *sdev,
 {
 	struct ata_device *dev;
 	unsigned long flags;
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    // qnap NCQ enable scheme
+    NETLINK_EVT hal_event;
+    struct __netlink_ncq_cb *netlink_ncq;
+#endif
 
 	if (reason != SCSI_QDEPTH_DEFAULT)
 		return -EOPNOTSUPP;
@@ -1262,7 +1446,24 @@ int __ata_change_queue_depth(struct ata_port *ap, struct scsi_device *sdev,
 		dev->flags |= ATA_DFLAG_NCQ_OFF;
 		queue_depth = 1;
 	}
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    // qnap NCQ enable scheme
+    hal_event.type = HAL_EVENT_GENERAL_DISK;
+    hal_event.arg.action = SET_NCQ_BY_USER;
+    netlink_ncq = &hal_event.arg.param.netlink_ncq;
+    netlink_ncq->scsi_bus[0] = sdev->host->host_no;
+    netlink_ncq->scsi_bus[1] = sdev->channel;
+    netlink_ncq->scsi_bus[2] = sdev->id;
+    netlink_ncq->scsi_bus[3] = sdev->lun;
+    netlink_ncq->on_off = dev->flags & ATA_DFLAG_NCQ_OFF ? 0 : 1;
+#endif
+
 	spin_unlock_irqrestore(ap->lock, flags);
+
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    // qnap NCQ enable scheme
+    send_hal_netlink(&hal_event);
+#endif
 
 	/* limit and apply queue depth */
 	queue_depth = min(queue_depth, sdev->host->can_queue);
@@ -1831,10 +2032,16 @@ static int ata_scsi_translate(struct ata_device *dev, struct scsi_cmnd *cmd,
 	if (xlat_func(qc))
 		goto early_finish;
 
-	if (ap->ops->qc_defer) {
-		if ((rc = ap->ops->qc_defer(qc)))
-			goto defer;
-	}
+    if (ap->ops->qc_defer) {
+        if ((rc = ap->ops->qc_defer(qc))){
+//Patch by QNAP:fix SSD standby issue
+            if(rc == ATA_DEFER_FAIL)
+                goto err_did;
+            else
+                goto defer;
+        }
+/////////////////////////////////////////	    
+    }
 
 	/* select device, send command to hardware */
 	ata_qc_issue(qc);
@@ -1981,6 +2188,8 @@ static unsigned int ata_scsiop_inq_std(struct ata_scsi_args *args, u8 *rbuf)
 		hdr[1] |= (1 << 7);
 
 	memcpy(rbuf, hdr, sizeof(hdr));
+//Patch by QNAP: fix drive name inconsistent issue	 
+#if 0
 	memcpy(&rbuf[8], "ATA     ", 8);
 	ata_id_string(args->id, &rbuf[16], ATA_ID_PROD, 16);
 	ata_id_string(args->id, &rbuf[32], ATA_ID_FW_REV, 4);
@@ -1988,6 +2197,84 @@ static unsigned int ata_scsiop_inq_std(struct ata_scsi_args *args, u8 *rbuf)
 	if (rbuf[32] == 0 || rbuf[32] == ' ')
 		memcpy(&rbuf[32], "n/a ", 4);
 
+#endif		
+    {
+        u8 model[40];
+        u8 Vendor[9],Product[17];
+        u8 i,j;
+	    ata_id_string(args->id, model, ATA_ID_PROD, 40);
+        for (i = 0; i < 9; i++)
+            if (model[i] == ' ')
+                break;
+        if (i == 9){
+            if (((model[0] == 'I') && (model[1] == 'C')) ||
+                ((model[0] == 'H') && (model[1] == 'T')) ||
+                ((model[0] == 'H') && (model[1] == 'D')) ||
+                ((model[0] == 'D') && (model[1] == 'K'))){
+                /*Hitachi*/
+                Vendor[0] = 'H';
+                Vendor[1] = 'i';
+                Vendor[2] = 't';
+                Vendor[3] = 'a';
+                Vendor[4] = 'c';
+                Vendor[5] = 'h';
+                Vendor[6] = 'i';
+                Vendor[7] = ' ';
+                Vendor[8] = '\0';
+            }
+            else if ((model[0] == 'S') && (model[1] == 'T')){
+                /*Seagate*/
+                Vendor[0] = 'S';
+                Vendor[1] = 'e';
+                Vendor[2] = 'a';
+                Vendor[3] = 'g';
+                Vendor[4] = 'a';
+                Vendor[5] = 't';
+                Vendor[6] = 'e';
+                Vendor[7] = ' ';
+                Vendor[8] = '\0';
+            }
+            else{
+                /*Unkown*/
+                Vendor[0] = 'A';
+                Vendor[1] = 'T';
+                Vendor[2] = 'A';
+                Vendor[3] = ' ';
+                Vendor[4] = ' ';
+                Vendor[5] = ' ';
+                Vendor[6] = ' ';
+                Vendor[7] = ' ';
+                Vendor[8] = '\0';
+            }
+            memcpy(Product, model, 16);
+            Product[16] = '\0';
+        }
+        else{
+            j = i;
+            memcpy(Vendor, model, j);
+            for (; j < 9; j++)
+                Vendor[j] = ' ';
+            Vendor[8] = '\0';
+            
+            for (; i < 24; i++)
+                if (model[i] != ' ')
+                    break;
+            memcpy(Product, &model[i], 16);
+            Product[16] = '\0';
+        }
+        memcpy(&rbuf[8], Vendor, 8);
+        memcpy(&rbuf[16], Product, 16);
+        ata_id_string(args->id, &rbuf[32], ATA_ID_FW_REV, 4);
+//Patch by QNAP:fix SSD standby issue
+#if defined(CONFIG_MACH_QNAPTS) && !defined(QNAP_HAL)
+        rbuf[36] = ((args->dev->flags & ATA_DFLAG_SSD) ? 1 : 0) << 0 |
+                   ((args->dev->flags & ATA_DFLAG_SMART_SUPPORT) ? 1 : 0) << 1 |
+                   ((args->dev->flags & ATA_DFLAG_SMART_SELFTEST_SUPPORT) ? 1 : 0) << 2 |
+                   ((args->dev->flags & ATA_DFLAG_SMART_ERRORLOG_SUPPORT) ? 1 : 0) << 3;
+#endif
+//////////////////////////////////////////////////
+    }
+///////////////////////////////////////////
 	memcpy(rbuf + 59, versions, sizeof(versions));
 
 	return 0;
@@ -3666,6 +3953,11 @@ void ata_scsi_scan_host(struct ata_port *ap, int sync)
 			sdev = __scsi_add_device(ap->scsi_host, channel, id, 0,
 						 NULL);
 			if (!IS_ERR(sdev)) {
+//Patch by QNAP:fix SGPIO led issue
+#if defined(CONFIG_MACH_QNAPTS)
+			    ata_port_led(ap,1);
+#endif
+/////////////////////////////////////////////
 				dev->sdev = sdev;
 				scsi_device_put(sdev);
 				if (zpodd_dev_enabled(dev))
@@ -3799,6 +4091,11 @@ static void ata_scsi_remove_dev(struct ata_device *dev)
 		ata_dev_info(dev, "detaching (SCSI %s)\n",
 			     dev_name(&sdev->sdev_gendev));
 
+//Patch by QNAP:fix SGPIO led issue
+#if defined(CONFIG_MACH_QNAPTS)
+	    ata_port_led(ap,0);
+#endif
+///////////////////////////////////////////////////////
 		scsi_remove_device(sdev);
 		scsi_device_put(sdev);
 	}

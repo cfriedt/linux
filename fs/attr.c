@@ -15,6 +15,61 @@
 #include <linux/security.h>
 #include <linux/evm.h>
 #include <linux/ima.h>
+#ifdef CONFIG_FS_RICHACL
+#include <linux/richacl.h>
+#endif
+
+#ifdef CONFIG_FS_RICHACL
+static int richacl_change_ok(struct inode *inode, int mask)
+{
+	if (!IS_RICHACL(inode))
+		return -EPERM;
+
+	if (inode->i_op->permission)
+		return inode->i_op->permission(inode, mask);
+	if (inode->i_op->get_richacl)
+		return check_richacl(inode, mask);
+	return -EPERM;
+}
+
+static bool inode_uid_change_ok(struct inode *inode, kuid_t ia_uid)
+{
+        if (uid_eq(current_fsuid(), inode->i_uid) && uid_eq(ia_uid, inode->i_uid))
+                return true;
+        if (uid_eq(current_fsuid(), ia_uid) &&
+            richacl_change_ok(inode, MAY_TAKE_OWNERSHIP) == 0)
+                return true;
+        if (capable(CAP_CHOWN))
+                return true;
+        return false;
+}
+
+static bool inode_gid_change_ok(struct inode *inode, kgid_t ia_gid)
+{
+        int in_group = in_group_p(ia_gid);
+        if (uid_eq(current_fsuid(), inode->i_uid) &&
+            (in_group || gid_eq(ia_gid, inode->i_gid)))
+                return true;
+        if (in_group && richacl_change_ok(inode, MAY_TAKE_OWNERSHIP) == 0)
+                return true;
+        if (capable(CAP_CHOWN))
+                return true;
+        return false;
+}
+
+static bool inode_owner_permitted_or_capable(struct inode *inode, int mask)
+{
+        if (uid_eq(current_fsuid(), inode->i_uid))
+                return true;
+        if (richacl_change_ok(inode, mask) == 0)
+                return true;
+        if (inode_capable(inode, CAP_FOWNER))
+                return true;
+        return false;
+}
+#endif /* CONFIG_FS_RICHACL */
+
+
 
 /**
  * inode_change_ok - check if attribute changes to an inode are allowed
@@ -28,6 +83,57 @@
  * Should be called as the first thing in ->setattr implementations,
  * possibly after taking additional locks.
  */
+#ifdef CONFIG_FS_RICHACL
+int inode_change_ok(struct inode *inode, struct iattr *attr)
+{
+        unsigned int ia_valid = attr->ia_valid;
+
+        /*
+         * First check size constraints.  These can't be overriden using
+         * ATTR_FORCE.
+         */
+        if (ia_valid & ATTR_SIZE) {
+                int error = inode_newsize_ok(inode, attr->ia_size);
+                if (error)
+                        return error;
+        }
+
+        /* If force is set do it anyway. */
+        if (ia_valid & ATTR_FORCE)
+                return 0;
+
+        /* Make sure a caller can chown. */
+        if (ia_valid & ATTR_UID) {
+                if (!inode_uid_change_ok(inode, attr->ia_uid))
+                        return -EPERM;
+        }
+
+        /* Make sure caller can chgrp. */
+        if (ia_valid & ATTR_GID) {
+                if (!inode_gid_change_ok(inode, attr->ia_gid))
+                        return -EPERM;
+        }
+
+        /* Make sure a caller can chmod. */
+        if (ia_valid & ATTR_MODE) {
+                if (!inode_owner_permitted_or_capable(inode, MAY_CHMOD))
+                        return -EPERM;
+                /* Also check the setgid bit! */
+                if (!in_group_p((ia_valid & ATTR_GID) ? attr->ia_gid :
+                                inode->i_gid) && !inode_capable(inode, CAP_FSETID))
+                        attr->ia_mode &= ~S_ISGID;
+        }
+
+        /* Check for setting the inode time. */
+        if (ia_valid & (ATTR_MTIME_SET | ATTR_ATIME_SET | ATTR_TIMES_SET)) {
+                if (!inode_owner_permitted_or_capable(inode, MAY_SET_TIMES))
+                        return -EPERM;
+        }
+
+        return 0;
+}
+EXPORT_SYMBOL(inode_change_ok);
+#else
 int inode_change_ok(const struct inode *inode, struct iattr *attr)
 {
 	unsigned int ia_valid = attr->ia_valid;
@@ -80,6 +186,7 @@ int inode_change_ok(const struct inode *inode, struct iattr *attr)
 	return 0;
 }
 EXPORT_SYMBOL(inode_change_ok);
+#endif /* CONFIG_FS_RICHACL */
 
 /**
  * inode_newsize_ok - may this inode be truncated to a given size
@@ -156,13 +263,30 @@ void setattr_copy(struct inode *inode, const struct iattr *attr)
 	if (ia_valid & ATTR_CTIME)
 		inode->i_ctime = timespec_trunc(attr->ia_ctime,
 						inode->i_sb->s_time_gran);
+//Patch by QNAP: fix ext3 birthtime issue
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef CONFIG_FS_QNAP_BIRTHTIME
+	if (ia_valid & ATTR_CREATE_TIME) { /* birth time of file */
+		inode->i_birthtime = timespec_trunc(attr->ia_ctime,
+						inode->i_sb->s_time_gran);
+	}
+#endif
+#endif
+//////////////////////////////////////////////////
 	if (ia_valid & ATTR_MODE) {
 		umode_t mode = attr->ia_mode;
 
 		if (!in_group_p(inode->i_gid) &&
 		    !inode_capable(inode, CAP_FSETID))
 			mode &= ~S_ISGID;
-		inode->i_mode = mode;
+#ifdef CONFIG_FS_RICHACL
+                if (IS_RICHACL(inode))
+                        inode->i_mode |= mode;
+                else
+                        inode->i_mode = mode;
+#else
+                inode->i_mode = mode;
+#endif
 	}
 }
 EXPORT_SYMBOL(setattr_copy);

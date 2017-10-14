@@ -234,7 +234,9 @@ enum {
 
 	ATA_PFLAG_PIO32		= (1 << 20),  /* 32bit PIO */
 	ATA_PFLAG_PIO32CHANGE	= (1 << 21),  /* 32bit PIO can be turned on/off */
-
+#if defined(CONFIG_MACH_QNAPTS)	
+	ATA_PFLAG_RESUMING	= (1 << 22), /* fix long resume time issue */
+#endif		
 	/* struct ata_queued_cmd flags */
 	ATA_QCFLAG_ACTIVE	= (1 << 0), /* cmd not yet ack'd to scsi lyer */
 	ATA_QCFLAG_DMAMAP	= (1 << 1), /* SG table is DMA mapped */
@@ -326,7 +328,9 @@ enum {
 	/* return values for ->qc_defer */
 	ATA_DEFER_LINK		= 1,
 	ATA_DEFER_PORT		= 2,
-
+//Patch by QNAP:fix SSD standby issue
+    ATA_DEFER_FAIL      =3,
+/////////////////////////////////
 	/* desc_len for ata_eh_info and context */
 	ATA_EH_DESC_LEN		= 80,
 
@@ -367,7 +371,13 @@ enum {
 
 	/* how hard are we gonna try to probe/recover devices */
 	ATA_PROBE_MAX_TRIES	= 3,
+//Patch by QNAP:add plug-in timer to spin-up drive and detect slot is empty
+#ifdef CONFIG_MACH_QNAPTS					 	 	
 	ATA_EH_DEV_TRIES	= 3,
+#else	
+	ATA_EH_DEV_TRIES	= 3,
+#endif	
+////////////////////////////////////////	
 	ATA_EH_PMP_TRIES	= 5,
 	ATA_EH_PMP_LINK_TRIES	= 3,
 
@@ -473,6 +483,9 @@ enum ata_completion_errors {
 	AC_ERR_OTHER		= (1 << 8), /* unknown */
 	AC_ERR_NODEV_HINT	= (1 << 9), /* polling device detection hint */
 	AC_ERR_NCQ		= (1 << 10), /* marker for offending NCQ qc */
+#ifdef CONFIG_MACH_QNAPTS
+    AC_ERR_ICRC         = (1 << 11), /* To prograte ICRC error */
+#endif
 };
 
 /*
@@ -908,6 +921,9 @@ struct ata_port_operations {
 	ssize_t (*sw_activity_show)(struct ata_device *dev, char *buf);
 	ssize_t (*sw_activity_store)(struct ata_device *dev,
 				     enum sw_activity val);
+	ssize_t (*transmit_led_message)(struct ata_port *ap, u32 state,
+					ssize_t size);
+
 	/*
 	 * Obsolete
 	 */

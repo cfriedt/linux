@@ -751,6 +751,16 @@ struct dwc3 {
 
 	u8			test_mode;
 	u8			test_mode_nr;
+#ifdef CONFIG_USB_DWC3_AL_RMN_2648
+	void __iomem *		serdes_regs_base;
+	u32			serdes_group;
+	u32			serdes_lane;
+#endif
+#ifdef CONFIG_USB_DWC3_AL_VBUS_GPIO
+	int			vbus_active;
+	int			vbus_gpio;
+	struct delayed_work	vbus_work;
+#endif
 };
 
 /* -------------------------------------------------------------------------- */
@@ -759,8 +769,8 @@ struct dwc3 {
 
 struct dwc3_event_type {
 	u32	is_devspec:1;
-	u32	type:6;
-	u32	reserved8_31:25;
+	u32	type:7;
+	u32	reserved8_31:24;
 } __packed;
 
 #define DWC3_DEPEVT_XFERCOMPLETE	0x01

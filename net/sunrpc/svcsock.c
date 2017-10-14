@@ -917,7 +917,10 @@ static void svc_tcp_clear_pages(struct svc_sock *svsk)
 	len = svsk->sk_datalen;
 	npages = (len + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	for (i = 0; i < npages; i++) {
-		BUG_ON(svsk->sk_pages[i] == NULL);
+		if (svsk->sk_pages[i] == NULL) {
+			WARN_ON_ONCE(1);
+			continue;
+		}
 		put_page(svsk->sk_pages[i]);
 		svsk->sk_pages[i] = NULL;
 	}
@@ -1092,8 +1095,10 @@ static int svc_tcp_recvfrom(struct svc_rqst *rqstp)
 		goto err_noclose;
 	}
 
-	if (svc_sock_reclen(svsk) < 8)
+	if (svsk->sk_datalen < 8) {
+		svsk->sk_datalen = 0;
 		goto err_delete; /* client is nuts. */
+	}
 
 	rqstp->rq_arg.len = svsk->sk_datalen;
 	rqstp->rq_arg.page_base = 0;
@@ -1271,6 +1276,29 @@ static struct svc_xprt_class svc_tcp_class = {
 	.xcl_ops = &svc_tcp_ops,
 	.xcl_max_payload = RPCSVC_MAXPAYLOAD_TCP,
 };
+
+//Patch by QNAP: Setup a interface to rewrite payload size
+#ifdef CONFIG_MACH_QNAPTS
+void svc_tcp_set_payload(uint32_t max_payload)
+{
+	svc_tcp_class.xcl_max_payload = max_payload;
+}
+
+uint32_t svc_tcp_read_payload()
+{
+	return svc_tcp_class.xcl_max_payload;
+}
+
+void svc_udp_set_payload(uint32_t max_payload)
+{
+        svc_udp_class.xcl_max_payload = max_payload;
+}
+
+uint32_t svc_udp_read_payload()
+{
+	return svc_udp_class.xcl_max_payload;
+}
+#endif
 
 void svc_init_xprt_sock(void)
 {

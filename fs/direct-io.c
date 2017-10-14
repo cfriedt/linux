@@ -371,6 +371,10 @@ static inline void dio_bio_submit(struct dio *dio, struct dio_submit *sdio)
 	struct bio *bio = sdio->bio;
 	unsigned long flags;
 
+#ifdef CONFIG_MACH_QNAPTS
+	bio->bi_rw |= REQ_QNAP_DIRECT;
+#endif
+
 	bio->bi_private = dio;
 
 	spin_lock_irqsave(&dio->bio_lock, flags);

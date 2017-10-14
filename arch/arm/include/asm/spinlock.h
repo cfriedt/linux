@@ -71,6 +71,8 @@ static inline void dsb_sev(void)
 
 #define arch_spin_lock_flags(lock, flags) arch_spin_lock(lock)
 
+extern unsigned int al_spin_lock_wfe_enable;
+
 static inline void arch_spin_lock(arch_spinlock_t *lock)
 {
 	unsigned long tmp;
@@ -88,7 +90,8 @@ static inline void arch_spin_lock(arch_spinlock_t *lock)
 	: "cc");
 
 	while (lockval.tickets.next != lockval.tickets.owner) {
-		wfe();
+		if (al_spin_lock_wfe_enable)
+			wfe();
 		lockval.tickets.owner = ACCESS_ONCE(lock->tickets.owner);
 	}
 
@@ -121,7 +124,8 @@ static inline void arch_spin_unlock(arch_spinlock_t *lock)
 {
 	smp_mb();
 	lock->tickets.owner++;
-	dsb_sev();
+	if (al_spin_lock_wfe_enable)
+		dsb_sev();
 }
 
 static inline int arch_spin_is_locked(arch_spinlock_t *lock)

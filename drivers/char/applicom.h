@@ -1,4 +1,4 @@
-/* $Id: applicom.h,v 1.2 1999/08/28 15:09:49 dwmw2 Exp $ */
+/* $Id: applicom.h,v 1.1.1.1 2014/03/19 14:05:11 franklee Exp $ */
 
 
 #ifndef __LINUX_APPLICOM_H__

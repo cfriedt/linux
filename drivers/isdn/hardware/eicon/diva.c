@@ -1,4 +1,4 @@
-/* $Id: diva.c,v 1.21.4.1 2004/05/08 14:33:43 armin Exp $ */
+/* $Id: diva.c,v 1.1.1.1 2014/03/19 14:07:33 franklee Exp $ */
 
 #define CARDTYPE_H_WANT_DATA            1
 #define CARDTYPE_H_WANT_IDI_DATA        0

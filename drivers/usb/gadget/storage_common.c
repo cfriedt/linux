@@ -177,15 +177,15 @@ MODULE_PARM_DESC(num_buffers, "Number of pipeline buffers");
 /* check if fsg_num_buffers is within a valid range */
 static inline int fsg_num_buffers_validate(void)
 {
-	if (fsg_num_buffers >= 2 && fsg_num_buffers <= 4)
+	if (fsg_num_buffers >= 2 && fsg_num_buffers <= 1024)
 		return 0;
 	pr_err("fsg_num_buffers %u is out of range (%d to %d)\n",
-	       fsg_num_buffers, 2 ,4);
+	       fsg_num_buffers, 2 ,1024);
 	return -EINVAL;
 }
 
 /* Default size of buffer length. */
-#define FSG_BUFLEN	((u32)16384)
+#define FSG_BUFLEN	((u32)SZ_128K)
 
 /* Maximal number of LUNs supported in mass storage function */
 #define FSG_MAX_LUNS	8
@@ -200,6 +200,10 @@ struct fsg_buffhd {
 	void				*buf;
 	enum fsg_buffer_state		state;
 	struct fsg_buffhd		*next;
+	struct fsg_buffhd		*next_to_write;
+	struct file				*file;
+	loff_t					file_offset;
+	size_t amount;
 
 	/*
 	 * The NetChip 2280 is faster, and handles some protocol faults

@@ -28,6 +28,9 @@
 #include "ext4_jbd2.h"
 #include "xattr.h"
 #include "acl.h"
+#ifdef CONFIG_EXT4_FS_RICHACL
+#include "richacl.h"
+#endif
 
 #include <trace/events/ext4.h>
 
@@ -410,6 +413,7 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent,
 	avefreei = freei / ngroups;
 	freeb = EXT4_C2B(sbi,
 		percpu_counter_read_positive(&sbi->s_freeclusters_counter));
+
 	avefreec = freeb;
 	do_div(avefreec, ngroups);
 	ndirs = percpu_counter_read_positive(&sbi->s_dirs_counter);
@@ -423,7 +427,17 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent,
 		if (qstr) {
 			hinfo.hash_version = DX_HASH_HALF_MD4;
 			hinfo.seed = sbi->s_hash_seed;
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+			ext4fs_dirhash(qstr->name, qstr->len, &hinfo,ntohl(sbi->s_es->s_hash_magic) == QNAP_SB_HASH);
+#else            
 			ext4fs_dirhash(qstr->name, qstr->len, &hinfo);
+#endif
+#else
+			ext4fs_dirhash(qstr->name, qstr->len, &hinfo);
+#endif
+/////////////////////////////////////////////////////////////
 			grp = hinfo.hash;
 		} else
 			get_random_bytes(&grp, sizeof(grp));
@@ -734,16 +748,19 @@ repeat_in_this_group:
 		ino = ext4_find_next_zero_bit((unsigned long *)
 					      inode_bitmap_bh->b_data,
 					      EXT4_INODES_PER_GROUP(sb), ino);
-		if (ino >= EXT4_INODES_PER_GROUP(sb)) {
-			if (++group == ngroups)
-				group = 0;
-			continue;
-		}
+		if (ino >= EXT4_INODES_PER_GROUP(sb))
+			goto next_group;
 		if (group == 0 && (ino+1) < EXT4_FIRST_INO(sb)) {
 			ext4_error(sb, "reserved inode found cleared - "
 				   "inode=%lu", ino + 1);
 			continue;
 		}
+#ifdef CONFIG_MACH_QNAPTS
+		BUFFER_TRACE(inode_bitmap_bh, "get_write_access");
+		err = ext4_journal_get_write_access(handle, inode_bitmap_bh);
+		if (err)
+			goto out;
+#endif
 		if (!handle) {
 			BUG_ON(nblocks <= 0);
 			handle = __ext4_journal_start_sb(dir->i_sb, line_no,
@@ -768,6 +785,9 @@ repeat_in_this_group:
 			goto got; /* we grabbed the inode! */
 		if (ino < EXT4_INODES_PER_GROUP(sb))
 			goto repeat_in_this_group;
+next_group:
+		if (++group == ngroups)
+			group = 0;
 	}
 	err = -ENOSPC;
 	goto out;
@@ -942,7 +962,15 @@ got:
 	if (err)
 		goto fail_drop;
 
-	err = ext4_init_acl(handle, inode, dir);
+#ifdef CONFIG_EXT4_FS_RICHACL
+        if (EXT4_IS_RICHACL(dir))
+            err = ext4_init_richacl(handle, inode, dir);
+        else
+            err = ext4_init_acl(handle, inode, dir);
+#else
+        err = ext4_init_acl(handle, inode, dir);
+#endif
+
 	if (err)
 		goto fail_free_drop;
 
@@ -1212,6 +1240,10 @@ int ext4_init_inode_table(struct super_block *sb, ext4_group_t group,
 	if (barrier)
 		blkdev_issue_flush(sb->s_bdev, GFP_NOFS, NULL);
 
+#ifdef CONFIG_MACH_QNAPTS
+	//printk("ext4_init_inode_table0: %s, %u, %llu, %d\n", sb->s_id, group, blk, num);
+#endif
+
 skip_zeroout:
 	ext4_lock_group(sb, group);
 	gdp->bg_flags |= cpu_to_le16(EXT4_BG_INODE_ZEROED);
@@ -1229,3 +1261,37 @@ err_out:
 out:
 	return ret;
 }
+
+#ifdef CONFIG_MACH_QNAPTS
+s64 ext4_init_reserve_inode_table(struct super_block *sb, ext4_group_t first_not_zeroed)
+{
+	ext4_group_t group, ngroups;
+	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	s64 group_sum = 0, block_sum = 0;
+
+	printk("ext4_init_reserve_inode_table0: %s, %u\n", sb->s_id, first_not_zeroed);
+	ngroups = EXT4_SB(sb)->s_groups_count;
+	for (group = first_not_zeroed; group < ngroups; group++) {
+		ext4_fsblk_t blk;
+		int num, used_blks = 0;
+		struct ext4_group_desc *gdp = ext4_get_group_desc(sb, group, NULL);
+
+		if (!gdp)
+			continue;
+		if (gdp->bg_flags & cpu_to_le16(EXT4_BG_INODE_ZEROED))
+			continue;
+		if (!(gdp->bg_flags & cpu_to_le16(EXT4_BG_INODE_UNINIT)))
+			used_blks = DIV_ROUND_UP((EXT4_INODES_PER_GROUP(sb) - ext4_itable_unused_count(sb, gdp)), sbi->s_inodes_per_block);
+		if ((used_blks < 0) || (used_blks > sbi->s_itb_per_group))
+			continue;
+		blk = ext4_inode_table(sb, gdp) + used_blks;
+		num = sbi->s_itb_per_group - used_blks;
+		if (unlikely(num == 0))
+			continue;
+		group_sum++;
+		block_sum += num;
+	}
+	printk("ext4_init_reserve_inode_table2: %s, %u, %lld, %lld, %lu\n", sb->s_id, ngroups, group_sum, block_sum, sb->s_blocksize);
+	return block_sum;
+}
+#endif

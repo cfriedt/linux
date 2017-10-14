@@ -175,6 +175,7 @@ struct tcp_sock {
 		struct dma_chan		*dma_chan;
 		int			wakeup;
 		struct dma_pinned_list	*pinned_list;
+		bool			pinned;
 		dma_cookie_t		dma_cookie;
 #endif
 	} ucopy;

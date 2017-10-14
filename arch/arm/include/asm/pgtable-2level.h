@@ -74,7 +74,8 @@
 
 #define PTE_HWTABLE_PTRS	(PTRS_PER_PTE)
 #define PTE_HWTABLE_OFF		(PTE_HWTABLE_PTRS * sizeof(pte_t))
-#define PTE_HWTABLE_SIZE	(PTRS_PER_PTE * sizeof(u32))
+#define PTE_HWTABLE_SIZE	(PTE_HWTABLE_PTRS * sizeof(u32))
+#define PTE_HWTABLE_MASK	(~((PTE_HWTABLE_SIZE*2)-1))
 
 /*
  * PMD_SHIFT determines the size of the area a second-level page table can map
@@ -179,6 +180,7 @@ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long addr)
 /* we don't need complex calculations here as the pmd is folded into the pgd */
 #define pmd_addr_end(addr,end) (end)
 
+#define pmd_protnone(pmd)	(0)
 #define set_pte_ext(ptep,pte,ext) cpu_set_pte_ext(ptep,pte,ext)
 
 #endif /* __ASSEMBLY__ */

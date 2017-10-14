@@ -1,4 +1,4 @@
-/* $Id: um_idi.c,v 1.14 2004/03/21 17:54:37 armin Exp $ */
+/* $Id: um_idi.c,v 1.1.1.1 2014/03/19 14:07:34 franklee Exp $ */
 
 #include "platform.h"
 #include "di_defs.h"

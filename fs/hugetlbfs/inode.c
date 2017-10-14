@@ -916,14 +916,8 @@ static int get_hstate_idx(int page_size_log)
 	return h - hstates;
 }
 
-static char *hugetlb_dname(struct dentry *dentry, char *buffer, int buflen)
-{
-	return dynamic_dname(dentry, buffer, buflen, "/%s (deleted)",
-				dentry->d_name.name);
-}
-
 static struct dentry_operations anon_ops = {
-	.d_dname = hugetlb_dname
+	.d_dname = simple_dname
 };
 
 /*
@@ -966,6 +960,12 @@ struct file *hugetlb_file_setup(const char *name, size_t size,
 	sb = hugetlbfs_vfsmount[hstate_idx]->mnt_sb;
 	quick_string.name = name;
 	quick_string.len = strlen(quick_string.name);
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    quick_string.case_folding = 0;
+#endif
+#endif
 	quick_string.hash = 0;
 	path.dentry = d_alloc_pseudo(sb, &quick_string);
 	if (!path.dentry)

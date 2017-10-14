@@ -46,6 +46,12 @@ struct qstr {
 		};
 		u64 hash_len;
 	};
+
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+	//unsigned short case_folding;	// change to int for alignment
+    unsigned int case_folding;
+#endif
+
 	const unsigned char *name;
 };
 
@@ -332,12 +338,17 @@ extern int d_validate(struct dentry *, struct dentry *);
  * helper function for dentry_operations.d_dname() members
  */
 extern char *dynamic_dname(struct dentry *, char *, int, const char *, ...);
+extern char *simple_dname(struct dentry *, char *, int);
 
 extern char *__d_path(const struct path *, const struct path *, char *, int);
 extern char *d_absolute_path(const struct path *, char *, int);
 extern char *d_path(const struct path *, char *, int);
 extern char *dentry_path_raw(struct dentry *, char *, int);
 extern char *dentry_path(struct dentry *, char *, int);
+
+#ifdef CONFIG_MACH_QNAPTS
+extern char *qnap_dentry_path_raw(struct dentry *dentry, char *buf, int buflen);
+#endif
 
 /* Allocation counts.. */
 

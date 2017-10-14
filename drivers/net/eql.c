@@ -29,6 +29,9 @@
 
 /*
  * $Log: eql.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:07:48  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  * Revision 1.2  1996/04/11 17:51:52  guru
  * Added one-line eql_remove_slave patch.
  *

@@ -1,4 +1,4 @@
-/* $Id: aty128fb.c,v 1.1.1.1.36.1 1999/12/11 09:03:05 Exp $
+/* $Id: aty128fb.c,v 1.1.1.1 2014/03/19 14:01:26 franklee Exp $
  *  linux/drivers/video/aty128fb.c -- Frame buffer device for ATI Rage128
  *
  *  Copyright (C) 1999-2003, Brad Douglas <brad@neruo.com>

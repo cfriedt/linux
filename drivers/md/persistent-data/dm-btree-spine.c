@@ -31,7 +31,7 @@ static void node_prepare_for_write(struct dm_block_validator *v,
 					     block_size - sizeof(__le32),
 					     BTREE_CSUM_XOR));
 
-	BUG_ON(node_check(v, b, 4096));
+	BUG_ON(node_check(v, b, block_size));
 }
 
 static int node_check(struct dm_block_validator *v,

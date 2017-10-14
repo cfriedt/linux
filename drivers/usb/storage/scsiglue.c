@@ -58,6 +58,12 @@
 #include "transport.h"
 #include "protocol.h"
 
+//Patch by QNAP: get usb SATA srial number to fix QRAID1 issue
+#include <linux/ata.h>
+#include <linux/hdreg.h>
+#include <linux/swab.h>
+/////////////////////////////////////////////////////////////
+
 /* Vendor IDs for companies that seem to include the READ CAPACITY bug
  * in all their devices
  */
@@ -211,8 +217,11 @@ static int slave_configure(struct scsi_device *sdev)
 		/*
 		 * Many devices do not respond properly to READ_CAPACITY_16.
 		 * Tell the SCSI layer to try READ_CAPACITY_10 first.
+		 * However some USB 3.0 drive enclosures return capacity
+		 * modulo 2TB. Those must use READ_CAPACITY_16
 		 */
-		sdev->try_rc_10_first = 1;
+		if (!(us->fflags & US_FL_NEEDS_CAP16))
+			sdev->try_rc_10_first = 1;
 
 		/* assume SPC3 or latter devices support sense size > 18 */
 		if (sdev->scsi_level > SCSI_SPC_2)
@@ -274,6 +283,12 @@ static int slave_configure(struct scsi_device *sdev)
 	if (us->fflags & US_FL_NOT_LOCKABLE)
 		sdev->lockable = 0;
 
+#if defined(CONFIG_USB_ETRON_HUB)
+	if (usb_is_etron_hcd(us->pusb_dev) &&
+			queue_max_hw_sectors(sdev->request_queue) > 128)
+		blk_queue_max_hw_sectors(sdev->request_queue, 128);
+#endif
+
 	/* this is to satisfy the compiler, tho I don't think the 
 	 * return code is ever checked anywhere. */
 	return 0;
@@ -305,6 +320,70 @@ static int target_alloc(struct scsi_target *starget)
 
 	return 0;
 }
+
+//Patch by QNAP: get usb SATA srial number to fix QRAID1 bug
+static void usb_word_swap(const u16 *src, u16 *dest,unsigned int word_len)
+{
+        unsigned int i;
+        for(i = 0 ; i < word_len ; i++)
+                dest[i] = swab16(src[i]);
+}
+
+static int usb_get_identity(struct scsi_device *sdev, void __user *arg)
+{
+        struct us_data *us = host_to_us(sdev->host);
+        struct usb_device *udev = us->pusb_dev;
+        u16 __user *dst = arg;
+        u8 offset = 0,len = 0;
+        char buf[40];
+
+    clear_user(dst,ATA_ID_WORDS * sizeof(u16));
+
+        if(udev->manufacturer){
+        memset(buf, 0,40);
+            if(strlen(udev->manufacturer) > ATA_ID_PROD_LEN){
+                        len = ATA_ID_PROD_LEN;
+                offset = strlen(udev->manufacturer) - ATA_ID_PROD_LEN;
+            }
+        else{
+                        len = strlen(udev->manufacturer);
+                        offset = 0;
+                }
+                strcpy(buf,udev->manufacturer + offset);
+                usb_word_swap(udev->manufacturer + offset, buf, len / 2);
+            copy_to_user(dst + ATA_ID_PROD,buf,ATA_ID_PROD_LEN);
+        }
+        if(udev->serial){
+        memset(buf, 0,40);
+            if(strlen(udev->serial) > ATA_ID_SERNO_LEN){
+                        len = ATA_ID_SERNO_LEN;
+                offset = strlen(udev->serial) - ATA_ID_SERNO_LEN;
+            }
+        else{
+                        len = strlen(udev->serial);
+                        offset = 0;
+                }
+                strcpy(buf,udev->serial + offset);
+                usb_word_swap(udev->serial + offset, buf, len / 2);
+        copy_to_user(dst + ATA_ID_SERNO,buf,ATA_ID_SERNO_LEN);
+        }
+        return 0;
+}
+
+int usb_scsi_ioctl(struct scsi_device *scsidev, int cmd, void __user *arg)
+{
+        int rc = -EINVAL;
+    switch(cmd){
+        case HDIO_GET_IDENTITY:
+                return usb_get_identity(scsidev, arg);
+        default:
+                rc = -ENOTTY;
+                break;
+    }
+        return rc;
+}
+/////////////////////////////////////////////////////
+
 
 /* queue a command */
 /* This is always called with scsi_lock(host) held */
@@ -511,6 +590,12 @@ static ssize_t store_max_sectors(struct device *dev, struct device_attribute *at
 	unsigned short ms;
 
 	if (sscanf(buf, "%hu", &ms) > 0) {
+#if defined(CONFIG_USB_ETRON_HUB)
+		struct us_data *us = host_to_us(sdev->host);
+
+		if (usb_is_etron_hcd(us->pusb_dev) && ms > 128)
+			return -EINVAL; 
+#endif
 		blk_queue_max_hw_sectors(sdev->request_queue, ms);
 		return count;
 	}
@@ -536,6 +621,9 @@ struct scsi_host_template usb_stor_host_template = {
 	.show_info =			show_info,
 	.write_info =			write_info,
 	.info =				host_info,
+//Patch by QNAP: get usb SATA srial number to fix QRAID1 issue
+    .ioctl =                       usb_scsi_ioctl,
+////////////////////////////////////////////////
 
 	/* command interface -- queued only */
 	.queuecommand =			queuecommand,

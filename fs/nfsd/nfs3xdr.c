@@ -613,6 +613,45 @@ nfs3svc_decode_commitargs(struct svc_rqst *rqstp, __be32 *p,
 	return xdr_argsize_check(rqstp, p);
 }
 
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+int
+nfs3svc_decode_vstorageargs(struct svc_rqst *rqstp, __be32 *p,
+                                        struct nfsd3_vstorageargs *args)
+{
+        switch (args->operation = ntohl(*p++)) {
+        case NFS3_VSTORAGEOP_REGISTER:
+                p = xdr_decode_hyper(p, &args->magic);
+                DBG_PRINT("nfsd: nfs3svc_decode_vstorageargs [REGISTER] %llu\n", args->magic);
+                break;
+        case NFS3_VSTORAGEOP_RESERVESPACE:
+                if (!(p = decode_fh(p, &args->fh))) return 0;
+                p = xdr_decode_hyper(p, &args->offset);
+                p = xdr_decode_hyper(p, &args->count);
+                DBG_PRINT("nfsd: nfs3svc_decode_vstorageargs [RESERVESPACE] o %llu, c %llu\n",
+                        args->offset, args->count);
+                break;
+        case NFS3_VSTORAGEOP_EXTENDEDSTAT:
+                if (!(p = decode_fh(p, &args->fh))) return 0;
+                DBG_PRINT("nfsd: nfs3svc_decode_vstorageargs [EXTENDEDSTAT]\n");
+                break;
+        case NFS3_VSTORAGEOP_CLONEFILE:
+                if (!(p = decode_fh(p, &args->fh)) || !(p = decode_fh(p, &args->dst))) return 0;
+                p = xdr_decode_hyper(p, &args->offset);
+                p = xdr_decode_hyper(p, &args->count);
+                args->flags = ntohl(*p++);
+                DBG_PRINT("nfsd: nfs3svc_decode_vstorageargs [CLONEFILE] o %llu, c %llu, f 0x%x\n",
+                        args->offset, args->count, args->flags);
+                break;
+        default:
+                return 0;
+        }
+
+        return xdr_argsize_check(rqstp, p);
+}
+#endif
+#endif
+
 /*
  * XDR encode functions
  */
@@ -872,6 +911,19 @@ out:
 
 #define NFS3_ENTRY_BAGGAGE	(2 + 1 + 2 + 1)
 #define NFS3_ENTRYPLUS_BAGGAGE	(1 + 21 + 1 + (NFS3_FHSIZE >> 2))
+
+//Patch by QNAP:Workaround bug 37047, nfs(v3) readdir cause duplicate filename
+#if defined(CONFIG_MACH_QNAPTS)
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+struct 
+{
+    loff_t hash; //hash will be the same if case insensitive and !NFSD_MAY_64BIT_COOKIE
+    __be32 *buffer;
+    int buflen;
+} cache_entry_cb;
+#endif
+#endif
+//////
 static int
 encode_entry(struct readdir_cd *ccd, const char *name, int namlen,
 	     loff_t offset, u64 ino, unsigned int d_type, int plus)
@@ -913,6 +965,19 @@ encode_entry(struct readdir_cd *ccd, const char *name, int namlen,
 
 	if (cd->buflen < elen) {
 		cd->common.err = nfserr_toosmall;
+//Patch by QNAP:Workaround bug 37047, nfs(v3) readdir cause duplicate filename
+#if defined(CONFIG_MACH_QNAPTS)
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+        if (offset == cache_entry_cb.hash)
+        {
+            cd->buffer = cache_entry_cb.buffer;
+            cd->buflen = cache_entry_cb.buflen;
+            cache_entry_cb.hash = 0;
+            cache_entry_cb.buffer = NULL;
+            cache_entry_cb.buflen = 0;
+        }
+#endif
+#endif
 		return -EINVAL;
 	}
 
@@ -995,6 +1060,17 @@ encode_entry(struct readdir_cd *ccd, const char *name, int namlen,
 		return -EINVAL;
 	}
 
+//Patch by QNAP:Workaround bug 37047, nfsd(v3) readdir cause duplicate filename
+#if defined(CONFIG_MACH_QNAPTS)
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    if (offset != cache_entry_cb.hash)
+    {
+        cache_entry_cb.hash = offset;
+        cache_entry_cb.buffer = cd->buffer;
+        cache_entry_cb.buflen = cd->buflen;
+    }
+#endif
+#endif
 	cd->buflen -= num_entry_words;
 	cd->buffer = p;
 	cd->common.err = nfs_ok;
@@ -1029,7 +1105,15 @@ nfs3svc_encode_fsstatres(struct svc_rqst *rqstp, __be32 *p,
 
 	if (resp->status == 0) {
 		p = xdr_encode_hyper(p, bs * s->f_blocks);	/* total bytes */
-		p = xdr_encode_hyper(p, bs * s->f_bfree);	/* free bytes */
+#if defined(CONFIG_MACH_QNAPTS)   // 2013/02/22 Cindy Jen add for 512 MB reserved blocks
+		// Refer to Volume_Get_Info() in naslib/storage_man/volume.c
+		// f_bfree: free blocks in fs
+		// f_bavail: free blocks for non-superuser
+		// Use f_bavail instead of f_bfree, since SMB use it to caculate free disk space.
+		p = xdr_encode_hyper(p, bs * s->f_bavail);      /* free bytes */
+#else
+		p = xdr_encode_hyper(p, bs * s->f_bfree);       /* free bytes */
+#endif
 		p = xdr_encode_hyper(p, bs * s->f_bavail);	/* user available bytes */
 		p = xdr_encode_hyper(p, s->f_files);	/* total inodes */
 		p = xdr_encode_hyper(p, s->f_ffree);	/* free inodes */
@@ -1097,6 +1181,55 @@ nfs3svc_encode_commitres(struct svc_rqst *rqstp, __be32 *p,
 	}
 	return xdr_ressize_check(rqstp, p);
 }
+
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+/* VSTORAGE */
+int
+nfs3svc_encode_vstorageres(struct svc_rqst *rqstp, __be32 *p,
+                                        struct nfsd3_vstorageres *resp)
+{
+        int operation = resp->operation;
+
+        dprintk("nfsd: nfs3svc_encode_vstorageres status %d\n", resp->status);
+
+        if (resp->status == 0) {
+                switch (operation) {
+                case NFS3_VSTORAGEOP_REGISTER:
+                        DBG_PRINT("nfsd: nfs3svc_encode_vstorageres [%d] 0x%x\n",
+                                resp->operation, resp->primitives);
+                        *p++ = htonl(operation);
+                        *p++ = htonl(resp->primitives);
+                        break;
+                case NFS3_VSTORAGEOP_RESERVESPACE:
+                        DBG_PRINT("nfsd: nfs3svc_encode_vstorageres [%d] %llu\n",
+                                resp->operation, resp->count);
+                        *p++ = htonl(operation);
+                        p = xdr_encode_hyper(p, resp->count);
+                        break;
+                case NFS3_VSTORAGEOP_EXTENDEDSTAT:
+                        DBG_PRINT("nfsd: nfs3svc_encode_vstorageres [%d] %llu %llu %llu\n",
+                                resp->operation, resp->totalBytes, resp->allocatedBytes, resp->uniqueBytes);
+                        *p++ = htonl(operation);
+                        p = xdr_encode_hyper(p, resp->totalBytes);
+                        p = xdr_encode_hyper(p, resp->allocatedBytes);
+                        p = xdr_encode_hyper(p, resp->uniqueBytes);
+                        break;
+                case NFS3_VSTORAGEOP_CLONEFILE:
+                        DBG_PRINT("nfsd: nfs3svc_encode_vstorageres [%d] %llu\n",
+                                resp->operation, resp->count);
+                        *p++ = htonl(operation);
+                        p = xdr_encode_hyper(p, resp->count);
+                        break;
+                default:
+                        return 0;
+                }
+        }
+
+        return xdr_ressize_check(rqstp, p);
+}
+#endif
+#endif
 
 /*
  * XDR release functions

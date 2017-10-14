@@ -1664,6 +1664,9 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	char b[BDEVNAME_SIZE];
 	struct r10conf *conf = mddev->private;
 
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    NETLINK_EVT hal_event;
+#endif
 	/*
 	 * If it is not operational, then we have already marked it as dead
 	 * else if it is the last working disks, ignore the error, let the
@@ -1671,11 +1674,21 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	 * else mark the drive as failed
 	 */
 	if (test_bit(In_sync, &rdev->flags)
-	    && !enough(conf, rdev->raid_disk))
+	    && !enough(conf, rdev->raid_disk)) {
 		/*
 		 * Don't fail the drive, just return an IO error.
 		 */
-		return;
+
+//Patch by QNAP: fix bug #38572 on bugZilla
+//the author keep the last removed drive active, but does not care 
+//that the error is caused by io_error or by no_device. 
+//Keeping removed drive active leads QNAP system (storage_509) misread the real status.  
+#if defined(CONFIG_MACH_QNAPTS)
+	    if(!test_bit(QNAP_NoDev, &rdev->flags))
+#endif
+			return;
+
+	}
 	if (test_and_clear_bit(In_sync, &rdev->flags)) {
 		unsigned long flags;
 		spin_lock_irqsave(&conf->device_lock, flags);
@@ -1694,6 +1707,16 @@ static void error(struct mddev *mddev, struct md_rdev *rdev)
 	       "md/raid10:%s: Operation continuing on %d devices.\n",
 	       mdname(mddev), bdevname(rdev->bdev, b),
 	       mdname(mddev), conf->geo.raid_disks - mddev->degraded);
+//Patch by QNAP: enhance HAL error handler
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    memset(&hal_event, 0, sizeof(NETLINK_EVT));
+    hal_event.type = HAL_EVENT_RAID;
+    hal_event.arg.action = SET_RAID_PD_ERROR;
+    hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(mddev) + strlen("md"), NULL, 0);    
+    snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name, 
+            sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(rdev->bdev,b));
+    send_hal_netlink(&hal_event);
+#endif        
 }
 
 static void print_conf(struct r10conf *conf)
@@ -1736,7 +1759,12 @@ static int raid10_spare_active(struct mddev *mddev)
 	struct raid10_info *tmp;
 	int count = 0;
 	unsigned long flags;
-
+	//[SDMD START]csw: add variable for sending event
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    char b[BDEVNAME_SIZE];
+    NETLINK_EVT hal_event;
+#endif        
+	//[SDMD END]
 	/*
 	 * Find all non-in_sync disks within the RAID10 configuration
 	 * and mark them in_sync
@@ -1759,9 +1787,22 @@ static int raid10_spare_active(struct mddev *mddev)
 				set_bit(Faulty, &tmp->rdev->flags);
 				sysfs_notify_dirent_safe(
 					tmp->rdev->sysfs_state);
+//[SDMD START]csw: send replaced disk RAID_PD_HOTREPLACED affter hot-replace
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+                memset(&hal_event, 0, sizeof(NETLINK_EVT));
+                hal_event.type = HAL_EVENT_RAID;
+                hal_event.arg.action = RAID_PD_HOTREPLACED;
+                hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(mddev) + strlen("md"), NULL, 0);    
+                snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name, 
+                        sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(tmp->rdev->bdev,b));
+                send_hal_netlink(&hal_event);
+#endif        
+//[SDMD END]
+
 			}
 			sysfs_notify_dirent_safe(tmp->replacement->sysfs_state);
 		} else if (tmp->rdev
+			   && tmp->rdev->recovery_offset == MaxSector
 			   && !test_bit(Faulty, &tmp->rdev->flags)
 			   && !test_and_set_bit(In_sync, &tmp->rdev->flags)) {
 			count++;
@@ -2075,11 +2116,17 @@ static void sync_request_write(struct mddev *mddev, struct r10bio *r10_bio)
 			 * both 'first' and 'i', so we just compare them.
 			 * All vec entries are PAGE_SIZE;
 			 */
-			for (j = 0; j < vcnt; j++)
+			int sectors = r10_bio->sectors;
+			for (j = 0; j < vcnt; j++) {
+				int len = PAGE_SIZE;
+				if (sectors < (len / 512))
+					len = sectors * 512;
 				if (memcmp(page_address(fbio->bi_io_vec[j].bv_page),
 					   page_address(tbio->bi_io_vec[j].bv_page),
-					   fbio->bi_io_vec[j].bv_len))
+					   len))
 					break;
+				sectors -= len/512;
+			}
 			if (j == vcnt)
 				continue;
 			atomic64_add(r10_bio->sectors, &mddev->resync_mismatches);
@@ -2262,12 +2309,18 @@ static void recovery_request_write(struct mddev *mddev, struct r10bio *r10_bio)
 	d = r10_bio->devs[1].devnum;
 	wbio = r10_bio->devs[1].bio;
 	wbio2 = r10_bio->devs[1].repl_bio;
+	/* Need to test wbio2->bi_end_io before we call
+	 * generic_make_request as if the former is NULL,
+	 * the latter is free to free wbio2.
+	 */
+	if (wbio2 && !wbio2->bi_end_io)
+		wbio2 = NULL;
 	if (wbio->bi_end_io) {
 		atomic_inc(&conf->mirrors[d].rdev->nr_pending);
 		md_sync_acct(conf->mirrors[d].rdev->bdev, bio_sectors(wbio));
 		generic_make_request(wbio);
 	}
-	if (wbio2 && wbio2->bi_end_io) {
+	if (wbio2) {
 		atomic_inc(&conf->mirrors[d].replacement->nr_pending);
 		md_sync_acct(conf->mirrors[d].replacement->bdev,
 			     bio_sectors(wbio2));
@@ -2353,6 +2406,9 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 	int max_read_errors = atomic_read(&mddev->max_corr_read_errors);
 	int d = r10_bio->devs[r10_bio->read_slot].devnum;
 
+#if defined(CONFIG_MACH_QNAPTS)
+    NETLINK_EVT hal_event;
+#endif
 	/* still own a reference to this rdev, so it cannot
 	 * have been cleared recently.
 	 */
@@ -2529,6 +2585,17 @@ static void fix_read_error(struct r10conf *conf, struct mddev *mddev, struct r10
 					       choose_data_offset(r10_bio, rdev)),
 				       bdevname(rdev->bdev, b));
 				atomic_add(s, &rdev->corrected_errors);
+//Patch by QNAP: enhance error handler
+#if defined(CONFIG_MACH_QNAPTS)
+                memset(&hal_event, 0, sizeof(NETLINK_EVT));
+                hal_event.type = HAL_EVENT_RAID;
+                hal_event.arg.action = REPAIR_RAID_READ_ERROR;
+                hal_event.arg.param.netlink_raid.raid_id = simple_strtol(mdname(mddev) + strlen("md"), NULL, 0);    
+                snprintf(hal_event.arg.param.netlink_raid.pd_scsi_name, 
+                        sizeof(hal_event.arg.param.netlink_raid.pd_scsi_name), "/dev/%s", bdevname(rdev->bdev, b));
+                hal_event.arg.param.netlink_raid.pd_repair_sector = (unsigned long long)(r10_bio->devs[sl].addr + sect + rdev->data_offset);    
+                send_hal_netlink(&hal_event);
+#endif            
 			}
 
 			rdev_dec_pending(rdev, mddev);
@@ -2643,6 +2710,14 @@ read_more:
 
 	do_sync = (r10_bio->master_bio->bi_rw & REQ_SYNC);
 	slot = r10_bio->read_slot;
+//Patch by QNAP: enhance HAL error handler
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    if (test_bit(QMD_ERR_SENT, &rdev->qflags))
+    {
+	    raid_end_bio_io(r10_bio);
+        return;
+    }
+#endif                
 	printk_ratelimited(
 		KERN_ERR
 		"md/raid10:%s: %s: redirecting "
@@ -2909,14 +2984,13 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr,
 	 */
 	if (mddev->bitmap == NULL &&
 	    mddev->recovery_cp == MaxSector &&
+	    mddev->reshape_position == MaxSector &&
+	    !test_bit(MD_RECOVERY_SYNC, &mddev->recovery) &&
 	    !test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery) &&
+	    !test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery) &&
 	    conf->fullsync == 0) {
 		*skipped = 1;
-		max_sector = mddev->dev_sectors;
-		if (test_bit(MD_RECOVERY_SYNC, &mddev->recovery) ||
-		    test_bit(MD_RECOVERY_RESHAPE, &mddev->recovery))
-			max_sector = mddev->resync_max_sectors;
-		return max_sector - sector_nr;
+		return mddev->dev_sectors - sector_nr;
 	}
 
  skipped:
@@ -3386,6 +3460,7 @@ static sector_t sync_request(struct mddev *mddev, sector_t sector_nr,
 
 		if (bio->bi_end_io == end_sync_read) {
 			md_sync_acct(bio->bi_bdev, nr_sectors);
+			set_bit(BIO_UPTODATE, &bio->bi_flags);
 			generic_make_request(bio);
 		}
 	}
@@ -3532,7 +3607,7 @@ static struct r10conf *setup_conf(struct mddev *mddev)
 
 	/* FIXME calc properly */
 	conf->mirrors = kzalloc(sizeof(struct raid10_info)*(mddev->raid_disks +
-							    max(0,mddev->delta_disks)),
+							    max(0,-mddev->delta_disks)),
 				GFP_KERNEL);
 	if (!conf->mirrors)
 		goto out;
@@ -3691,7 +3766,7 @@ static int run(struct mddev *mddev)
 		    conf->geo.far_offset == 0)
 			goto out_free_conf;
 		if (conf->prev.far_copies != 1 &&
-		    conf->geo.far_offset == 0)
+		    conf->prev.far_offset == 0)
 			goto out_free_conf;
 	}
 

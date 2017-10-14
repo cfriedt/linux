@@ -74,6 +74,7 @@
 #include <linux/ptrace.h>
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
+#include <linux/random.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -83,6 +84,10 @@
 
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/smp.h>
+#endif
+
+#if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARCH_ALPINE)
+extern void kernel_booting_buzzer();
 #endif
 
 static int kernel_init(void *);
@@ -777,6 +782,10 @@ static void __init do_basic_setup(void)
 	do_ctors();
 	usermodehelper_enable();
 	do_initcalls();
+	random_int_secret_init();
+#if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARCH_ALPINE)
+	kernel_booting_buzzer();
+#endif
 }
 
 static void __init do_pre_smp_initcalls(void)

@@ -84,5 +84,16 @@ int dm_kcopyd_zero(struct dm_kcopyd_client *kc,
 		   unsigned num_dests, struct dm_io_region *dests,
 		   unsigned flags, dm_kcopyd_notify_fn fn, void *context);
 
+#if defined(CONFIG_MACH_QNAPTS)
+/* for flashcache flush */
+struct track_job;
+struct track_job *dm_kcopyd_alloc_track_job(struct dm_kcopyd_client *kc, int count);
+struct dm_kcopyd_client *dm_kcopyd_client_create_tracked(struct dm_kcopyd_throttle *throttle);
+void dm_kcopyd_client_destroy_tracked(struct dm_kcopyd_client *kc);
+int dm_kcopyd_copy_tracked(struct dm_kcopyd_client *kc, struct dm_io_region *from,
+		   unsigned num_dests, struct dm_io_region *dests,
+		   unsigned flags, dm_kcopyd_notify_fn fn, void *context, struct track_job *job);
+#endif
+
 #endif	/* __KERNEL__ */
 #endif	/* _LINUX_DM_KCOPYD_H */

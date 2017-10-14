@@ -1,4 +1,4 @@
-/* $Id: isdnl2.h,v 1.3.6.2 2001/09/23 22:24:49 kai Exp $
+/* $Id: isdnl2.h,v 1.1.1.1 2014/03/19 14:07:29 franklee Exp $
  *
  * Layer 2 defines
  *

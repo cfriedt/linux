@@ -23,7 +23,10 @@
  */
 
 /*
- * $Log: cumana_NCR5380.h,v $
+ * $Log: mac_scsi.h,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:31  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #ifndef MAC_NCR5380_H

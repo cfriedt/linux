@@ -723,6 +723,10 @@ static int handshake(void __iomem *ptr, u32 mask, u32 done,
 }
 
 #define PCI_DEVICE_ID_INTEL_LYNX_POINT_XHCI	0x8C31
+#ifdef CONFIG_MACH_QNAPTS
+// Benjamin 20131211 for 0011-usb-add-support-for-Intel-Baytrail-USB-controllers.patch
+#define PCI_DEVICE_ID_INTEL_BYT_XHCI          0x0F35
+#endif
 #define PCI_DEVICE_ID_INTEL_LYNX_POINT_LP_XHCI	0x9C31
 
 bool usb_is_intel_ppt_switchable_xhci(struct pci_dev *pdev)
@@ -741,10 +745,27 @@ bool usb_is_intel_lpt_switchable_xhci(struct pci_dev *pdev)
 		 pdev->device == PCI_DEVICE_ID_INTEL_LYNX_POINT_LP_XHCI);
 }
 
+#ifdef CONFIG_MACH_QNAPTS
+// Benjamin 20131211 for 0011-usb-add-support-for-Intel-Baytrail-USB-controllers.patch
+/* The Intel BYT also has switchable ports. */
+bool usb_is_intel_byt_switchable_xhci(struct pci_dev *pdev)
+{
+	return pdev->class == PCI_CLASS_SERIAL_USB_XHCI &&
+		pdev->vendor == PCI_VENDOR_ID_INTEL &&
+		pdev->device == PCI_DEVICE_ID_INTEL_BYT_XHCI;
+}
+#endif
+
 bool usb_is_intel_switchable_xhci(struct pci_dev *pdev)
 {
 	return usb_is_intel_ppt_switchable_xhci(pdev) ||
+#ifndef CONFIG_MACH_QNAPTS
 		usb_is_intel_lpt_switchable_xhci(pdev);
+#else
+// Benjamin 20131211 for 0011-usb-add-support-for-Intel-Baytrail-USB-controllers.patch
+		usb_is_intel_lpt_switchable_xhci(pdev) || 
+		usb_is_intel_byt_switchable_xhci(pdev);
+#endif
 }
 EXPORT_SYMBOL_GPL(usb_is_intel_switchable_xhci);
 

@@ -24,6 +24,9 @@
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 
+
+#include <asm/tlbflush.h>
+
 #ifdef CONFIG_ARM_LPAE
 #include <asm/pgtable-3level.h>
 #else
@@ -183,7 +186,7 @@ extern pgd_t swapper_pg_dir[PTRS_PER_PGD];
 
 static inline pte_t *pmd_page_vaddr(pmd_t pmd)
 {
-	return __va(pmd_val(pmd) & PHYS_MASK & (s32)PAGE_MASK);
+	return __va(pmd_val(pmd) & PHYS_MASK & (s32)PTE_HWTABLE_MASK);
 }
 
 #define pmd_page(pmd)		pfn_to_page(__phys_to_pfn(pmd_val(pmd) & PHYS_MASK))
@@ -217,6 +220,7 @@ static inline pte_t *pmd_page_vaddr(pmd_t pmd)
 #define pte_dirty(pte)		(pte_val(pte) & L_PTE_DIRTY)
 #define pte_young(pte)		(pte_val(pte) & L_PTE_YOUNG)
 #define pte_exec(pte)		(!(pte_val(pte) & L_PTE_XN))
+#define pte_protnone(pte)	(pte_val(pte) & L_PTE_NONE)
 #define pte_special(pte)	(0)
 
 #define pte_present_user(pte)  (pte_present(pte) && (pte_val(pte) & L_PTE_USER))
@@ -326,6 +330,23 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 		remap_pfn_range(vma, from, pfn, size, prot)
 
 #define pgtable_cache_init() do { } while (0)
+
+static inline void inc_gup_readers(struct mm_struct *mm)
+{
+	atomic_inc(&mm->context.gup_readers);
+	smp_mb__after_atomic_inc();
+}
+
+static inline void dec_gup_readers(struct mm_struct *mm)
+{
+	smp_mb__before_atomic_dec();
+	atomic_dec(&mm->context.gup_readers);
+}
+
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+#define arch_block_thp_split(mm)	inc_gup_readers(mm)
+#define arch_unblock_thp_split(mm)	dec_gup_readers(mm)
+#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
 #endif /* !__ASSEMBLY__ */
 

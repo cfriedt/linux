@@ -1306,6 +1306,9 @@ static void mmci_dt_populate_generic_pdata(struct device_node *np,
 	default :
 		pr_warn("%s: Unsupported bus width\n", np->full_name);
 	}
+
+	if (!pdata->ocr_mask)	
+		of_property_read_u32(np, "ocr-mask", &pdata->ocr_mask);
 }
 #else
 static void mmci_dt_populate_generic_pdata(struct device_node *np,

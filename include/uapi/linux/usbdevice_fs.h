@@ -176,5 +176,10 @@ struct usbdevfs_disconnect_claim {
 #define USBDEVFS_RELEASE_PORT      _IOR('U', 25, unsigned int)
 #define USBDEVFS_GET_CAPABILITIES  _IOR('U', 26, __u32)
 #define USBDEVFS_DISCONNECT_CLAIM  _IOR('U', 27, struct usbdevfs_disconnect_claim)
-
+//Patch by QNAP: add a cmd for HW USB Test
+//Patch by QNAP: send usb hub reset
+#if defined(CONFIG_MACH_QNAPTS)
+#define USBDEVFS_HUB_PORT_TEST      _IOR('U', 26, struct usbdevfs_hub_portinfo)
+#define USBDEVFS_HUB_RESET          _IOR('U', 27, struct usbdevfs_hub_portinfo)
+#endif
 #endif /* _UAPI_LINUX_USBDEVICE_FS_H */

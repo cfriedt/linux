@@ -1118,6 +1118,13 @@ new_segment:
 					goto wait_for_memory;
 
 				/*
+				 * All packets are restored as if they have
+				 * already been sent.
+				 */
+				if (tp->repair)
+					TCP_SKB_CB(skb)->when = tcp_time_stamp;
+
+				/*
 				 * Check whether we can use HW checksum.
 				 */
 				if (sk->sk_route_caps & NETIF_F_ALL_CSUM)
@@ -1318,11 +1325,13 @@ void tcp_cleanup_rbuf(struct sock *sk, int copied)
 	struct tcp_sock *tp = tcp_sk(sk);
 	bool time_to_ack = false;
 
+#ifndef CONFIG_MACH_QNAPTS
 	struct sk_buff *skb = skb_peek(&sk->sk_receive_queue);
 
 	WARN(skb && !before(tp->copied_seq, TCP_SKB_CB(skb)->end_seq),
 	     "cleanup rbuf bug: copied %X seq %X rcvnxt %X\n",
 	     tp->copied_seq, TCP_SKB_CB(skb)->end_seq, tp->rcv_nxt);
+#endif 
 
 	if (inet_csk_ack_scheduled(sk)) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
@@ -1330,7 +1339,7 @@ void tcp_cleanup_rbuf(struct sock *sk, int copied)
 		    * receive. */
 		if (icsk->icsk_ack.blocked ||
 		    /* Once-per-two-segments ACK was not sent by tcp_input.c */
-		    tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss ||
+		    tp->rcv_nxt - tp->rcv_wup > (icsk->icsk_ack.rcv_mss * sysctl_tcp_default_delack_segs) ||
 		    /*
 		     * If this read emptied read buffer, we send ACK, if
 		     * connection is not bidirectional, user drained
@@ -1397,6 +1406,9 @@ static void tcp_service_net_dma(struct sock *sk, bool wait)
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	if (!tp->ucopy.dma_chan)
+		return;
+
+	if (!tp->ucopy.pinned)
 		return;
 
 	last_issued = tp->ucopy.dma_cookie;
@@ -1527,6 +1539,7 @@ int tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 }
 EXPORT_SYMBOL(tcp_read_sock);
 
+extern int hwcc;
 /*
  *	This routine copies from a sock struct into the user buffer.
  *
@@ -1589,19 +1602,23 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 #ifdef CONFIG_NET_DMA
 	tp->ucopy.dma_chan = NULL;
 	preempt_disable();
+
 	skb = skb_peek_tail(&sk->sk_receive_queue);
+
 	{
 		int available = 0;
 
+#if 0
 		if (skb)
 			available = TCP_SKB_CB(skb)->seq + skb->len - (*seq);
-		if ((available < target) &&
+#endif
+		if ((available < target) && hwcc &&
 		    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
-		    !sysctl_tcp_low_latency &&
+		    skb && !skb_has_frag_list(skb) && !sysctl_tcp_low_latency &&
 		    net_dma_find_channel()) {
 			preempt_enable_no_resched();
-			tp->ucopy.pinned_list =
-					dma_pin_iovec_pages(msg->msg_iov, len);
+			tp->ucopy.pinned =
+					!dma_pin_iovec_pages(tp, msg->msg_iov, len);
 		} else {
 			preempt_enable_no_resched();
 		}
@@ -1610,6 +1627,38 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 	do {
 		u32 offset;
+//Patch by QNAP:enhance performance from socket to file
+        if(flags & MSG_NOCATCHSIGNAL) {
+			/* Original when we receive from socket and write to file by splice, we remove the following
+			 * sygnal_pending(). But it would cause system hang when smbd
+			 * is receive file and user "kill -9" it. So I copy the
+			 * code back. But in order to keep track, I did not remove
+			 * our define.
+			 */ 
+			if (signal_pending(current)) {
+				if (sigismember(&current->pending.signal, SIGQUIT) || 
+					sigismember(&current->pending.signal, SIGABRT) ||
+					sigismember(&current->pending.signal, SIGKILL) ||
+					sigismember(&current->pending.signal, SIGTERM) ||
+					sigismember(&current->pending.signal, SIGSTOP) ) {
+
+					printk("%s (%d) Avoiding recvfile() hangs.\n", __FILE__, __LINE__);
+					if (copied)
+						break;
+					copied = timeo ? sock_intr_errno(timeo) : -EAGAIN;
+					break;
+				}/* else {
+					int i;
+					for (i = 1; i <= 32; i++) {
+						if (sigismember(&current->pending.signal, i)) {
+							printk("%s (%d) I got signal %d\n", __FILE__, __LINE__, i);
+						}
+					}
+				}*/
+			}
+        }
+        else
+//////////////////////////////////////////////////////////////////////////////////////////////
 
 		/* Are we at urgent data? Stop if we have read anything or have SIGURG pending. */
 		if (tp->urg_data && tp->urg_seq == *seq) {
@@ -1818,7 +1867,7 @@ do_prequeue:
 
 		if (!(flags & MSG_TRUNC)) {
 #ifdef CONFIG_NET_DMA
-			if (!tp->ucopy.dma_chan && tp->ucopy.pinned_list)
+			if (!tp->ucopy.dma_chan && tp->ucopy.pinned)
 				tp->ucopy.dma_chan = net_dma_find_channel();
 
 			if (tp->ucopy.dma_chan) {
@@ -1846,6 +1895,11 @@ do_prequeue:
 			} else
 #endif
 			{
+//Patch by QNAP:enhance performance from socket to file
+				if(msg->msg_flags & MSG_KERNSPACE)
+					err = skb_copy_datagram_to_kernel_iovec(skb, offset, msg->msg_iov, used);
+				else
+////////////////////////////////////////////////////////////////////////////////////
 				err = skb_copy_datagram_iovec(skb, offset,
 						msg->msg_iov, used);
 				if (err) {
@@ -1912,9 +1966,9 @@ skip_copy:
 	tcp_service_net_dma(sk, true);  /* Wait for queue to drain */
 	tp->ucopy.dma_chan = NULL;
 
-	if (tp->ucopy.pinned_list) {
+	if (tp->ucopy.pinned) {
 		dma_unpin_iovec_pages(tp->ucopy.pinned_list);
-		tp->ucopy.pinned_list = NULL;
+		tp->ucopy.pinned = false;
 	}
 #endif
 
@@ -2263,6 +2317,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	__skb_queue_purge(&tp->out_of_order_queue);
 #ifdef CONFIG_NET_DMA
 	__skb_queue_purge(&sk->sk_async_wait_queue);
+	dma_free_iovec_data(tp);
 #endif
 
 	inet->inet_dport = 0;
@@ -2440,10 +2495,11 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 	case TCP_THIN_DUPACK:
 		if (val < 0 || val > 1)
 			err = -EINVAL;
-		else
+		else {
 			tp->thin_dupack = val;
 			if (tp->thin_dupack)
 				tcp_disable_early_retrans(tp);
+		}
 		break;
 
 	case TCP_REPAIR:

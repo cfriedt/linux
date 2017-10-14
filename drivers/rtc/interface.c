@@ -356,6 +356,32 @@ static int __rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	return err;
 }
 
+#if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARM)
+int rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
+{
+	int err;
+
+	err = mutex_lock_interruptible(&rtc->ops_lock);
+	if (err)
+		return err;
+
+
+	if (alarm->enabled) {
+
+		if (!rtc->ops){
+			err = -ENODEV;
+		}
+		else if (!rtc->ops->set_alarm){
+			err = -EINVAL;
+		}
+		else{
+			err = rtc->ops->set_alarm(rtc->dev.parent, alarm);
+		}
+	}
+	mutex_unlock(&rtc->ops_lock);
+	return err;
+}
+#else
 int rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 {
 	int err;
@@ -378,6 +404,7 @@ int rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	mutex_unlock(&rtc->ops_lock);
 	return err;
 }
+#endif // End of #if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARM)
 EXPORT_SYMBOL_GPL(rtc_set_alarm);
 
 /* Called once per device from rtc_device_register */

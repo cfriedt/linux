@@ -1,5 +1,5 @@
 /*
- *  acpi_drivers.h  ($Revision: 31 $)
+ *  acpi_drivers.h  ($Revision: 1.1.1.2 $)
  *
  *  Copyright (C) 2001, 2002 Andy Grover <andrew.grover@intel.com>
  *  Copyright (C) 2001, 2002 Paul Diefenbaugh <paul.s.diefenbaugh@intel.com>
@@ -77,6 +77,12 @@
  * notification value.
  */
 #define ACPI_FIXED_HARDWARE_EVENT	0x100
+
+//Patch by QNAP:delay power button to shut down
+#ifdef CONFIG_MACH_QNAPTS
+#define ACPI_BUTTON_NOTIFY_SHOW		0x81
+#endif
+//////////////////////////////////////////////			
 
 /* --------------------------------------------------------------------------
                                        PCI

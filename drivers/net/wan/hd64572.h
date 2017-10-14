@@ -12,6 +12,9 @@
  *	2 of the License, or (at your option) any later version.
  *
  * $Log: hd64572.h,v $
+ * Revision 1.1.1.1  2014/03/19 14:09:04  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  * Revision 3.1  2001/06/15 12:41:10  regina
  * upping major version number
  *

@@ -2228,6 +2228,9 @@ void nfs_fill_super(struct super_block *sb, struct nfs_mount_info *mount_info)
 		 * so ourselves when necessary.
 		 */
 		sb->s_flags |= MS_POSIXACL;
+#ifdef CONFIG_NFSV4_FS_RICHACL
+                sb->s_flags |= MS_RICHACL;
+#endif
 		sb->s_time_gran = 1;
 	}
 
@@ -2246,6 +2249,9 @@ void nfs_clone_super(struct super_block *sb, struct nfs_mount_info *mount_info)
 	sb->s_blocksize_bits = old_sb->s_blocksize_bits;
 	sb->s_blocksize = old_sb->s_blocksize;
 	sb->s_maxbytes = old_sb->s_maxbytes;
+#ifdef CONFIG_NFSV4_FS_RICHACL
+        sb->s_flags  |= MS_RICHACL;
+#endif
 	sb->s_xattr = old_sb->s_xattr;
 	sb->s_op = old_sb->s_op;
 	sb->s_time_gran = 1;

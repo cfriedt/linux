@@ -73,6 +73,13 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data);
 static int ext4_statfs(struct dentry *dentry, struct kstatfs *buf);
 static int ext4_unfreeze(struct super_block *sb);
 static int ext4_freeze(struct super_block *sb);
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+extern struct dentry_operations ext4_dentry_operations;
+#endif
+#endif
+/////////////////////////////////////////////////////////////
 static struct dentry *ext4_mount(struct file_system_type *fs_type, int flags,
 		       const char *dev_name, void *data);
 static inline int ext2_feature_set_ok(struct super_block *sb);
@@ -432,7 +439,6 @@ void ext4_error_inode(struct inode *inode, const char *function,
 
 	es->s_last_error_ino = cpu_to_le32(inode->i_ino);
 	es->s_last_error_block = cpu_to_le64(block);
-	save_error_info(inode->i_sb, function, line);
 	va_start(args, fmt);
 	vaf.fmt = fmt;
 	vaf.va = &args;
@@ -448,6 +454,7 @@ void ext4_error_inode(struct inode *inode, const char *function,
 		       current->comm, &vaf);
 	va_end(args);
 
+	save_error_info(inode->i_sb, function, line);
 	ext4_handle_error(inode->i_sb);
 }
 
@@ -747,6 +754,10 @@ static void ext4_put_super(struct super_block *sb)
 	struct ext4_super_block *es = sbi->s_es;
 	int i, err;
 
+#ifdef CONFIG_MACH_QNAPTS
+	ext4_destroy_trim_thread(sbi);
+#endif
+
 	ext4_unregister_li_request(sb);
 	dquot_disable(sb, -1, DQUOT_USAGE_ENABLED | DQUOT_LIMITS_ENABLED);
 
@@ -803,6 +814,7 @@ static void ext4_put_super(struct super_block *sb)
 		dump_orphan_list(sb, sbi);
 	J_ASSERT(list_empty(&sbi->s_orphan));
 
+	sync_blockdev(sb->s_bdev);
 	invalidate_bdev(sb->s_bdev);
 	if (sbi->journal_bdev && sbi->journal_bdev != sb->s_bdev) {
 		/*
@@ -1130,6 +1142,9 @@ enum {
 	Opt_dioread_nolock, Opt_dioread_lock,
 	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
 	Opt_max_dir_size_kb,
+#ifdef CONFIG_EXT4_FS_RICHACL
+        Opt_richacl,
+#endif
 };
 
 static const match_table_t tokens = {
@@ -1209,6 +1224,9 @@ static const match_table_t tokens = {
 	{Opt_removed, "reservation"},	/* mount option from ext2/3 */
 	{Opt_removed, "noreservation"}, /* mount option from ext2/3 */
 	{Opt_removed, "journal=%u"},	/* mount option from ext2/3 */
+#ifdef CONFIG_EXT4_FS_RICHACL
+        {Opt_richacl, "richacl"},
+#endif
 	{Opt_err, NULL},
 };
 
@@ -1234,6 +1252,40 @@ static ext4_fsblk_t get_sb_block(void **data)
 
 	return sb_block;
 }
+
+#ifdef CONFIG_EXT4_FS_RICHACL
+static void enable_acl(struct super_block *sb)
+{
+#if !defined(CONFIG_EXT4_FS_POSIX_ACL)
+        ext4_msg(sb, KERN_ERR, "acl options not supported");
+        return;
+#endif
+	sb->s_flags |= MS_POSIXACL;
+	sb->s_flags &= ~MS_RICHACL;
+        return;
+}
+
+static void disable_acl(struct super_block *sb)
+{
+#if !defined(CONFIG_EXT4_FS_POSIX_ACL)
+        ext4_msg(sb, KERN_ERR, "acl options not supported");
+        return;
+#endif
+        sb->s_flags &= ~(MS_POSIXACL | MS_RICHACL);
+        return;
+}
+
+static void enable_richacl(struct super_block *sb)
+{
+#if !defined(CONFIG_EXT4_FS_RICHACL)
+        ext4_msg(sb, KERN_ERR, "richacl options not supported");
+        return;
+#endif
+        sb->s_flags |= MS_RICHACL;
+        sb->s_flags &= ~MS_POSIXACL;
+        return;
+}
+#endif
 
 #define DEFAULT_JOURNAL_IOPRIO (IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 3))
 static char deprecated_msg[] = "Mount option \"%s\" will be removed by %s\n"
@@ -1341,7 +1393,7 @@ static const struct mount_opts {
 	{Opt_delalloc, EXT4_MOUNT_DELALLOC,
 	 MOPT_EXT4_ONLY | MOPT_SET | MOPT_EXPLICIT},
 	{Opt_nodelalloc, EXT4_MOUNT_DELALLOC,
-	 MOPT_EXT4_ONLY | MOPT_CLEAR | MOPT_EXPLICIT},
+	 MOPT_EXT4_ONLY | MOPT_CLEAR},
 	{Opt_journal_checksum, EXT4_MOUNT_JOURNAL_CHECKSUM,
 	 MOPT_EXT4_ONLY | MOPT_SET},
 	{Opt_journal_async_commit, (EXT4_MOUNT_JOURNAL_ASYNC_COMMIT |
@@ -1383,6 +1435,11 @@ static const struct mount_opts {
 	{Opt_acl, 0, MOPT_NOSUPPORT},
 	{Opt_noacl, 0, MOPT_NOSUPPORT},
 #endif
+
+#ifdef CONFIG_EXT4_FS_RICHACL
+        {Opt_richacl, EXT4_MOUNT_RICH_ACL, MOPT_SET},
+#endif
+
 	{Opt_nouid32, EXT4_MOUNT_NO_UID32, MOPT_SET},
 	{Opt_debug, EXT4_MOUNT_DEBUG, MOPT_SET},
 	{Opt_quota, EXT4_MOUNT_QUOTA | EXT4_MOUNT_USRQUOTA, MOPT_SET | MOPT_Q},
@@ -1424,10 +1481,24 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 		return clear_qf_name(sb, GRPQUOTA);
 #endif
 	switch (token) {
-	case Opt_noacl:
+#ifdef CONFIG_EXT4_FS_RICHACL
+        case Opt_acl:
+                enable_acl(sb);
+                break;
+        case Opt_noacl:
+                disable_acl(sb);
+                break;
+#else
+        case Opt_noacl:
+#endif
 	case Opt_nouser_xattr:
 		ext4_msg(sb, KERN_WARNING, deprecated_msg, opt, "3.5");
 		break;
+#ifdef CONFIG_EXT4_FS_RICHACL
+        case Opt_richacl:
+                enable_richacl(sb);
+                break;
+#endif
 	case Opt_sb:
 		return 1;	/* handled by get_sb_block() */
 	case Opt_removed:
@@ -1592,6 +1663,9 @@ static int parse_options(char *options, struct super_block *sb,
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
 	int token;
+#ifdef CONFIG_EXT4_FS_RICHACL
+        int has_acl = 0, has_richacl = 0;
+#endif
 
 	if (!options)
 		return 1;
@@ -1605,6 +1679,27 @@ static int parse_options(char *options, struct super_block *sb,
 		 */
 		args[0].to = args[0].from = NULL;
 		token = match_token(p, tokens, args);
+
+#ifdef CONFIG_EXT4_FS_RICHACL
+                if (token == Opt_richacl)
+                        has_richacl = 1;
+
+                if (token == Opt_acl)
+                        has_acl = 1;
+
+                if (has_richacl && has_acl) {
+                        ext4_msg(sb, KERN_ERR, "[richacl] EXT4-fs: acl and richacl options");
+                        return 0;
+                }
+
+                if (has_richacl && is_remount) {
+                        ext4_msg(sb, KERN_ERR, "[richacl] EXT4-fs: forbid enabling richacl \
+by remount");
+                        return 0;
+                }
+ #endif
+
+
 		if (handle_mount_opt(sb, p, token, args, journal_devnum,
 				     journal_ioprio, is_remount) < 0)
 			return 0;
@@ -1684,12 +1779,6 @@ static inline void ext4_show_quota_options(struct seq_file *seq,
 
 	if (sbi->s_qf_names[GRPQUOTA])
 		seq_printf(seq, ",grpjquota=%s", sbi->s_qf_names[GRPQUOTA]);
-
-	if (test_opt(sb, USRQUOTA))
-		seq_puts(seq, ",usrquota");
-
-	if (test_opt(sb, GRPQUOTA))
-		seq_puts(seq, ",grpquota");
 #endif
 }
 
@@ -1887,15 +1976,12 @@ int ext4_alloc_flex_bg_array(struct super_block *sb, ext4_group_t ngroup)
 	size = roundup_pow_of_two(size * sizeof(struct flex_groups));
 	new_groups = ext4_kvzalloc(size, GFP_KERNEL);
 	if (!new_groups) {
-		ext4_msg(sb, KERN_ERR, "not enough memory for %d flex groups",
-			 size / (int) sizeof(struct flex_groups));
+		ext4_msg(sb, KERN_ERR, "not enough memory for %d flex groups", size / (int) sizeof(struct flex_groups));
 		return -ENOMEM;
 	}
 
 	if (sbi->s_flex_groups) {
-		memcpy(new_groups, sbi->s_flex_groups,
-		       (sbi->s_flex_groups_allocated *
-			sizeof(struct flex_groups)));
+		memcpy(new_groups, sbi->s_flex_groups, (sbi->s_flex_groups_allocated * sizeof(struct flex_groups)));
 		ext4_kvfree(sbi->s_flex_groups);
 	}
 	sbi->s_flex_groups = new_groups;
@@ -2734,11 +2820,59 @@ static int ext4_run_li_request(struct ext4_li_request *elr)
 	struct super_block *sb;
 	unsigned long timeout = 0;
 	int ret = 0;
+#ifdef CONFIG_MACH_QNAPTS
+	struct ext4_sb_info *sbi;
+	int status;
+#endif
 
 	sb = elr->lr_super;
+	sbi = elr->lr_sbi;
 	ngroups = EXT4_SB(sb)->s_groups_count;
 
 	sb_start_write(sb);
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (elr->lr_next_group == elr->lr_first_group)
+		printk("EXT4-fs (device %s): ext4lazyinit start (start from %u, total %u)\n", sb->s_id, elr->lr_first_group, ngroups - elr->lr_first_group);
+	for (group = elr->lr_next_group; group < ngroups; group++) {
+		gdp = ext4_get_group_desc(sb, group, NULL);
+		if (!gdp) {
+			ret = 1;
+			break;
+		}
+
+		if (!(gdp->bg_flags & cpu_to_le16(EXT4_BG_INODE_ZEROED)))
+			break;
+	}
+	if (group == ngroups)
+		ret = 1;
+	if (!ret) {
+		timeout = jiffies;
+		ret = ext4_init_inode_table(sb, group,
+					    elr->lr_timeout ? 0 : 1);
+		if (elr->lr_timeout == 0 || ((elr->lr_next_group % 10) == 0)) {
+			timeout = (jiffies - timeout) *
+				  elr->lr_sbi->s_li_wait_mult;
+			elr->lr_timeout = timeout;
+		}
+#if 1
+		if (elr->lr_timeout > 2)
+			elr->lr_timeout = 2;
+#endif
+		elr->lr_next_sched = jiffies + elr->lr_timeout;
+		//printk("EXT4-fs (device %s): ext4_run_li_request %lu, %lu, %lu\n", sb->s_id, jiffies, elr->lr_next_sched, elr->lr_timeout);
+		elr->lr_next_group = group + 1;
+		// How about if ext4_init_inode_table returns error?
+		status = ((100 * (group + 1 - elr->lr_first_group)) / (ngroups - elr->lr_first_group));
+		//printk("EXT4-fs (device %s): ext4lazyinit %u (%d%%)\n", sb->s_id, group, status);
+		if (status == 0)
+			status = 1;
+		sbi->lazyinit_status = status;
+	}
+	else {
+		printk("EXT4-fs (device %s): ext4lazyinit finish\n", sb->s_id);
+	}
+#else
 	for (group = elr->lr_next_group; group < ngroups; group++) {
 		gdp = ext4_get_group_desc(sb, group, NULL);
 		if (!gdp) {
@@ -2765,6 +2899,8 @@ static int ext4_run_li_request(struct ext4_li_request *elr)
 		elr->lr_next_sched = jiffies + elr->lr_timeout;
 		elr->lr_next_group = group + 1;
 	}
+#endif
+
 	sb_end_write(sb);
 
 	return ret;
@@ -2777,14 +2913,19 @@ static int ext4_run_li_request(struct ext4_li_request *elr)
 static void ext4_remove_li_request(struct ext4_li_request *elr)
 {
 	struct ext4_sb_info *sbi;
+	struct super_block	*sb;
 
 	if (!elr)
 		return;
 
 	sbi = elr->lr_sbi;
+	sb = elr->lr_super;
 
 	list_del(&elr->lr_request);
 	sbi->s_li_request = NULL;
+#ifdef CONFIG_MACH_QNAPTS
+	sbi->lazyinit_status = 0;
+#endif
 	kfree(elr);
 }
 
@@ -2797,6 +2938,9 @@ static void ext4_unregister_li_request(struct super_block *sb)
 	}
 
 	mutex_lock(&ext4_li_info->li_list_mtx);
+#ifdef CONFIG_MACH_QNAPTS
+	printk("EXT4-fs (device %s): ext4lazyinit exit1\n", sb->s_id);
+#endif
 	ext4_remove_li_request(EXT4_SB(sb)->s_li_request);
 	mutex_unlock(&ext4_li_info->li_list_mtx);
 	mutex_unlock(&ext4_li_mtx);
@@ -2848,10 +2992,16 @@ cont_thread:
 				next_wakeup = elr->lr_next_sched;
 		}
 		mutex_unlock(&eli->li_list_mtx);
+#ifdef CONFIG_MACH_QNAPTS
+		//printk("EXT4-fs: ext4_lazyinit_thread1 %lu\n", next_wakeup);
+#endif
 
 		try_to_freeze();
 
 		cur = jiffies;
+#ifdef CONFIG_MACH_QNAPTS
+		//printk("EXT4-fs: ext4_lazyinit_thread2 %lu\n", cur);
+#endif
 		if ((time_after_eq(cur, next_wakeup)) ||
 		    (MAX_JIFFY_OFFSET == next_wakeup)) {
 			cond_resched();
@@ -2859,6 +3009,14 @@ cont_thread:
 		}
 
 		schedule_timeout_interruptible(next_wakeup - cur);
+#ifdef CONFIG_MACH_QNAPTS
+		//printk("EXT4-fs: ext4_lazyinit_thread3\n");
+#else
+		if (kthread_should_stop()) {
+			ext4_clear_request_list();
+			goto exit_thread;
+		}
+#endif
 
 		if (kthread_should_stop()) {
 			ext4_clear_request_list();
@@ -2899,6 +3057,9 @@ static void ext4_clear_request_list(void)
 	list_for_each_safe(pos, n, &ext4_li_info->li_request_list) {
 		elr = list_entry(pos, struct ext4_li_request,
 				 lr_request);
+#ifdef CONFIG_MACH_QNAPTS
+		printk("EXT4-fs (device %s): ext4lazyinit exit2\n", elr->lr_super->s_id);
+#endif
 		ext4_remove_li_request(elr);
 	}
 	mutex_unlock(&ext4_li_info->li_list_mtx);
@@ -2978,6 +3139,10 @@ static struct ext4_li_request *ext4_li_request_new(struct super_block *sb,
 	elr->lr_sbi = sbi;
 	elr->lr_next_group = start;
 
+#ifdef CONFIG_MACH_QNAPTS
+	elr->lr_first_group = start;
+#endif
+
 	/*
 	 * Randomize first schedule time of the request to
 	 * spread the inode table initialization requests
@@ -2986,6 +3151,9 @@ static struct ext4_li_request *ext4_li_request_new(struct super_block *sb,
 	get_random_bytes(&rnd, sizeof(rnd));
 	elr->lr_next_sched = jiffies + (unsigned long)rnd %
 			     (EXT4_DEF_LI_MAX_START_DELAY * HZ);
+#ifdef CONFIG_MACH_QNAPTS
+	//printk("EXT4-fs (device %s): ext4_li_request_new %lu, %lu\n", sb->s_id, jiffies, elr->lr_next_sched);
+#endif
 
 	return elr;
 }
@@ -3026,6 +3194,9 @@ int ext4_register_li_request(struct super_block *sb,
 	}
 
 	mutex_lock(&ext4_li_info->li_list_mtx);
+#ifdef CONFIG_MACH_QNAPTS
+	sbi->lazyinit_status = 1;
+#endif
 	list_add(&elr->lr_request, &ext4_li_info->li_request_list);
 	mutex_unlock(&ext4_li_info->li_list_mtx);
 
@@ -3042,6 +3213,9 @@ int ext4_register_li_request(struct super_block *sb,
 		if (ret)
 			goto out;
 	}
+#ifdef CONFIG_MACH_QNAPTS
+	//printk("EXT4-fs (device %s): ext4lazyinit start\n", sb->s_id);
+#endif
 out:
 	mutex_unlock(&ext4_li_mtx);
 	if (ret)
@@ -3281,6 +3455,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	if (!sbi)
 		goto out_free_orig;
 
+#ifdef CONFIG_MACH_QNAPTS
+	mutex_init(&sbi->ext4_trim_mtx);
+#endif
+
 	sbi->s_blockgroup_lock =
 		kzalloc(sizeof(struct blockgroup_lock), GFP_KERNEL);
 	if (!sbi->s_blockgroup_lock) {
@@ -3386,7 +3564,11 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	/* xattr user namespace & acls are now defaulted on */
 	set_opt(sb, XATTR_USER);
 #ifdef CONFIG_EXT4_FS_POSIX_ACL
-	set_opt(sb, POSIX_ACL);
+#ifdef CONFIG_EXT4_FS_RICHACL
+        enable_acl(sb);
+#else
+        set_opt(sb, POSIX_ACL);
+#endif
 #endif
 	if ((def_mount_opts & EXT4_DEFM_JMODE) == EXT4_DEFM_JMODE_DATA)
 		set_opt(sb, JOURNAL_DATA);
@@ -3451,15 +3633,18 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		}
 		if (test_opt(sb, DIOREAD_NOLOCK)) {
 			ext4_msg(sb, KERN_ERR, "can't mount with "
-				 "both data=journal and delalloc");
+				 "both data=journal and dioread_nolock");
 			goto failed_mount;
 		}
 		if (test_opt(sb, DELALLOC))
 			clear_opt(sb, DELALLOC);
 	}
 
-	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		(test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+#ifdef CONFIG_EXT4_FS_RICHACL
+#else
+        sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
+                (test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+#endif
 
 	if (le32_to_cpu(es->s_rev_level) == EXT4_GOOD_OLD_REV &&
 	    (EXT4_HAS_COMPAT_FEATURE(sb, ~0U) ||
@@ -3586,10 +3771,6 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_addr_per_block_bits = ilog2(EXT4_ADDR_PER_BLOCK(sb));
 	sbi->s_desc_per_block_bits = ilog2(EXT4_DESC_PER_BLOCK(sb));
 
-	/* Do we have standard group size of blocksize * 8 blocks ? */
-	if (sbi->s_blocks_per_group == blocksize << 3)
-		set_opt2(sb, STD_GROUP_SIZE);
-
 	for (i = 0; i < 4; i++)
 		sbi->s_hash_seed[i] = le32_to_cpu(es->s_hash_seed[i]);
 	sbi->s_def_hash_version = es->s_def_hash_version;
@@ -3658,6 +3839,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		       sbi->s_inodes_per_group);
 		goto failed_mount;
 	}
+
+	/* Do we have standard group size of clustersize * 8 blocks ? */
+	if (sbi->s_blocks_per_group == clustersize << 3)
+		set_opt2(sb, STD_GROUP_SIZE);
 
 	/*
 	 * Test whether we have more sectors than will fit in sector_t,
@@ -3746,6 +3931,9 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		ext4_msg(sb, KERN_ERR, "group descriptors corrupted!");
 		goto failed_mount2;
 	}
+#ifdef CONFIG_MACH_QNAPTS
+	//printk("ext4_fill_super0: %u\n", first_not_zeroed);
+#endif
 	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_FLEX_BG))
 		if (!ext4_fill_flex_info(sb)) {
 			ext4_msg(sb, KERN_ERR,
@@ -3947,6 +4135,14 @@ no_journal:
 		goto failed_mount4;
 	}
 
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    sb->s_root->d_op = &ext4_dentry_operations;
+    sb->s_d_op = &ext4_dentry_operations;
+#endif
+#endif
+
 	if (ext4_setup_super(sb, es, sb->s_flags & MS_RDONLY))
 		sb->s_flags |= MS_RDONLY;
 
@@ -3996,6 +4192,10 @@ no_journal:
 			 err);
 		goto failed_mount5;
 	}
+
+#ifdef CONFIG_MACH_QNAPTS
+	ext4_init_reserve_inode_table(sb, first_not_zeroed);
+#endif
 
 	err = ext4_register_li_request(sb, first_not_zeroed);
 	if (err)
@@ -4652,11 +4852,34 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 		goto restore_opts;
 	}
 
+	if (test_opt(sb, DATA_FLAGS) == EXT4_MOUNT_JOURNAL_DATA) {
+		if (test_opt2(sb, EXPLICIT_DELALLOC)) {
+			ext4_msg(sb, KERN_ERR, "can't mount with "
+				 "both data=journal and delalloc");
+			err = -EINVAL;
+			goto restore_opts;
+		}
+		if (test_opt(sb, DIOREAD_NOLOCK)) {
+			ext4_msg(sb, KERN_ERR, "can't mount with "
+				 "both data=journal and dioread_nolock");
+			err = -EINVAL;
+			goto restore_opts;
+		}
+	}
+
 	if (sbi->s_mount_flags & EXT4_MF_FS_ABORTED)
 		ext4_abort(sb, "Abort forced by user");
 
-	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		(test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+#ifdef CONFIG_EXT4_FS_RICHACL
+        if(sb->s_flags & MS_RICHACL) { // fix bug: -o remount,richacl 
+        } else {
+                sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
+                        (test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+        }
+#else
+        sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
+                (test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
+#endif
 
 	es = sbi->s_es;
 
@@ -4762,6 +4985,9 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	else {
 		ext4_group_t first_not_zeroed;
 		first_not_zeroed = ext4_has_uninit_itable(sb);
+#ifdef CONFIG_MACH_QNAPTS
+		//printk("ext4_remount0: %u\n", first_not_zeroed);
+#endif
 		ext4_register_li_request(sb, first_not_zeroed);
 	}
 
@@ -5406,6 +5632,7 @@ static void __exit ext4_exit_fs(void)
 	kset_unregister(ext4_kset);
 	ext4_exit_system_zone();
 	ext4_exit_pageio();
+	ext4_exit_es();
 }
 
 MODULE_AUTHOR("Remy Card, Stephen Tweedie, Andrew Morton, Andreas Dilger, Theodore Ts'o and others");

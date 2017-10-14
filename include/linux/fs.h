@@ -28,6 +28,7 @@
 #include <linux/percpu-rwsem.h>
 #include <linux/blk_types.h>
 
+#include <linux/net.h>
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
 
@@ -74,6 +75,15 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 #define MAY_CHDIR		0x00000040
 /* called from RCU mode, don't block */
 #define MAY_NOT_BLOCK		0x00000080
+#ifdef CONFIG_FS_RICHACL
+#define MAY_CREATE_FILE         0x00000100
+#define MAY_CREATE_DIR          0x00000200
+#define MAY_DELETE_CHILD        0x00000400
+#define MAY_DELETE_SELF         0x00000800
+#define MAY_TAKE_OWNERSHIP      0x00001000
+#define MAY_CHMOD               0x00002000
+#define MAY_SET_TIMES           0x00004000
+#endif
 
 /*
  * flags in file.f_mode.  Note that FMODE_READ and FMODE_WRITE must correspond
@@ -189,6 +199,31 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 #define WRITE_FLUSH		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_FLUSH)
 #define WRITE_FUA		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_FUA)
 #define WRITE_FLUSH_FUA		(WRITE | REQ_SYNC | REQ_NOIDLE | REQ_FLUSH | REQ_FUA)
+#ifdef QNAP_RICHACL
+#define MS_RICHACL	(1<<25) /* Supports richacls */
+#endif
+#ifdef QNAP_RICHACL
+#ifdef CONFIG_FS_RICHACL
+#define IS_RICHACL(inode)	__IS_FLG(inode, MS_RICHACL)
+#else
+#define IS_RICHACL(inode)	0
+#endif
+#endif
+#ifdef QNAP_RICHACL
+/*
+ * IS_ACL() tells the VFS to not apply the umask
+ * and use check_acl for acl permission checks when defined.
+ */
+#define IS_ACL(inode)		__IS_FLG(inode, MS_POSIXACL | MS_RICHACL)
+#endif
+#ifdef CONFIG_MACH_QNAPTS
+#define FS_IOC32_GETTRIMSTATUS	_IOR('X', 200, int)
+#define FS_IOC_GETTRIMSTATUS	_IOR('X', 200, long)
+#define FS_IOC_TRIMASYNC		_IOW('X', 201, struct fstrim_range)	/* Trim */
+#endif
+//Patch by QNAP:enhance performance from socket to file
+#define MAX_PAGES_PER_RECVFILE 32
+//////////////////////////////////////////////////////
 
 /*
  * Attribute flags.  These should be or-ed together to figure out what
@@ -211,6 +246,11 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 #define ATTR_KILL_PRIV	(1 << 14)
 #define ATTR_OPEN	(1 << 15) /* Truncating from open(O_TRUNC) */
 #define ATTR_TIMES_SET	(1 << 16)
+//Patch by QNAP: fix ext3 birthtime issue
+#ifdef CONFIG_FS_QNAP_BIRTHTIME
+#define ATTR_CREATE_TIME (1 << 17) /* Birth time of file */
+#endif
+///////////////////////////////////////////////////
 
 /*
  * This is the Inode Attributes structure, used for notify_change().  It
@@ -244,7 +284,7 @@ struct iattr {
  */
 #include <linux/quota.h>
 
-/** 
+/**
  * enum positive_aop_returns - aop return codes with specific semantics
  *
  * @AOP_WRITEPAGE_ACTIVATE: Informs the caller that page writeback has
@@ -254,7 +294,7 @@ struct iattr {
  * 			    be a candidate for writeback again in the near
  * 			    future.  Other callers must be careful to unlock
  * 			    the page if they get this return.  Returned by
- * 			    writepage(); 
+ * 			    writepage();
  *
  * @AOP_TRUNCATED_PAGE: The AOP method that was handed a locked page has
  *  			unlocked it and the page might have been truncated.
@@ -507,6 +547,10 @@ static inline int mapping_writably_mapped(struct address_space *mapping)
 #endif
 
 struct posix_acl;
+#ifdef CONFIG_FS_RICHACL
+struct richacl;
+#endif
+
 #define ACL_NOT_CACHED ((void *)(-1))
 
 #define IOP_FASTPERM	0x0001
@@ -525,9 +569,24 @@ struct inode {
 	kgid_t			i_gid;
 	unsigned int		i_flags;
 
+
+#ifdef CONFIG_FS_RICHACL
+	union {
+#ifdef CONFIG_FS_POSIX_ACL
+		struct {
+			struct posix_acl	*i_acl;
+			struct posix_acl	*i_default_acl;
+        	};
+#endif
+#ifdef CONFIG_FS_RICHACL
+		struct richacl	        *i_richacl;
+#endif
+	};
+#else
 #ifdef CONFIG_FS_POSIX_ACL
 	struct posix_acl	*i_acl;
 	struct posix_acl	*i_default_acl;
+#endif
 #endif
 
 	const struct inode_operations	*i_op;
@@ -556,6 +615,11 @@ struct inode {
 	struct timespec		i_atime;
 	struct timespec		i_mtime;
 	struct timespec		i_ctime;
+//Patch by QNAP: fix ext3 birthtime issue
+#ifdef CONFIG_FS_QNAP_BIRTHTIME
+	struct timespec     i_birthtime; /* birth time */
+#endif
+////////////////////////////////////////////
 	spinlock_t		i_lock;	/* i_blocks, i_bytes, maybe i_size */
 	unsigned short          i_bytes;
 	unsigned int		i_blkbits;
@@ -868,10 +932,10 @@ static inline int file_check_writeable(struct file *filp)
 
 #define	MAX_NON_LFS	((1UL<<31) - 1)
 
-/* Page cache limit. The filesystems should put that into their s_maxbytes 
-   limits, otherwise bad things can happen in VM. */ 
+/* Page cache limit. The filesystems should put that into their s_maxbytes
+   limits, otherwise bad things can happen in VM. */
 #if BITS_PER_LONG==32
-#define MAX_LFS_FILESIZE	(((loff_t)PAGE_CACHE_SIZE << (BITS_PER_LONG-1))-1) 
+#define MAX_LFS_FILESIZE	(((loff_t)PAGE_CACHE_SIZE << (BITS_PER_LONG-1))-1)
 #elif BITS_PER_LONG==64
 #define MAX_LFS_FILESIZE 	((loff_t)0x7fffffffffffffffLL)
 #endif
@@ -1458,6 +1522,28 @@ extern int vfs_link(struct dentry *, struct inode *, struct dentry *);
 extern int vfs_rmdir(struct inode *, struct dentry *);
 extern int vfs_unlink(struct inode *, struct dentry *);
 extern int vfs_rename(struct inode *, struct dentry *, struct inode *, struct dentry *);
+#ifdef CONFIG_MACH_QNAPTS
+extern int vfs_create_without_acl(struct inode *, struct dentry *, umode_t, bool);
+extern int vfs_link_without_acl(struct dentry *, struct inode *, struct dentry *);
+extern int vfs_mkdir_without_acl(struct inode *, struct dentry *, umode_t);
+extern int vfs_mknod_without_acl(struct inode *, struct dentry *, umode_t, dev_t);
+extern int vfs_rename_without_acl(struct inode *, struct dentry *, struct inode *, struct dentry *);
+extern int vfs_rmdir_without_acl(struct inode *, struct dentry *);
+extern int vfs_symlink_without_acl(struct inode *, struct dentry *, const char *);
+extern int vfs_unlink_without_acl(struct inode *, struct dentry *);
+#endif
+// QNAP patch: #3782 NFSv4 supports Windows ACL via RichACL -- added by CindyJen@2014.03
+#ifdef CONFIG_FS_RICHACL
+extern int vfs_create_nfsv4_racl(struct inode *, struct dentry *, umode_t, bool);
+extern int vfs_link_nfsv4_racl(struct dentry *, struct inode *, struct dentry *);
+extern int vfs_mkdir_nfsv4_racl(struct inode *, struct dentry *, umode_t);
+extern int vfs_mknod_nfsv4_racl(struct inode *, struct dentry *, umode_t, dev_t);
+extern int vfs_rename_nfsv4_racl(struct inode *, struct dentry *, struct inode *, struct dentry *);
+extern int vfs_rmdir_nfsv4_racl(struct inode *, struct dentry *);
+extern int vfs_symlink_nfsv4_racl(struct inode *, struct dentry *, const char *);
+extern int vfs_unlink_nfsv4_racl(struct inode *, struct dentry *);
+#endif
+// End -- added by CindyJen@2014.03
 
 /*
  * VFS dentry helper functions.
@@ -1476,12 +1562,15 @@ struct fiemap_extent_info {
 	unsigned int fi_flags;		/* Flags as passed from user */
 	unsigned int fi_extents_mapped;	/* Number of mapped extents */
 	unsigned int fi_extents_max;	/* Size of fiemap_extent array */
-	struct fiemap_extent __user *fi_extents_start; /* Start of
-							fiemap_extent array */
+	struct fiemap_extent __user *fi_extents_start; /* Start of fiemap_extent array */
 };
+
 int fiemap_fill_next_extent(struct fiemap_extent_info *info, u64 logical,
 			    u64 phys, u64 len, u32 flags);
 int fiemap_check_flags(struct fiemap_extent_info *fieinfo, u32 fs_flags);
+
+int fiemap_check_ranges(struct super_block *sb,
+                              u64 start, u64 len, u64 *new_len);
 
 /*
  * File types
@@ -1539,6 +1628,9 @@ struct file_operations {
 	int (*flock) (struct file *, int, struct file_lock *);
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
 	ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
+
+	ssize_t (*splice_from_socket)(struct file *file, struct socket *sock,
+					loff_t __user *ppos, size_t count);
 	int (*setlease)(struct file *, long, struct file_lock **);
 	long (*fallocate)(struct file *file, int mode, loff_t offset,
 			  loff_t len);
@@ -1550,6 +1642,10 @@ struct inode_operations {
 	void * (*follow_link) (struct dentry *, struct nameidata *);
 	int (*permission) (struct inode *, int);
 	struct posix_acl * (*get_acl)(struct inode *, int);
+
+#ifdef CONFIG_FS_RICHACL
+        struct richacl * (*get_richacl)(struct inode *);
+#endif
 
 	int (*readlink) (struct dentry *, char __user *,int);
 	void (*put_link) (struct dentry *, struct nameidata *, void *);
@@ -1664,6 +1760,12 @@ struct super_operations {
 #define IS_IMMUTABLE(inode)	((inode)->i_flags & S_IMMUTABLE)
 #define IS_POSIXACL(inode)	__IS_FLG(inode, MS_POSIXACL)
 
+#ifdef CONFIG_FS_RICHACL
+#define IS_RICHACL(inode)       __IS_FLG(inode, MS_RICHACL)
+#else
+#define IS_RICHACL(inode)       0
+#endif
+
 #define IS_DEADDIR(inode)	((inode)->i_flags & S_DEAD)
 #define IS_NOCMTIME(inode)	((inode)->i_flags & S_NOCMTIME)
 #define IS_SWAPFILE(inode)	((inode)->i_flags & S_SWAPFILE)
@@ -1671,6 +1773,14 @@ struct super_operations {
 #define IS_IMA(inode)		((inode)->i_flags & S_IMA)
 #define IS_AUTOMOUNT(inode)	((inode)->i_flags & S_AUTOMOUNT)
 #define IS_NOSEC(inode)		((inode)->i_flags & S_NOSEC)
+
+/*
+ * IS_ACL() tells the VFS to not apply the umask
+ * and use check_acl for acl permission checks when defined.
+ */
+#ifdef CONFIG_FS_RICHACL
+#define IS_ACL(inode)           __IS_FLG(inode, MS_POSIXACL | MS_RICHACL)
+#endif
 
 /*
  * Inode state bits.  Protected by inode->i_lock
@@ -1804,7 +1914,7 @@ int sync_inode_metadata(struct inode *inode, int wait);
 struct file_system_type {
 	const char *name;
 	int fs_flags;
-#define FS_REQUIRES_DEV		1 
+#define FS_REQUIRES_DEV		1
 #define FS_BINARY_MOUNTDATA	2
 #define FS_HAS_SUBTYPE		4
 #define FS_USERNS_MOUNT		8	/* Can be mounted by userns root */
@@ -2208,6 +2318,15 @@ extern sector_t bmap(struct inode *, sector_t);
 #endif
 extern int notify_change(struct dentry *, struct iattr *);
 extern int inode_permission(struct inode *, int);
+#ifdef CONFIG_MACH_QNAPTS
+extern int inode_permission_without_acl(struct inode *, int);
+#endif
+// QNAP patch: #3782 NFSv4 supports Windows ACL via RichACL -- added by CindyJen@2014.03
+#ifdef CONFIG_FS_RICHACL
+extern int inode_permission_nfsv4_racl(struct inode *, int);
+#endif
+
+// End -- added by CindyJen@2014.03
 extern int generic_permission(struct inode *, int);
 
 static inline bool execute_ok(struct inode *inode)
@@ -2300,7 +2419,7 @@ extern int do_pipe_flags(int *, int);
 extern int kernel_read(struct file *, loff_t, char *, unsigned long);
 extern ssize_t kernel_write(struct file *, const char *, size_t, loff_t);
 extern struct file * open_exec(const char *);
- 
+
 /* fs/dcache.c -- generic fs support functions */
 extern int is_subdir(struct dentry *, struct dentry *);
 extern int path_is_under(struct path *, struct path *);
@@ -2570,7 +2689,12 @@ extern int buffer_migrate_page(struct address_space *,
 #define buffer_migrate_page NULL
 #endif
 
+
+#ifdef CONFIG_FS_RICHACL
+extern int inode_change_ok(struct inode *, struct iattr *);
+#else
 extern int inode_change_ok(const struct inode *, struct iattr *);
+#endif
 extern int inode_newsize_ok(const struct inode *, loff_t offset);
 extern void setattr_copy(struct inode *inode, const struct iattr *attr);
 

@@ -40,6 +40,12 @@
 #include "internal.h"
 #include "mount.h"
 
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+//#define CASE_FOLDING_DEBUG
+#endif
+//////////////////////////////////////////////////////////
+
 /*
  * Usage:
  * dcache->d_inode->i_lock protects:
@@ -1249,6 +1255,28 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 	 * will still always have a NUL at the end, even if we might
 	 * be overwriting an internal NUL character
 	 */
+	//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+	dentry->d_iname[DNAME_INLINE_LEN-1] = 0;
+	if ((name->len + 10) > DNAME_INLINE_LEN-1) {
+		dname = kmalloc(name->len + 1 + 10, GFP_KERNEL);
+		if (!dname) {
+			kmem_cache_free(dentry_cache, dentry);
+			return NULL;
+		}
+	}
+#else
+	dentry->d_iname[DNAME_INLINE_LEN-1] = 0;
+	if (name->len > DNAME_INLINE_LEN-1) {
+		dname = kmalloc(name->len + 1, GFP_KERNEL);
+		if (!dname) {
+			kmem_cache_free(dentry_cache, dentry);
+			return NULL;
+		}
+	}
+#endif
+#else
 	dentry->d_iname[DNAME_INLINE_LEN-1] = 0;
 	if (name->len > DNAME_INLINE_LEN-1) {
 		dname = kmalloc(name->len + 1, GFP_KERNEL);
@@ -1256,12 +1284,20 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 			kmem_cache_free(dentry_cache, dentry); 
 			return NULL;
 		}
-	} else  {
+	}
+#endif
+	else  {
 		dname = dentry->d_iname;
 	}	
 
 	dentry->d_name.len = name->len;
 	dentry->d_name.hash = name->hash;
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+	dentry->d_name.case_folding= name->case_folding;
+#endif
+#endif
 	memcpy(dname, name->name, name->len);
 	dname[name->len] = 0;
 
@@ -1334,6 +1370,12 @@ struct dentry *d_alloc_name(struct dentry *parent, const char *name)
 
 	q.name = name;
 	q.len = strlen(name);
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    q.case_folding = 0;
+#endif
+#endif
 	q.hash = full_name_hash(q.name, q.len);
 	return d_alloc(parent, &q);
 }
@@ -1918,6 +1960,15 @@ struct dentry *__d_lookup(const struct dentry *parent, const struct qstr *name)
 	struct hlist_bl_node *node;
 	struct dentry *found = NULL;
 	struct dentry *dentry;
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef CASE_FOLDING_DEBUG
+	int debug = 0;
+	if (strncasecmp(name->name, "test", strlen("test")) == 0)
+		debug = 1;
+#endif
+#endif
+////////////////////////////////////////////
 
 	/*
 	 * Note: There is significant duplication with __d_lookup_rcu which is
@@ -1963,6 +2014,14 @@ struct dentry *__d_lookup(const struct dentry *parent, const struct qstr *name)
 						dentry, dentry->d_inode,
 						tlen, tname, name))
 				goto next;
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef CASE_FOLDING_DEBUG
+			else if (debug)
+				printk("In %s:%d:d_compare successfully, request name = %s,dentry->name = %s,hash = 0x%x\n", __func__, __LINE__, name->name, tname, name->hash);
+#endif
+#endif
+			///////////////////////////////////////////////////////////////////
 		} else {
 			if (dentry->d_name.len != len)
 				goto next;
@@ -2724,6 +2783,17 @@ char *dynamic_dname(struct dentry *dentry, char *buffer, int buflen,
 	return memcpy(buffer, temp, sz);
 }
 
+char *simple_dname(struct dentry *dentry, char *buffer, int buflen)
+{
+	char *end = buffer + buflen;
+	/* these dentries are never renamed, so d_lock is not needed */
+	if (prepend(&end, &buflen, " (deleted)", 11) ||
+	    prepend_name(&end, &buflen, &dentry->d_name) ||
+	    prepend(&end, &buflen, "/", 1))
+		end = ERR_PTR(-ENAMETOOLONG);
+	return end;
+}
+
 /*
  * Write full pathname from the root of the filesystem into the buffer.
  */
@@ -2757,6 +2827,64 @@ static char *__dentry_path(struct dentry *dentry, char *buf, int buflen)
 Elong:
 	return ERR_PTR(-ENAMETOOLONG);
 }
+
+#ifdef CONFIG_MACH_QNAPTS
+char *qnap_dentry_path_raw(struct dentry *dentry, char *buf, int buflen)
+{
+	char *end = buf + buflen;
+	char *retval;
+	struct vfsmount *vmnt;
+	struct mount *mnt, *parent;
+
+	write_seqlock(&rename_lock);
+	prepend(&end, &buflen, "\0", 1);
+	if (buflen < 1)
+		goto Elong;
+	/* Get '/' right */
+	retval = end - 1;
+	*retval = '/';
+
+retry:
+	while (!IS_ROOT(dentry)) {
+		struct dentry *parent = dentry->d_parent;
+		int error;
+
+		prefetch(parent);
+		spin_lock(&dentry->d_lock);
+		//printk("qnap_dentry_path_raw0: 0x%x, %s\n", dentry->d_flags, dentry->d_name.name);
+		error = prepend_name(&end, &buflen, &dentry->d_name);
+		spin_unlock(&dentry->d_lock);
+		if (error != 0 || prepend(&end, &buflen, "/", 1) != 0)
+			goto Elong;
+		retval = end;
+		dentry = parent;
+	}
+	//printk("qnap_dentry_path_raw1: 0x%x, 0x%x, %s\n", dentry, dentry->d_flags, dentry->d_name.name);
+	br_read_lock(&vfsmount_lock);
+	vmnt = qnap_lookup_vfsmount(dentry);
+	br_read_unlock(&vfsmount_lock);
+	if (vmnt) {
+		mnt = real_mount(vmnt);
+		parent = mnt->mnt_parent;
+		dentry = mnt->mnt_mountpoint;
+		//printk("qnap_dentry_path_raw2: 0x%x, 0x%x, %s\n", dentry, dentry->d_flags, dentry->d_name.name);
+		//printk("qnap_dentry_path_raw3: 0x%x, 0x%x\n", mnt, parent);
+		//printk("qnap_dentry_path_raw4: 0x%x, 0x%x, 0x%x\n", mnt->mnt.mnt_root, parent->mnt.mnt_root, parent->mnt_mountpoint);
+		if (dentry != parent->mnt.mnt_root)
+			goto retry;
+		//else
+		//	printk("qnap_dentry_path_raw5: reach real root\n");
+	}
+	//else
+	//	printk("qnap_dentry_path_raw6: qnap_dentry_path_raw failed\n");
+	write_sequnlock(&rename_lock);
+	return retval;
+Elong:
+	write_sequnlock(&rename_lock);
+	return ERR_PTR(-ENAMETOOLONG);
+}
+EXPORT_SYMBOL(qnap_dentry_path_raw);
+#endif
 
 char *dentry_path_raw(struct dentry *dentry, char *buf, int buflen)
 {

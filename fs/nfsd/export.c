@@ -716,6 +716,14 @@ static struct cache_detail svc_export_cache_template = {
 	.alloc		= svc_export_alloc,
 };
 
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+EXPORT_SYMBOL(svc_export_cache_template);
+#endif	//QNAP_FNOTIFY
+#endif
+/////////////////////////////////////
+
 static int
 svc_export_hash(struct svc_export *exp)
 {

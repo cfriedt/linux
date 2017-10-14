@@ -1,8 +1,8 @@
 VERSION = 3
 PATCHLEVEL = 10
-SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Unicycling Gorilla
+SUBLEVEL = 20
+EXTRAVERSION = -al-2.5.3
+NAME = TOSSUG Baby Fish
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -836,6 +836,8 @@ prepare0: archprepare FORCE
 
 # All the preparing..
 prepare: prepare0
+# QNAP Patch
+	$(Q)ln -fsn $(srctree)/include/generated/autoconf.h include/linux/autoconf.h
 
 # Generate some files
 # ---------------------------------------------------------------------------

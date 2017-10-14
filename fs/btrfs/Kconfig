@@ -72,3 +72,11 @@ config BTRFS_DEBUG
 	  performance, or export extra information via sysfs.
 
 	  If unsure, say N.
+
+config BTRFS_FS_AHASH_CRC
+	bool "Btrfs with async CRC hash"
+	default n
+	depends on BTRFS_FS
+	help
+	  Use asynchronous CRC hash when calculating checksum for
+	  data.

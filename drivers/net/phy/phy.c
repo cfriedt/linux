@@ -295,6 +295,11 @@ int phy_ethtool_gset(struct phy_device *phydev, struct ethtool_cmd *cmd)
 	cmd->port = PORT_MII;
 	cmd->phy_address = phydev->addr;
 	cmd->transceiver = XCVR_EXTERNAL;
+#ifdef CONFIG_MACH_QNAPTS
+	cmd->transceiver = XCVR_INTERNAL;
+#endif
+////////////////////////////////////
+
 	cmd->autoneg = phydev->autoneg;
 
 	return 0;

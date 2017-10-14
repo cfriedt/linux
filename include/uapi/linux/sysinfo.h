@@ -4,6 +4,13 @@
 #include <linux/types.h>
 
 #define SI_LOAD_SHIFT	16
+
+//Patch by QNAP:Fix WFM2 build fail
+#if !defined(__KERNEL__) && !defined(__ASM_GENERIC_POSIX_TYPES_H)
+typedef long __kernel_long_t;
+typedef unsigned long __kernel_ulong_t;
+#endif
+//////////////////////////////
 struct sysinfo {
 	__kernel_long_t uptime;		/* Seconds since boot */
 	__kernel_ulong_t loads[3];	/* 1, 5, and 15 minute load averages */

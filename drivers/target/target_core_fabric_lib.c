@@ -4,7 +4,8 @@
  * This file contains generic high level protocol identifier and PR
  * handlers for TCM fabric modules
  *
- * (c) Copyright 2010-2012 RisingTide Systems LLC.
+ * Copyright (c) 2010 Rising Tide Systems, Inc.
+ * Copyright (c) 2010 Linux-iSCSI.org
  *
  * Nicholas A. Bellinger <nab@linux-iscsi.org>
  *
@@ -337,7 +338,7 @@ u32 iscsi_get_pr_transport_id_len(
 	 * 00b: iSCSI Initiator device TransportID format
 	 */
 	if (pr_reg->isid_present_at_reg) {
-		len += 5; /* For ",i,0x" ASCII separator */
+		len += 5; /* For ",i,0x" ASCII seperator */
 		len += 7; /* For iSCSI Initiator Session ID + Null terminator */
 		*format_code = 1;
 	} else
@@ -414,20 +415,20 @@ char *iscsi_parse_pr_out_transport_id(
 			*out_tid_len = (add_len + 4);
 	}
 	/*
-	 * Check for ',i,0x' separator between iSCSI Name and iSCSI Initiator
+	 * Check for ',i,0x' seperator between iSCSI Name and iSCSI Initiator
 	 * Session ID as defined in Table 390 - iSCSI initiator port TransportID
 	 * format.
 	 */
 	if (format_code == 0x40) {
 		p = strstr(&buf[4], ",i,0x");
 		if (!p) {
-			pr_err("Unable to locate \",i,0x\" separator"
+			pr_err("Unable to locate \",i,0x\" seperator"
 				" for Initiator port identifier: %s\n",
 				&buf[4]);
 			return NULL;
 		}
 		*p = '\0'; /* Terminate iSCSI Name */
-		p += 5; /* Skip over ",i,0x" separator */
+		p += 5; /* Skip over ",i,0x" seperator */
 
 		*port_nexus_ptr = p;
 		/*

@@ -1,4 +1,4 @@
-/* $Id: hysdn_net.c,v 1.8.6.4 2001/09/23 22:24:54 kai Exp $
+/* $Id: hysdn_net.c,v 1.1.1.1 2014/03/19 14:07:31 franklee Exp $
  *
  * Linux driver for HYSDN cards, net (ethernet type) handling routines.
  *

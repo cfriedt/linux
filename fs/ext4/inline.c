@@ -1374,7 +1374,16 @@ int htree_inlinedir_to_tree(struct file *dir_file,
 			}
 		}
 
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+		ext4fs_dirhash(de->name, de->name_len, hinfo, ntohl(EXT4_SB(dir->i_sb)->s_es->s_hash_magic) == QNAP_SB_HASH);
+#else
 		ext4fs_dirhash(de->name, de->name_len, hinfo);
+#endif
+#else
+		ext4fs_dirhash(de->name, de->name_len, hinfo);
+#endif
+
 		if ((hinfo->hash < start_hash) ||
 		    ((hinfo->hash == start_hash) &&
 		     (hinfo->minor_hash < start_minor_hash)))
@@ -1618,10 +1627,24 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+struct buffer_head *ext4_find_inline_entry(struct inode *dir,
+					const struct qstr *d_name,
+					struct ext4_dir_entry_2 **res_dir,
+					int *has_inline_data, int case_sensitive)
+#else
 struct buffer_head *ext4_find_inline_entry(struct inode *dir,
 					const struct qstr *d_name,
 					struct ext4_dir_entry_2 **res_dir,
 					int *has_inline_data)
+#endif
+#else
+struct buffer_head *ext4_find_inline_entry(struct inode *dir,
+					const struct qstr *d_name,
+					struct ext4_dir_entry_2 **res_dir,
+					int *has_inline_data)
+#endif
 {
 	int ret;
 	struct ext4_iloc iloc;
@@ -1640,8 +1663,18 @@ struct buffer_head *ext4_find_inline_entry(struct inode *dir,
 	inline_start = (void *)ext4_raw_inode(&iloc)->i_block +
 						EXT4_INLINE_DOTDOT_SIZE;
 	inline_size = EXT4_MIN_INLINE_DATA_SIZE - EXT4_INLINE_DOTDOT_SIZE;
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+	ret = search_dir(iloc.bh, inline_start, inline_size,
+			 dir, d_name, 0, res_dir, case_sensitive);
+#else
 	ret = search_dir(iloc.bh, inline_start, inline_size,
 			 dir, d_name, 0, res_dir);
+#endif
+#else
+	ret = search_dir(iloc.bh, inline_start, inline_size,
+			 dir, d_name, 0, res_dir);
+#endif
 	if (ret == 1)
 		goto out_find;
 	if (ret < 0)
@@ -1653,8 +1686,19 @@ struct buffer_head *ext4_find_inline_entry(struct inode *dir,
 	inline_start = ext4_get_inline_xattr_pos(dir, &iloc);
 	inline_size = ext4_get_inline_size(dir) - EXT4_MIN_INLINE_DATA_SIZE;
 
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+	ret = search_dir(iloc.bh, inline_start, inline_size,
+			 dir, d_name, 0, res_dir, case_sensitive);
+#else
 	ret = search_dir(iloc.bh, inline_start, inline_size,
 			 dir, d_name, 0, res_dir);
+#endif
+#else
+	ret = search_dir(iloc.bh, inline_start, inline_size,
+			 dir, d_name, 0, res_dir);
+#endif
+
 	if (ret == 1)
 		goto out_find;
 
@@ -1842,7 +1886,7 @@ int ext4_inline_data_fiemap(struct inode *inode,
 	if (error)
 		goto out;
 
-	physical = iloc.bh->b_blocknr << inode->i_sb->s_blocksize_bits;
+	physical = (__u64)iloc.bh->b_blocknr << inode->i_sb->s_blocksize_bits;
 	physical += (char *)ext4_raw_inode(&iloc) - iloc.bh->b_data;
 	physical += offsetof(struct ext4_inode, i_block);
 	length = i_size_read(inode);

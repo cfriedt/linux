@@ -17,6 +17,9 @@
 #include <linux/prefetch.h>
 #include <linux/buffer_head.h> /* for inode_has_buffers */
 #include <linux/ratelimit.h>
+#ifdef CONFIG_FS_RICHACL
+#include <linux/richacl.h>
+#endif
 #include "internal.h"
 
 /*
@@ -113,6 +116,10 @@ int proc_nr_inodes(ctl_table *table, int write,
 }
 #endif
 
+#include <linux/moduleparam.h>
+static int fshighmem = 1;
+core_param(fshighmem, fshighmem, int, 0444);
+
 /**
  * inode_init_always - perform inode structure intialisation
  * @sb: superblock inode belongs to
@@ -164,7 +171,10 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	mapping->a_ops = &empty_aops;
 	mapping->host = inode;
 	mapping->flags = 0;
-	mapping_set_gfp_mask(mapping, GFP_HIGHUSER_MOVABLE);
+	if (fshighmem)
+		mapping_set_gfp_mask(mapping, GFP_HIGHUSER_MOVABLE);
+	else
+		mapping_set_gfp_mask(mapping, GFP_USER | __GFP_MOVABLE);
 	mapping->private_data = NULL;
 	mapping->backing_dev_info = &default_backing_dev_info;
 	mapping->writeback_index = 0;
@@ -183,8 +193,14 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_private = NULL;
 	inode->i_mapping = mapping;
 	INIT_HLIST_HEAD(&inode->i_dentry);	/* buggered by rcu freeing */
+
 #ifdef CONFIG_FS_POSIX_ACL
-	inode->i_acl = inode->i_default_acl = ACL_NOT_CACHED;
+        if (IS_POSIXACL(inode))
+                inode->i_acl = inode->i_default_acl = ACL_NOT_CACHED;
+#endif
+#ifdef CONFIG_FS_RICHACL
+        if (IS_RICHACL(inode))
+            inode->i_richacl = ACL_NOT_CACHED;
 #endif
 
 #ifdef CONFIG_FSNOTIFY
@@ -239,11 +255,20 @@ void __destroy_inode(struct inode *inode)
 	}
 
 #ifdef CONFIG_FS_POSIX_ACL
-	if (inode->i_acl && inode->i_acl != ACL_NOT_CACHED)
-		posix_acl_release(inode->i_acl);
-	if (inode->i_default_acl && inode->i_default_acl != ACL_NOT_CACHED)
-		posix_acl_release(inode->i_default_acl);
+        if (IS_POSIXACL(inode)) {
+                if (inode->i_acl && inode->i_acl != ACL_NOT_CACHED)
+                        posix_acl_release(inode->i_acl);
+                if (inode->i_default_acl && inode->i_default_acl != ACL_NOT_CACHED)
+                        posix_acl_release(inode->i_default_acl);
+        }
 #endif
+#ifdef CONFIG_FS_RICHACL
+        if (IS_RICHACL(inode)) {
+                if (inode->i_richacl && inode->i_richacl != ACL_NOT_CACHED)
+                        richacl_put(inode->i_richacl);
+        }
+#endif
+
 	this_cpu_dec(nr_inodes);
 }
 EXPORT_SYMBOL(__destroy_inode);

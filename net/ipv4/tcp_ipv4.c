@@ -1277,6 +1277,11 @@ struct request_sock_ops tcp_request_sock_ops __read_mostly = {
 	.send_reset	=	tcp_v4_send_reset,
 	.syn_ack_timeout = 	tcp_syn_ack_timeout,
 };
+//Patch by QNAP: Add IP filter
+#ifdef CONFIG_MACH_QNAPTS
+	extern int is_filtered_by_ipsec_rules(struct sk_buff *skb);
+#endif
+////////////////////////////////////////////////////////////
 
 #ifdef CONFIG_TCP_MD5SIG
 static const struct tcp_request_sock_ops tcp_request_sock_ipv4_ops = {
@@ -1482,6 +1487,15 @@ int tcp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	/* Never answer to SYNs send to broadcast or multicast */
 	if (skb_rtable(skb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST))
 		goto drop;
+//Patch by QNAP: Add IP filter
+#ifdef CONFIG_MACH_QNAPTS
+	// added by Jeff on 2007/3/30 for ipsec
+	// all hosts requesting to connect should compliant ipsec rules
+	if( is_filtered_by_ipsec_rules(skb))
+		goto drop;
+	// end added
+#endif
+///////////////////////////////////////////////////////////
 
 	/* TW buckets are converted to open requests without
 	 * limitations, they conserve resources and peer is
@@ -2026,7 +2040,7 @@ process:
 	if (!sock_owned_by_user(sk)) {
 #ifdef CONFIG_NET_DMA
 		struct tcp_sock *tp = tcp_sk(sk);
-		if (!tp->ucopy.dma_chan && tp->ucopy.pinned_list)
+		if (!tp->ucopy.dma_chan && tp->ucopy.pinned)
 			tp->ucopy.dma_chan = net_dma_find_channel();
 		if (tp->ucopy.dma_chan)
 			ret = tcp_v4_do_rcv(sk, skb);
@@ -2197,6 +2211,7 @@ void tcp_v4_destroy_sock(struct sock *sk)
 #ifdef CONFIG_NET_DMA
 	/* Cleans up our sk_async_wait_queue */
 	__skb_queue_purge(&sk->sk_async_wait_queue);
+	dma_free_iovec_data(tp);
 #endif
 
 	/* Clean prequeue, it must be empty really */

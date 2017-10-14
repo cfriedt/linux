@@ -46,7 +46,10 @@
  */
 
 /*
- * $Log: sun3_NCR5380.c,v $
+ * $Log: sun3_scsi.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:43  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #define AUTOSENSE

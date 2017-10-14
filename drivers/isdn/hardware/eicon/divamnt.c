@@ -1,4 +1,4 @@
-/* $Id: divamnt.c,v 1.32.6.10 2005/02/11 19:40:25 armin Exp $
+/* $Id: divamnt.c,v 1.1.1.1 2014/03/19 14:07:33 franklee Exp $
  *
  * Driver for Eicon DIVA Server ISDN cards.
  * Maint module
@@ -23,7 +23,7 @@
 #include "debug_if.h"
 
 static DEFINE_MUTEX(maint_mutex);
-static char *main_revision = "$Revision: 1.32.6.10 $";
+static char *main_revision = "$Revision: 1.1.1.1 $";
 
 static int major;
 

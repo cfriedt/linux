@@ -13,9 +13,12 @@
  * General Public License for more details.
  *
  *
- * $Id: aha152x.c,v 2.7 2004/01/24 11:42:59 fischer Exp $
+ * $Id: aha152x.c,v 1.1.1.1 2014/03/19 14:02:41 franklee Exp $
  *
  * $Log: aha152x.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:41  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  * Revision 2.7  2004/01/24 11:42:59  fischer
  * - gather code that is not used by PCMCIA at the end
  * - move request_region for !PCMCIA case to detection

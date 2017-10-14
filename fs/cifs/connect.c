@@ -150,6 +150,10 @@ static const match_table_t cifs_mount_option_tokens = {
 	{ Opt_intr, "intr" },
 	{ Opt_nostrictsync, "nostrictsync" },
 	{ Opt_strictsync, "strictsync" },
+	// Kevin Liao 20120821: Add this for backward compatibility
+#ifdef CONFIG_MACH_QNAPTS
+	{ Opt_strictsync, "sync" },
+#endif
 	{ Opt_serverino, "serverino" },
 	{ Opt_noserverino, "noserverino" },
 	{ Opt_rwpidforward, "rwpidforward" },
@@ -377,6 +381,7 @@ cifs_reconnect(struct TCP_Server_Info *server)
 		try_to_freeze();
 
 		/* we should try only the port we connected to before */
+		mutex_lock(&server->srv_mutex);
 		rc = generic_ip_connect(server);
 		if (rc) {
 			cifs_dbg(FYI, "reconnect error %d\n", rc);
@@ -388,6 +393,7 @@ cifs_reconnect(struct TCP_Server_Info *server)
 				server->tcpStatus = CifsNeedNegotiate;
 			spin_unlock(&GlobalMid_Lock);
 		}
+		mutex_unlock(&server->srv_mutex);
 	} while (server->tcpStatus == CifsNeedReconnect);
 
 	return rc;
@@ -1662,7 +1668,8 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 			if (string == NULL)
 				goto out_nomem;
 
-			if (strnlen(string, 256) == 256) {
+			if (strnlen(string, CIFS_MAX_DOMAINNAME_LEN)
+					== CIFS_MAX_DOMAINNAME_LEN) {
 				printk(KERN_WARNING "CIFS: domain name too"
 						    " long\n");
 				goto cifs_parse_mount_err;
@@ -1822,6 +1829,37 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 		printk(KERN_ERR "CIFS: Unknown mount option \"%s\"\n", invalid);
 		goto cifs_parse_mount_err;
 	}
+
+	// Kevin Liao 20120820: This is borrowed from 3.2 kernel to parse the UNC properly
+#ifdef CONFIG_MACH_QNAPTS
+	if (vol->UNC == NULL) {
+		if (devname == NULL) {
+			printk(KERN_WARNING "CIFS: Missing UNC name for mount "
+						"target\n");
+			goto cifs_parse_mount_err;
+		}
+		if ((temp_len = strnlen(devname, 300)) < 300) {
+			vol->UNC = kmalloc(temp_len+1, GFP_KERNEL);
+			if (vol->UNC == NULL)
+				goto cifs_parse_mount_err;
+			strcpy(vol->UNC, devname);
+			if (strncmp(vol->UNC, "//", 2) == 0) {
+				vol->UNC[0] = '\\';
+				vol->UNC[1] = '\\';
+			} else if (strncmp(vol->UNC, "\\\\", 2) != 0) {
+				printk(KERN_WARNING "CIFS: UNC Path does not "
+						    "begin with // or \\\\ \n");
+				goto cifs_parse_mount_err;
+			}
+			value = strpbrk(vol->UNC+2, "/\\");
+			if (value)
+				*value = '\\';
+		} else {
+			printk(KERN_WARNING "CIFS: UNC name too long\n");
+			goto cifs_parse_mount_err;
+		}
+	}
+#endif
 
 #ifndef CONFIG_KEYS
 	/* Muliuser mounts require CONFIG_KEYS support */
@@ -2288,8 +2326,8 @@ cifs_put_smb_ses(struct cifs_ses *ses)
 
 #ifdef CONFIG_KEYS
 
-/* strlen("cifs:a:") + INET6_ADDRSTRLEN + 1 */
-#define CIFSCREDS_DESC_SIZE (7 + INET6_ADDRSTRLEN + 1)
+/* strlen("cifs:a:") + CIFS_MAX_DOMAINNAME_LEN + 1 */
+#define CIFSCREDS_DESC_SIZE (7 + CIFS_MAX_DOMAINNAME_LEN + 1)
 
 /* Populate username and pw fields from keyring if possible */
 static int
@@ -2490,6 +2528,14 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 		if (!ses->domainName)
 			goto get_ses_fail;
 	}
+#ifdef CONFIG_MACH_QNAPTS
+	/* for File Station remote mount */
+	if (volume_info->source_rfc1001_name) {
+		ses->netbiosName = kstrdup(volume_info->source_rfc1001_name, GFP_KERNEL);
+		if (!ses->netbiosName)
+			goto get_ses_fail;
+	}
+#endif
 	ses->cred_uid = volume_info->cred_uid;
 	ses->linux_uid = volume_info->linux_uid;
 
@@ -2989,6 +3035,10 @@ generic_ip_connect(struct TCP_Server_Info *server)
 	socket->sk->sk_rcvtimeo = 7 * HZ;
 	socket->sk->sk_sndtimeo = 5 * HZ;
 
+#ifdef CONFIG_MACH_QNAPTS
+	socket->sk->sk_sndbuf = 32768;
+	socket->sk->sk_userlocks |= SOCK_SNDBUF_LOCK;
+#else
 	/* make the bufsizes depend on wsize/rsize and max requests */
 	if (server->noautotune) {
 		if (socket->sk->sk_sndbuf < (200 * 1024))
@@ -2996,6 +3046,7 @@ generic_ip_connect(struct TCP_Server_Info *server)
 		if (socket->sk->sk_rcvbuf < (140 * 1024))
 			socket->sk->sk_rcvbuf = 140 * 1024;
 	}
+#endif
 
 	if (server->tcp_nodelay) {
 		int val = 1;

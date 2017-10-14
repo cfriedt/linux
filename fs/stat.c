@@ -31,6 +31,19 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
 	stat->atime = inode->i_atime;
 	stat->mtime = inode->i_mtime;
 	stat->ctime = inode->i_ctime;
+//Patch by QNAP: fix ext3 birthtime issue
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef CONFIG_FS_QNAP_BIRTHTIME
+	/* This statement should be
+	 * stat->birthtime = inode->i_birthtime
+	 * logically, but that doesn't work in TS-109/209/409.
+	 * So we use this statement instead.
+	 */
+	stat->ctime.tv_nsec = inode->i_birthtime.tv_sec;
+	stat->birthtime = inode->i_birthtime;
+#endif    
+#endif
+/////////////////////////////////////////////////
 	stat->blksize = (1 << inode->i_blkbits);
 	stat->blocks = inode->i_blocks;
 }

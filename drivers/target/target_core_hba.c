@@ -3,7 +3,10 @@
  *
  * This file contains the TCM HBA Transport related functions.
  *
- * (c) Copyright 2003-2012 RisingTide Systems LLC.
+ * Copyright (c) 2003, 2004, 2005 PyX Technologies, Inc.
+ * Copyright (c) 2005, 2006, 2007 SBE, Inc.
+ * Copyright (c) 2007-2010 Rising Tide Systems
+ * Copyright (c) 2008-2010 Linux-iSCSI.org
  *
  * Nicholas A. Bellinger <nab@kernel.org>
  *
@@ -38,6 +41,13 @@
 #include <target/target_core_fabric.h>
 
 #include "target_core_internal.h"
+
+//
+//
+#if defined(CONFIG_MACH_QNAPTS) && defined(SUPPORT_VAAI) //Benjamin 20121105 sync VAAI support from Adam. 
+#include "vaai_def.h"
+#include "vaai_helper.h"
+#endif
 
 static LIST_HEAD(subsystem_list);
 static DEFINE_MUTEX(subsystem_mutex);
@@ -110,6 +120,7 @@ core_alloc_hba(const char *plugin_name, u32 plugin_dep_id, u32 hba_flags)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	INIT_LIST_HEAD(&hba->hba_dev_list);
 	spin_lock_init(&hba->device_lock);
 	mutex_init(&hba->hba_access_mutex);
 
@@ -148,7 +159,8 @@ out_free_hba:
 int
 core_delete_hba(struct se_hba *hba)
 {
-	WARN_ON(hba->dev_count);
+	if (!list_empty(&hba->hba_dev_list))
+		dump_stack();
 
 	hba->transport->detach_hba(hba);
 
@@ -166,3 +178,71 @@ core_delete_hba(struct se_hba *hba)
 	kfree(hba);
 	return 0;
 }
+
+#ifdef CONFIG_MACH_QNAPTS	// Benjamin 20120720 for supporting Eric Gu for VMWare 5.0 certification
+void core_enumerate_hba_for_deregister_session(struct se_session *se_sess)
+{
+    struct se_device *dev, *dev_tmp;
+    struct se_hba *hba;
+    unsigned long flags;
+
+    // Benjamin 20120719: Add spin lock for se_global->g_hba_list
+    spin_lock_irqsave(&hba_lock, flags);
+
+    list_for_each_entry(hba, &hba_list, hba_node)
+    {
+        // Benjamin 20120719: Add spin lock for hba->hba_dev_list
+        spin_lock(&hba->device_lock);
+    
+        list_for_each_entry_safe(dev, dev_tmp, &hba->hba_dev_list, dev_list) 
+        {
+            spin_lock(&dev->dev_reservation_lock);
+            if (dev->dev_reserved_node_acl)
+            {
+                if (dev->dev_reserved_node_acl == se_sess->se_node_acl)
+                {
+                    dev->dev_reserved_node_acl = NULL;
+                    dev->dev_flags &= ~DF_SPC2_RESERVATIONS;
+                    if (dev->dev_flags & DF_SPC2_RESERVATIONS_WITH_ISID) 
+                    {
+                        dev->dev_res_bin_isid = 0;
+                        dev->dev_flags &= ~DF_SPC2_RESERVATIONS_WITH_ISID;
+                    }
+                }
+            }
+            spin_unlock(&dev->dev_reservation_lock);
+        }
+        // Benjamin 20120719: Add spin lock for hba->hba_dev_list
+        spin_unlock(&hba->device_lock);            
+    }
+    // Benjamin 20120719: Add spin lock for se_global->g_hba_list
+	spin_unlock_irqrestore(&hba_lock, flags);
+}
+#endif 
+
+#if defined(CONFIG_MACH_QNAPTS) && defined(SUPPORT_VAAI) //Benjamin 20121105 sync VAAI support from Adam. 
+/*
+ * @fn list_head *vaai_get_hba_list_var(void)
+ * @brief Get the pointer address of hba_list variable
+ *
+ * @sa
+ * @retval pointer for hba_list variable
+ */
+struct list_head *vaai_get_hba_list_var(void)
+{
+    return &hba_list;
+}
+
+/*
+ * @fn void *vaai_get_hba_lock_var(void)
+ * @brief Get the pointer address of hba_lock variable
+ *
+ * @sa
+ * @retval pointer for hba_lock variable
+ */
+void *vaai_get_hba_lock_var(void)
+{
+    return (void*)&hba_lock;
+}
+#endif
+

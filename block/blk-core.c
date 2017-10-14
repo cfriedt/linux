@@ -173,10 +173,15 @@ static void req_bio_endio(struct request *rq, struct bio *bio,
 void blk_dump_rq_flags(struct request *rq, char *msg)
 {
 	int bit;
-
+#ifdef CONFIG_MACH_QNAPTS
+	printk(KERN_INFO "%s: dev %s: type=%x, flags=%llx\n", msg,
+		rq->rq_disk ? rq->rq_disk->disk_name : "?", rq->cmd_type,
+		(unsigned long long)rq->cmd_flags);
+#else
 	printk(KERN_INFO "%s: dev %s: type=%x, flags=%x\n", msg,
 		rq->rq_disk ? rq->rq_disk->disk_name : "?", rq->cmd_type,
 		rq->cmd_flags);
+#endif
 
 	printk(KERN_INFO "  sector %llu, nr/cnr %u/%u\n",
 	       (unsigned long long)blk_rq_pos(rq),
@@ -634,6 +639,7 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 	 * override it later if need be.
 	 */
 	q->queue_lock = &q->__queue_lock;
+	q->thindata = NULL;
 
 	/*
 	 * A queue starts its life with bypass turned on to avoid

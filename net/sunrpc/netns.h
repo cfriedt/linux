@@ -23,6 +23,7 @@ struct sunrpc_net {
 	struct rpc_clnt *rpcb_local_clnt4;
 	spinlock_t rpcb_clnt_lock;
 	unsigned int rpcb_users;
+	unsigned int rpcb_is_af_local : 1;
 
 	struct mutex gssp_lock;
 	wait_queue_head_t gssp_wq;
@@ -33,6 +34,10 @@ struct sunrpc_net {
 	struct proc_dir_entry *use_gssp_proc;
 
 	unsigned int gssd_running;
+#ifdef CONFIG_MACH_QNAPTS
+	struct proc_dir_entry *proc_net_rpc_tcp_payload;
+	struct proc_dir_entry *proc_net_rpc_udp_payload;
+#endif
 };
 
 extern int sunrpc_net_id;

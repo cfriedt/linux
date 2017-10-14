@@ -407,6 +407,16 @@
 #define __NR_kcmp			(__NR_SYSCALL_BASE+378)
 #define __NR_finit_module		(__NR_SYSCALL_BASE+379)
 
+//Patch by QNAP: Add IP filter
+//Patch by QNAP: Add for recycle_bin feature
+#define __NR_set_ipsec_rules            (__NR_SYSCALL_BASE+380)
+#define __NR_get_ipsec_vio_acc_list     (__NR_SYSCALL_BASE+381)
+#define __NR_qnap_rmdir                 (__NR_SYSCALL_BASE+382)
+#define __NR_qnap_unlink                (__NR_SYSCALL_BASE+383)
+#define __NR_qnap_find_filename         (__NR_SYSCALL_BASE+384)
+///////////////////////////////////////////////////////////////
+
+
 /*
  * This may need to be greater than __NR_last_syscall+1 in order to
  * account for the padding in the syscall table

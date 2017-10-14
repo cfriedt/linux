@@ -1104,11 +1104,11 @@ static unsigned long dirty_poll_interval(unsigned long dirty,
 	return 1;
 }
 
-static long bdi_max_pause(struct backing_dev_info *bdi,
-			  unsigned long bdi_dirty)
+static unsigned long bdi_max_pause(struct backing_dev_info *bdi,
+				   unsigned long bdi_dirty)
 {
-	long bw = bdi->avg_write_bandwidth;
-	long t;
+	unsigned long bw = bdi->avg_write_bandwidth;
+	unsigned long t;
 
 	/*
 	 * Limit pause time for small memory systems. If sleeping for too long
@@ -1120,7 +1120,7 @@ static long bdi_max_pause(struct backing_dev_info *bdi,
 	t = bdi_dirty / (1 + bw / roundup_pow_of_two(1 + HZ / 8));
 	t++;
 
-	return min_t(long, t, MAX_PAUSE);
+	return min_t(unsigned long, t, MAX_PAUSE);
 }
 
 static long bdi_min_pause(struct backing_dev_info *bdi,
@@ -1747,7 +1747,7 @@ int write_cache_pages(struct address_space *mapping,
 			cycled = 1;
 		else
 			cycled = 0;
-		end = -1;
+		end = PGOFF_MAX;
 	} else {
 		index = wbc->range_start >> PAGE_CACHE_SHIFT;
 		end = wbc->range_end >> PAGE_CACHE_SHIFT;
@@ -1924,6 +1924,28 @@ int do_writepages(struct address_space *mapping, struct writeback_control *wbc)
 
 	if (wbc->nr_to_write <= 0)
 		return 0;
+
+//George Wu, 20130721, blkdev_writepages
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef USE_BLKDEV_WRITEPAGES
+	if (mapping->host)
+	{
+		// Kevin Liao 20130814: Make sure the inode is block device so that i_bdev is valid and it's safe to use it
+	    if (S_ISBLK(mapping->host->i_mode) && mapping->host->i_bdev)
+    	{
+	  	    if (mapping->host->i_bdev->bd_disk)
+  	    	{
+		        if (mapping->host->i_bdev->bd_disk->flags & GENHD_FL_MPAGE)
+	        	{
+			        ret = blkdev_writepages(mapping, wbc);
+                    return ret;
+	        	}
+  	    	}
+    	}
+	}
+#endif
+#endif
+
 	if (mapping->a_ops->writepages)
 		ret = mapping->a_ops->writepages(mapping, wbc);
 	else

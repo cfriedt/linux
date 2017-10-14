@@ -45,6 +45,7 @@
 #include "compat.h"
 #include "ctree.h"
 #include "disk-io.h"
+#include "csum.h"
 #include "transaction.h"
 #include "btrfs_inode.h"
 #include "print-tree.h"
@@ -2828,20 +2829,20 @@ static int btrfs_readpage_end_io_hook(struct page *page, u64 start, u64 end,
 	} else {
 		ret = get_state_private(io_tree, start, &private);
 	}
-	kaddr = kmap_atomic(page);
+
 	if (ret)
 		goto zeroit;
 
-	csum = btrfs_csum_data(kaddr + offset, csum,  end - start + 1);
-	btrfs_csum_final(csum, (char *)&csum);
+	btrfs_csum_page_digest(page, offset, end - start + 1, &csum);
+
 	if (csum != private)
 		goto zeroit;
 
-	kunmap_atomic(kaddr);
 good:
 	return 0;
 
 zeroit:
+	kaddr = kmap_atomic(page);
 	if (__ratelimit(&_rs))
 		btrfs_info(root->fs_info, "csum failed ino %llu off %llu csum %u private %llu",
 			(unsigned long long)btrfs_ino(page->mapping->host),
@@ -8146,7 +8147,7 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 
 
 	/* check for collisions, even if the  name isn't there */
-	ret = btrfs_check_dir_item_collision(root, new_dir->i_ino,
+	ret = btrfs_check_dir_item_collision(dest, new_dir->i_ino,
 			     new_dentry->d_name.name,
 			     new_dentry->d_name.len);
 

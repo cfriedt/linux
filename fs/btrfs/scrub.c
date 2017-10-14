@@ -21,6 +21,7 @@
 #include "ctree.h"
 #include "volumes.h"
 #include "disk-io.h"
+#include "csum.h"
 #include "ordered-data.h"
 #include "transaction.h"
 #include "backref.h"
@@ -1652,11 +1653,11 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 	u8 csum[BTRFS_CSUM_SIZE];
 	u8 *on_disk_csum;
 	struct page *page;
-	void *buffer;
 	u32 crc = ~(u32)0;
 	int fail = 0;
 	u64 len;
 	int index;
+	int use_page_digest;
 
 	BUG_ON(sblock->page_count < 1);
 	if (!sblock->pagev[0]->have_csum)
@@ -1664,15 +1665,21 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 
 	on_disk_csum = sblock->pagev[0]->csum;
 	page = sblock->pagev[0]->page;
-	buffer = kmap_atomic(page);
 
 	len = sctx->sectorsize;
+	use_page_digest = (len <= PAGE_SIZE) ? 1 : 0;
+
 	index = 0;
 	for (;;) {
 		u64 l = min_t(u64, len, PAGE_SIZE);
 
-		crc = btrfs_csum_data(buffer, crc, l);
-		kunmap_atomic(buffer);
+		if (use_page_digest) {
+			btrfs_csum_page_digest(page, 0, l, (u32 *)&csum);
+		} else {
+			void *buffer = kmap_atomic(page);
+			crc = btrfs_csum_data(buffer, crc, l);
+			kunmap_atomic(buffer);
+		}
 		len -= l;
 		if (len == 0)
 			break;
@@ -1680,10 +1687,10 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 		BUG_ON(index >= sblock->page_count);
 		BUG_ON(!sblock->pagev[index]->page);
 		page = sblock->pagev[index]->page;
-		buffer = kmap_atomic(page);
 	}
 
-	btrfs_csum_final(crc, csum);
+	if (!use_page_digest)
+		btrfs_csum_final(crc, csum);
 	if (memcmp(csum, on_disk_csum, sctx->csum_size))
 		fail = 1;
 
@@ -2501,7 +2508,7 @@ again:
 			ret = scrub_extent(sctx, extent_logical, extent_len,
 					   extent_physical, extent_dev, flags,
 					   generation, extent_mirror_num,
-					   extent_physical);
+					   extent_logical - logical + physical);
 			if (ret)
 				goto out;
 

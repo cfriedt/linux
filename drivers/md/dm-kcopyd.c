@@ -28,10 +28,24 @@
 
 #include "dm.h"
 
+#if defined(CONFIG_MACH_QNAPTS)
+#define SUB_JOB_SIZE    2048
+#else
 #define SUB_JOB_SIZE	128
+#endif
 #define SPLIT_COUNT	8
 #define MIN_JOBS	8
 #define RESERVE_PAGES	(DIV_ROUND_UP(SUB_JOB_SIZE << SECTOR_SHIFT, PAGE_SIZE))
+
+#if defined(CONFIG_MACH_QNAPTS)
+struct kcopyd_job;
+struct track_job {
+	int count;
+	int setindex;
+	int index;
+	struct kcopyd_job **jobs;
+};
+#endif
 
 /*-----------------------------------------------------------------
  * Each kcopyd client has its own little pool of preallocated
@@ -48,6 +62,9 @@ struct dm_kcopyd_client {
 	atomic_t nr_jobs;
 
 	mempool_t *job_pool;
+#if defined(CONFIG_MACH_QNAPTS)
+	mempool_t *track_job_pool;
+#endif
 
 	struct workqueue_struct *kcopyd_wq;
 	struct work_struct kcopyd_work;
@@ -358,9 +375,16 @@ struct kcopyd_job {
 	sector_t progress;
 
 	struct kcopyd_job *master_job;
+#if defined(CONFIG_MACH_QNAPTS)
+	struct track_job *trackjob;
+	int state;
+#endif
 };
 
 static struct kmem_cache *_job_cache;
+#if defined(CONFIG_MACH_QNAPTS)
+static struct kmem_cache *_track_job_cache;
+#endif
 
 int __init dm_kcopyd_init(void)
 {
@@ -369,6 +393,14 @@ int __init dm_kcopyd_init(void)
 				__alignof__(struct kcopyd_job), 0, NULL);
 	if (!_job_cache)
 		return -ENOMEM;
+
+#if defined(CONFIG_MACH_QNAPTS)
+	_track_job_cache = kmem_cache_create("kcopyd_track_job",
+				sizeof(struct track_job),
+				__alignof__(struct track_job), 0, NULL);
+	if (!_track_job_cache)
+		return -ENOMEM;
+#endif
 
 	zero_page_list.next = &zero_page_list;
 	zero_page_list.page = ZERO_PAGE(0);
@@ -380,6 +412,10 @@ void dm_kcopyd_exit(void)
 {
 	kmem_cache_destroy(_job_cache);
 	_job_cache = NULL;
+#if defined(CONFIG_MACH_QNAPTS)
+	kmem_cache_destroy(_track_job_cache);
+	_track_job_cache = NULL;
+#endif
 }
 
 /*
@@ -883,3 +919,293 @@ void dm_kcopyd_client_destroy(struct dm_kcopyd_client *kc)
 	kfree(kc);
 }
 EXPORT_SYMBOL(dm_kcopyd_client_destroy);
+
+#if defined(CONFIG_MACH_QNAPTS)
+/* must acquire lock first */
+static void push_nolock(struct list_head *jobs, struct kcopyd_job *job)
+{
+	list_add_tail(&job->list, jobs);
+}
+
+struct track_job *
+dm_kcopyd_alloc_track_job(struct dm_kcopyd_client *kc, int count)
+{
+	struct track_job *job;
+
+	job = mempool_alloc(kc->track_job_pool, GFP_NOIO);
+	if (!job) {
+		printk("dm-kcopyd track_job allocation failed1\n");
+		return NULL;
+	}
+	job->count = count;
+	job->jobs = kmalloc(sizeof(struct kcopyd_job*)*job->count, GFP_NOIO);
+	if (!job->jobs) {
+		printk("dm-kcopyd track_job allocation failed2\n");
+		mempool_free(job, kc->track_job_pool);
+		return NULL;
+	}
+	memset(job->jobs, 0, sizeof(struct kcopyd_job*)*job->count);
+	job->setindex = 0;
+	job->index = 0;
+
+	return job;
+}
+EXPORT_SYMBOL(dm_kcopyd_alloc_track_job);
+
+static void dm_kcopyd_free_track_job(struct dm_kcopyd_client *kc, struct track_job *job)
+{
+	if (job->jobs) {
+		kfree(job->jobs);
+		job->jobs = NULL;
+	}
+	mempool_free(job, kc->track_job_pool);
+}
+
+static void complete_io_tracked(unsigned long error, void *context)
+{
+	struct kcopyd_job *job = (struct kcopyd_job *) context;
+	struct kcopyd_job *currentjob = NULL;
+	struct dm_kcopyd_client *kc = job->kc;
+	struct track_job *trackjob = job->trackjob;
+	unsigned long flags;
+
+	io_job_finish(kc->throttle);
+
+	if (error) {
+		if (job->rw & WRITE)
+			job->write_err |= error;
+		else
+			job->read_err = 1;
+
+		if (!test_bit(DM_KCOPYD_IGNORE_ERROR, &job->flags)) {
+			push(&kc->complete_jobs, job);
+			wake(kc);
+			return;
+		}
+	}
+
+	if (job->rw & WRITE)
+		push(&kc->complete_jobs, job);
+	else {
+		if (trackjob) {
+			spin_lock_irqsave(&kc->job_lock, flags);
+			job->state = 1; /* read complete */
+			currentjob = trackjob->jobs[trackjob->index];
+			while (currentjob && (currentjob->state==1)) {
+				currentjob->rw = WRITE;
+				currentjob->state = 2; /* write submitted */
+				push_nolock(&kc->io_jobs, currentjob);
+				if (++trackjob->index == trackjob->count) {
+					dm_kcopyd_free_track_job(kc, trackjob);
+					break;
+				}
+				currentjob = trackjob->jobs[trackjob->index];
+			}
+			spin_unlock_irqrestore(&kc->job_lock, flags);
+		} else { /* do not track this IO; run by old style */
+			job->rw = WRITE;
+			push(&kc->io_jobs, job);
+		}
+	}
+
+	wake(kc);
+}
+
+/*
+ * Request io on as many buffer heads as we can currently get for
+ * a particular job.
+ */
+static int run_io_job_tracked(struct kcopyd_job *job)
+{
+	int r;
+	struct dm_io_request io_req = {
+		.bi_rw = job->rw,
+		.mem.type = DM_IO_PAGE_LIST,
+		.mem.ptr.pl = job->pages,
+		.mem.offset = 0,
+		.notify.fn = complete_io_tracked,
+		.notify.context = job,
+		.client = job->kc->io_client,
+	};
+
+	io_job_start(job->kc->throttle);
+
+	if (job->rw == READ)
+		r = dm_io(&io_req, 1, &job->source, NULL);
+	else
+		r = dm_io(&io_req, job->num_dests, job->dests, NULL);
+
+	return r;
+}
+
+/*
+ * kcopyd does this every time it's woken up.
+ */
+static void do_work_tracked(struct work_struct *work)
+{
+	struct dm_kcopyd_client *kc = container_of(work,
+                                        struct dm_kcopyd_client, kcopyd_work);
+	struct blk_plug plug;
+
+        /*
+         * The order that these are called is *very* important.
+         * complete jobs can free some pages for pages jobs.
+         * Pages jobs when successful will jump onto the io jobs
+         * list.  io jobs call wake when they complete and it all
+         * starts again.
+         */
+	blk_start_plug(&plug);
+	process_jobs(&kc->complete_jobs, kc, run_complete_job);
+	process_jobs(&kc->pages_jobs, kc, run_pages_job);
+	process_jobs(&kc->io_jobs, kc, run_io_job_tracked);
+	blk_finish_plug(&plug);
+}
+
+int dm_kcopyd_copy_tracked(struct dm_kcopyd_client *kc, struct dm_io_region *from,
+                   unsigned int num_dests, struct dm_io_region *dests,
+                   unsigned int flags, dm_kcopyd_notify_fn fn, void *context, struct track_job *trackjob)
+{
+	struct kcopyd_job *job;
+	int i;
+
+        /*
+         * Allocate an array of jobs consisting of one master job
+         * followed by SPLIT_COUNT sub jobs.
+         */
+	job = mempool_alloc(kc->job_pool, GFP_NOIO);
+
+        /*
+         * set up for the read.
+         */
+	job->kc = kc;
+	job->flags = flags;
+	job->read_err = 0;
+	job->write_err = 0;
+
+	job->num_dests = num_dests;
+	memcpy(&job->dests, dests, sizeof(*dests) * num_dests);
+
+	if (from) {
+		job->source = *from;
+		job->pages = NULL;
+		job->rw = READ;
+	} else {
+		memset(&job->source, 0, sizeof job->source);
+		job->source.count = job->dests[0].count;
+		job->pages = &zero_page_list;
+
+                /*
+                 * Use WRITE SAME to optimize zeroing if all dests support it.
+                 */
+		job->rw = WRITE | REQ_WRITE_SAME;
+		for (i = 0; i < job->num_dests; i++)
+			if (!bdev_write_same(job->dests[i].bdev)) {
+				job->rw = WRITE;
+				break;
+			}
+	}
+
+	job->fn = fn;
+	job->context = context;
+	job->master_job = job;
+
+	if (trackjob->setindex < trackjob->count) { /* index is in the array, set track */
+		job->trackjob = trackjob;
+		job->state = 0; /* initialized */
+		trackjob->jobs[trackjob->setindex++] = job;
+	} else { /* do not track this IO */
+		job->trackjob = NULL;
+		job->state = 0;
+//		printk("dm-kcopyd track job out of array\n");
+	}
+
+	if (job->source.count <= SUB_JOB_SIZE)
+		dispatch_job(job);
+	else { /* will not go to here */
+		printk("got io from flashcache over %d\n", SUB_JOB_SIZE);
+		mutex_init(&job->lock);
+		job->progress = 0;
+		split_job(job);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(dm_kcopyd_copy_tracked);
+
+struct dm_kcopyd_client *dm_kcopyd_client_create_tracked(struct dm_kcopyd_throttle *throttle)
+{
+	int r = -ENOMEM;
+	struct dm_kcopyd_client *kc;
+
+	kc = kmalloc(sizeof(*kc), GFP_KERNEL);
+	if (!kc)
+		return ERR_PTR(-ENOMEM);
+
+	spin_lock_init(&kc->job_lock);
+	INIT_LIST_HEAD(&kc->complete_jobs);
+	INIT_LIST_HEAD(&kc->io_jobs);
+	INIT_LIST_HEAD(&kc->pages_jobs);
+	kc->throttle = throttle;
+
+	kc->track_job_pool = mempool_create_slab_pool(MIN_JOBS, _track_job_cache);
+	if (!kc->track_job_pool)
+		goto bad_slab1;
+
+	kc->job_pool = mempool_create_slab_pool(MIN_JOBS, _job_cache);
+	if (!kc->job_pool)
+		goto bad_slab;
+
+	INIT_WORK(&kc->kcopyd_work, do_work_tracked);
+	kc->kcopyd_wq = alloc_workqueue("kcopyd_tracked", WQ_MEM_RECLAIM, 0);
+	if (!kc->kcopyd_wq)
+		goto bad_workqueue;
+
+	kc->pages = NULL;
+	kc->nr_reserved_pages = kc->nr_free_pages = 0;
+	r = client_reserve_pages(kc, RESERVE_PAGES);
+	if (r)
+		goto bad_client_pages;
+
+	kc->io_client = dm_io_client_create();
+	if (IS_ERR(kc->io_client)) {
+		r = PTR_ERR(kc->io_client);
+		goto bad_io_client;
+	}
+
+	init_waitqueue_head(&kc->destroyq);
+	atomic_set(&kc->nr_jobs, 0);
+
+	return kc;
+
+bad_io_client:
+	client_free_pages(kc);
+bad_client_pages:
+	destroy_workqueue(kc->kcopyd_wq);
+bad_workqueue:
+	mempool_destroy(kc->job_pool);
+bad_slab:
+	mempool_destroy(kc->track_job_pool);
+bad_slab1:
+	kfree(kc);
+
+	return ERR_PTR(r);
+}
+EXPORT_SYMBOL(dm_kcopyd_client_create_tracked);
+
+void dm_kcopyd_client_destroy_tracked(struct dm_kcopyd_client *kc)
+{
+        /* Wait for completion of all jobs submitted by this client. */
+	wait_event(kc->destroyq, !atomic_read(&kc->nr_jobs));
+
+	BUG_ON(!list_empty(&kc->complete_jobs));
+	BUG_ON(!list_empty(&kc->io_jobs));
+	BUG_ON(!list_empty(&kc->pages_jobs));
+	destroy_workqueue(kc->kcopyd_wq);
+	dm_io_client_destroy(kc->io_client);
+	client_free_pages(kc);
+	mempool_destroy(kc->job_pool);
+	mempool_destroy(kc->track_job_pool);
+	kfree(kc);
+}
+EXPORT_SYMBOL(dm_kcopyd_client_destroy_tracked);
+#endif

@@ -2885,10 +2885,17 @@ static void do_fd_request(struct request_queue *q)
 		 "VFS: %s called on non-open device\n", __func__))
 		return;
 
+#ifdef CONFIG_MACH_QNAPTS
+	if (WARN(atomic_read(&usage_count) == 0,
+		 "warning: usage count=0, current_req=%p sect=%ld type=%x flags=%llx\n",
+		 current_req, (long)blk_rq_pos(current_req), current_req->cmd_type,
+		 (unsigned long long)current_req->cmd_flags))
+#else
 	if (WARN(atomic_read(&usage_count) == 0,
 		 "warning: usage count=0, current_req=%p sect=%ld type=%x flags=%x\n",
 		 current_req, (long)blk_rq_pos(current_req), current_req->cmd_type,
 		 current_req->cmd_flags))
+#endif		 
 		return;
 
 	if (test_and_set_bit(0, &fdc_busy)) {

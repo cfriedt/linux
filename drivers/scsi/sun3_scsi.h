@@ -30,7 +30,10 @@
  */
 
 /*
- * $Log: cumana_NCR5380.h,v $
+ * $Log: sun3_scsi.h,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:42  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #ifndef SUN3_NCR5380_H

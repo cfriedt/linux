@@ -500,8 +500,8 @@ static int metadata_ll_load_ie(struct ll_disk *ll, dm_block_t index,
 static int metadata_ll_save_ie(struct ll_disk *ll, dm_block_t index,
 			       struct disk_index_entry *ie)
 {
-	ll->bitmap_index_changed = true;
 	memcpy(ll->mi_le.index + index, ie, sizeof(*ie));
+	ll->bitmap_index_changed = true;
 	return 0;
 }
 
@@ -513,8 +513,9 @@ static int metadata_ll_init_index(struct ll_disk *ll)
 	r = dm_tm_new_block(ll->tm, &index_validator, &b);
 	if (r < 0)
 		return r;
-
-	memcpy(dm_block_data(b), &ll->mi_le, sizeof(ll->mi_le));
+      
+    // Adaptive Block Size
+    memcpy(dm_block_data(b), &ll->mi_le, ll->block_size);
 	ll->bitmap_root = dm_block_location(b);
 
 	return dm_tm_unlock(ll->tm, b);
@@ -530,13 +531,20 @@ static int metadata_ll_open(struct ll_disk *ll)
 	if (r)
 		return r;
 
-	memcpy(&ll->mi_le, dm_block_data(block), sizeof(ll->mi_le));
+	memcpy(&ll->mi_le, dm_block_data(block), ll->block_size);
 	return dm_tm_unlock(ll->tm, block);
 }
 
 static dm_block_t metadata_ll_max_entries(struct ll_disk *ll)
 {
-	return MAX_METADATA_BITMAPS;
+    if (ll->block_size == 4096)
+        return MAX_METADATA_BITMAPS;
+    else if (ll->block_size == 8192)
+        return MAX_METADATA_BITMAPS_V2;
+    else {
+        DMWARN("Using default MAX_METADATA_BITMAPS entries of metadata_ll");
+        return MAX_METADATA_BITMAPS;
+    }
 }
 
 static int metadata_ll_commit(struct ll_disk *ll)
@@ -548,7 +556,7 @@ static int metadata_ll_commit(struct ll_disk *ll)
 	if (r)
 		return r;
 
-	memcpy(dm_block_data(b), &ll->mi_le, sizeof(ll->mi_le));
+	memcpy(dm_block_data(b), &ll->mi_le, ll->block_size);
 	ll->bitmap_root = dm_block_location(b);
 
 	return dm_tm_unlock(ll->tm, b);

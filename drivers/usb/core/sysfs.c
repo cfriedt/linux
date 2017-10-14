@@ -482,10 +482,15 @@ set_usb2_hardware_lpm(struct device *dev, struct device_attribute *attr,
 	usb_lock_device(udev);
 
 	ret = strtobool(buf, &value);
-
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+	if (!ret) {
+		udev->usb2_hw_lpm_allowed = value;
+		ret = usb_set_usb2_hardware_lpm(udev, value);
+	}
+#else
 	if (!ret)
 		ret = usb_set_usb2_hardware_lpm(udev, value);
-
+#endif
 	usb_unlock_device(udev);
 
 	if (!ret)

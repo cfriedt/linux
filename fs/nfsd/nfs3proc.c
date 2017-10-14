@@ -7,6 +7,13 @@
 #include <linux/fs.h>
 #include <linux/ext2_fs.h>
 #include <linux/magic.h>
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+#include <linux/file.h>
+#include <linux/fcntl.h>
+#include <asm/uaccess.h>
+#endif
+#endif
 
 #include "cache.h"
 #include "xdr3.h"
@@ -632,6 +639,58 @@ nfsd3_proc_commit(struct svc_rqst * rqstp, struct nfsd3_commitargs *argp,
 	RETURN_STATUS(nfserr);
 }
 
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+/*
+ * vStorage call
+ */
+static __be32
+nfsd3_proc_vstorage(struct svc_rqst * rqstp, struct nfsd3_vstorageargs *argp,
+                                             struct nfsd3_vstorageres *resp)
+{
+        __be32 nfserr;
+
+        resp->operation = argp->operation;
+        switch (argp->operation) {
+        case NFS3_VSTORAGEOP_REGISTER:
+                DBG_PRINT("nfsd: VSTORAGE(3) [REGISTER]\n");
+                if (argp->magic != 0x8068269529234111LL) {
+                        DBG_PRINT("nfsd: vStorage procedure not was issued from QNAP NAS device\n");
+                        nfserr = nfserr_inval;
+                } else {
+                        resp->primitives = NFS3_VSTORAGE_PRIM_CLONEFILE |
+                                           NFS3_VSTORAGE_PRIM_RESVSPACE |
+                                           NFS3_VSTORAGE_PRIM_STATX;
+                        nfserr = nfs_ok;
+                }
+                break;
+        case NFS3_VSTORAGEOP_RESERVESPACE:
+                DBG_PRINT("nfsd: VSTORAGE(3) [RESERVESPACE]\n");
+                resp->count = argp->count;
+                nfserr = nfsd_reservespace(rqstp, &argp->fh, argp->offset, &resp->count);
+                fh_put(&argp->fh);
+                break;
+        case NFS3_VSTORAGEOP_EXTENDEDSTAT:
+                DBG_PRINT("nfsd: VSTORAGE(3) [EXTENDEDSTAT]\n");
+                nfserr = nfsd_extendedstat(rqstp, &argp->fh, &resp->totalBytes, &resp->allocatedBytes, &resp->uniqueBytes);
+                fh_put(&argp->fh);
+                break;
+        case NFS3_VSTORAGEOP_CLONEFILE:
+                DBG_PRINT("nfsd: VSTORAGE(3) [CLONEFILE]\n");
+                resp->count = argp->count;
+                nfserr = nfsd_clonefile(rqstp, &argp->fh, &argp->dst, argp->offset, &resp->count, argp->flags);
+                fh_put(&argp->fh);
+                fh_put(&argp->dst);
+                break;
+        default:
+                nfserr = nfserr_inval;
+                break;
+        }
+
+        RETURN_STATUS(nfserr);
+}
+#endif
+#endif
 
 /*
  * NFSv3 Server procedures.
@@ -668,7 +727,15 @@ struct nfsd3_voidargs { int dummy; };
 #define pAT (1+AT)	/* post attributes - conditional */
 #define WC (7+pAT)	/* WCC attributes */
 
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+static struct svc_procedure		nfsd_procedures3[23] = {
+#else
 static struct svc_procedure		nfsd_procedures3[22] = {
+#endif
+#else
+static struct svc_procedure		nfsd_procedures3[22] = {
+#endif
 	[NFS3PROC_NULL] = {
 		.pc_func = (svc_procfunc) nfsd3_proc_null,
 		.pc_encode = (kxdrproc_t) nfs3svc_encode_voidres,
@@ -882,11 +949,32 @@ static struct svc_procedure		nfsd_procedures3[22] = {
 		.pc_cachetype = RC_NOCACHE,
 		.pc_xdrressize = ST+WC+2,
 	},
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+        [NFS3PROC_VSTORAGE] = {
+                .pc_func = (svc_procfunc) nfsd3_proc_vstorage,
+                .pc_decode = (kxdrproc_t) nfs3svc_decode_vstorageargs,
+                .pc_encode = (kxdrproc_t) nfs3svc_encode_vstorageres,
+                .pc_argsize = sizeof(struct nfsd3_vstorageargs),
+                .pc_ressize = sizeof(struct nfsd3_vstorageres),
+                .pc_cachetype = RC_NOCACHE,
+                .pc_xdrressize = ST+1+2+6,
+        },
+#endif
+#endif
 };
 
 struct svc_version	nfsd_version3 = {
 		.vs_vers	= 3,
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+		.vs_nproc	= 23,
+#else
 		.vs_nproc	= 22,
+#endif
+#else
+		.vs_nproc	= 22,
+#endif
 		.vs_proc	= nfsd_procedures3,
 		.vs_dispatch	= nfsd_dispatch,
 		.vs_xdrsize	= NFS3_SVC_XDRSIZE,

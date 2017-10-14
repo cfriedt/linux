@@ -4302,7 +4302,19 @@ findFirstRetry:
 	pSMB->SearchAttributes =
 	    cpu_to_le16(ATTR_READONLY | ATTR_HIDDEN | ATTR_SYSTEM |
 			ATTR_DIRECTORY);
+#ifdef CONFIG_MACH_QNAPTS
+	/* Bug #64969 SearchCount default 150 cause a huge response from samba server.
+	 * CIFS need a large buffer to hold this response. In this kernel version, call
+	 * dump appears when kernel receive a big response packet to big buffer.
+	 * Reducing the SearchCount can reduce response packet size. This is a workaround.
+	 * Model: X31+/X48/X43
+	 *
+	 * 2015/8/27 FredHung
+	 * */
+	pSMB->SearchCount = 50;
+#else
 	pSMB->SearchCount = cpu_to_le16(CIFSMaxBufSize/sizeof(FILE_UNIX_INFO));
+#endif
 	pSMB->SearchFlags = cpu_to_le16(search_flags);
 	pSMB->InformationLevel = cpu_to_le16(psrch_inf->info_level);
 
@@ -4415,8 +4427,20 @@ int CIFSFindNext(const unsigned int xid, struct cifs_tcon *tcon,
 	pSMB->Reserved3 = 0;
 	pSMB->SubCommand = cpu_to_le16(TRANS2_FIND_NEXT);
 	pSMB->SearchHandle = searchHandle;      /* always kept as le */
+#ifdef CONFIG_MACH_QNAPTS
+	/* Bug #64969 SearchCount default 150 cause a huge response from samba server.
+	 * CIFS need a large buffer to hold this response. In this kernel version, call
+	 * dump appears when kernel receive a big response packet to big buffer.
+	 * Reducing the SearchCount can reduce response packet size. This is a workaround.
+	 * Model: X31+/X48/X43
+	 *
+	 * 2015/8/27 FredHung
+	 * */
+	pSMB->SearchCount = 50;
+#else
 	pSMB->SearchCount =
 		cpu_to_le16(CIFSMaxBufSize / sizeof(FILE_UNIX_INFO));
+#endif
 	pSMB->InformationLevel = cpu_to_le16(psrch_inf->info_level);
 	pSMB->ResumeKey = psrch_inf->resume_key;
 	pSMB->SearchFlags = cpu_to_le16(search_flags);

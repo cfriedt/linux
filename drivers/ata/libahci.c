@@ -43,9 +43,13 @@
 #include <linux/device.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_cmnd.h>
+#include <linux/gpio.h>
 #include <linux/libata.h>
 #include "ahci.h"
 #include "libata.h"
+//Patch by QNAP: Port Multiplier
+#include <scsi/scsi_device.h>
+//
 
 static int ahci_skip_host_reset;
 int ahci_ignore_sss;
@@ -138,9 +142,17 @@ struct device_attribute *ahci_shost_attrs[] = {
 };
 EXPORT_SYMBOL_GPL(ahci_shost_attrs);
 
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+// qnap NCQ enable scheme
+extern struct device_attribute dev_attr_qnap_ncq;
+#endif
+
 struct device_attribute *ahci_sdev_attrs[] = {
 	&dev_attr_sw_activity,
 	&dev_attr_unload_heads,
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+    &dev_attr_qnap_ncq,
+#endif
 	NULL
 };
 EXPORT_SYMBOL_GPL(ahci_sdev_attrs);
@@ -173,6 +185,7 @@ struct ata_port_operations ahci_ops = {
 	.em_store		= ahci_led_store,
 	.sw_activity_show	= ahci_activity_show,
 	.sw_activity_store	= ahci_activity_store,
+	.transmit_led_message	= ahci_transmit_led_message,
 #ifdef CONFIG_PM
 	.port_suspend		= ahci_port_suspend,
 	.port_resume		= ahci_port_resume,
@@ -613,11 +626,21 @@ static void ahci_start_fis_rx(struct ata_port *ap)
 	if (hpriv->cap & HOST_CAP_64)
 		writel((pp->cmd_slot_dma >> 16) >> 16,
 		       port_mmio + PORT_LST_ADDR_HI);
+#ifdef CONFIG_MACH_QNAPTS
+	else
+		writel(0x0,
+		       port_mmio + PORT_LST_ADDR_HI);
+#endif
 	writel(pp->cmd_slot_dma & 0xffffffff, port_mmio + PORT_LST_ADDR);
 
 	if (hpriv->cap & HOST_CAP_64)
 		writel((pp->rx_fis_dma >> 16) >> 16,
 		       port_mmio + PORT_FIS_ADDR_HI);
+#ifdef CONFIG_MACH_QNAPTS
+	else
+		writel(0x0,
+		       port_mmio + PORT_FIS_ADDR_HI);
+#endif
 	writel(pp->rx_fis_dma & 0xffffffff, port_mmio + PORT_FIS_ADDR);
 
 	/* enable FIS reception */
@@ -774,7 +797,7 @@ static void ahci_start_port(struct ata_port *ap)
 
 			/* EM Transmit bit maybe busy during init */
 			for (i = 0; i < EM_MAX_RETRY; i++) {
-				rc = ahci_transmit_led_message(ap,
+				rc = ap->ops->transmit_led_message(ap,
 							       emp->led_state,
 							       4);
 				if (rc == -EBUSY)
@@ -870,8 +893,9 @@ static void ahci_sw_activity(struct ata_link *link)
 		return;
 
 	emp->activity++;
-	if (!timer_pending(&emp->timer))
+	if (!timer_pending(&emp->timer)){
 		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(10));
+	}
 }
 
 static void ahci_sw_activity_blink(unsigned long arg)
@@ -907,15 +931,21 @@ static void ahci_sw_activity_blink(unsigned long arg)
 
 		/* toggle state */
 		led_message |= (activity_led_state << 16);
-		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(100));
+//		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(100));
+		// QNAP Patch for hd led blink
+		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(50));
 	} else {
 		/* switch to idle */
 		led_message &= ~EM_MSG_LED_VALUE_ACTIVITY;
-		if (emp->blink_policy == BLINK_OFF)
+
+// QNAP roll-back for support SATA LED Cotrol (In order to disable presence feature)
+//		if ((ata_phys_link_online(link)) || (emp->blink_policy == BLINK_OFF))
+		if(emp->blink_policy == BLINK_OFF)
 			led_message |= (1 << 16);
+		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(500));
 	}
 	spin_unlock_irqrestore(ap->lock, flags);
-	ahci_transmit_led_message(ap, led_message, 4);
+	ap->ops->transmit_led_message(ap, led_message, 4);
 }
 
 static void ahci_init_sw_activity(struct ata_link *link)
@@ -926,6 +956,7 @@ static void ahci_init_sw_activity(struct ata_link *link)
 
 	/* init activity stats, setup timer */
 	emp->saved_activity = emp->activity = 0;
+	emp->blink_policy = BLINK_ON;
 	setup_timer(&emp->timer, ahci_sw_activity_blink, (unsigned long)link);
 
 	/* check our blink policy and set flag for link if it's enabled */
@@ -947,6 +978,40 @@ int ahci_reset_em(struct ata_host *host)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ahci_reset_em);
+
+ssize_t al_ahci_transmit_led_message(struct ata_port *ap, u32 state,
+					    ssize_t size)
+{
+	struct ahci_host_priv *hpriv = ap->host->private_data;
+	struct ahci_port_priv *pp = ap->private_data;
+	unsigned long flags;
+	int led_val = 0;
+	int pmp;
+	struct ahci_em_priv *emp;
+
+	/* get the slot number from the message */
+	pmp = (state & EM_MSG_LED_PMP_SLOT) >> 8;
+	if (pmp < EM_MAX_SLOTS)
+		emp = &pp->em_priv[pmp];
+	else
+		return -EINVAL;
+
+	if (hpriv->led_gpio[ap->port_no] == -1)
+		return -EINVAL;
+
+	spin_lock_irqsave(&ap->host->lock, flags);
+
+	if(state & EM_MSG_LED_VALUE_ON)
+		led_val = 1;
+
+	gpio_set_value(hpriv->led_gpio[ap->port_no], led_val);
+
+	/* save off new led state for port/slot */
+	emp->led_state = state;
+
+	spin_unlock_irqrestore(&ap->host->lock, flags);
+	return size;
+}
 
 static ssize_t ahci_transmit_led_message(struct ata_port *ap, u32 state,
 					ssize_t size)
@@ -1044,7 +1109,7 @@ static ssize_t ahci_led_store(struct ata_port *ap, const char *buf,
 	if (emp->blink_policy)
 		state &= ~EM_MSG_LED_VALUE_ACTIVITY;
 
-	return ahci_transmit_led_message(ap, state, size);
+	return ap->ops->transmit_led_message(ap, state, size);
 }
 
 static ssize_t ahci_activity_store(struct ata_device *dev, enum sw_activity val)
@@ -1063,7 +1128,7 @@ static ssize_t ahci_activity_store(struct ata_device *dev, enum sw_activity val)
 		/* set the LED to OFF */
 		port_led_state &= EM_MSG_LED_VALUE_OFF;
 		port_led_state |= (ap->port_no | (link->pmp << 8));
-		ahci_transmit_led_message(ap, port_led_state, 4);
+		ap->ops->transmit_led_message(ap, port_led_state, 4);
 	} else {
 		link->flags |= ATA_LFLAG_SW_ACTIVITY;
 		if (val == BLINK_OFF) {
@@ -1071,7 +1136,7 @@ static ssize_t ahci_activity_store(struct ata_device *dev, enum sw_activity val)
 			port_led_state &= EM_MSG_LED_VALUE_OFF;
 			port_led_state |= (ap->port_no | (link->pmp << 8));
 			port_led_state |= EM_MSG_LED_VALUE_ON; /* check this */
-			ahci_transmit_led_message(ap, port_led_state, 4);
+			ap->ops->transmit_led_message(ap, port_led_state, 4);
 		}
 	}
 	emp->blink_policy = val;
@@ -1560,8 +1625,7 @@ static void ahci_error_intr(struct ata_port *ap, u32 irq_stat)
 		u32 fbs = readl(port_mmio + PORT_FBS);
 		int pmp = fbs >> PORT_FBS_DWE_OFFSET;
 
-		if ((fbs & PORT_FBS_SDE) && (pmp < ap->nr_pmp_links) &&
-		    ata_link_online(&ap->pmp_link[pmp])) {
+		if ((fbs & PORT_FBS_SDE) && (pmp < ap->nr_pmp_links)) {
 			link = &ap->pmp_link[pmp];
 			fbs_need_dec = true;
 		}
@@ -1785,6 +1849,8 @@ void ahci_hw_port_interrupt(struct ata_port *ap)
 	pp->intr_status |= status;
 }
 
+EXPORT_SYMBOL_GPL(ahci_hw_port_interrupt);
+
 irqreturn_t ahci_hw_interrupt(int irq, void *dev_instance)
 {
 	struct ata_port *ap_this = dev_instance;
@@ -1859,6 +1925,15 @@ irqreturn_t ahci_interrupt(int irq, void *dev_instance)
 	if (!irq_stat)
 		return IRQ_NONE;
 
+//Patch by QNAP:Marvell MV_9235 workaround
+	if (hpriv->flags & AHCI_HFLAG_YES_MV9235_FIX) {
+		u32 port_mask[2] = {0x5, 0xa};
+		for (i = 0; i < (host->n_ports/2) ; i++) {
+			if (irq_stat & port_mask[i])	
+				irq_stat |= port_mask[i];
+		}
+	}
+/////////////////////////////////
 	irq_masked = irq_stat & hpriv->port_map;
 
 	spin_lock(&host->lock);

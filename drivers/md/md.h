@@ -24,6 +24,12 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 
+//Patch by QNAP: enhance error handler
+#if defined(CONFIG_MACH_QNAPTS)
+#include <qnap/hal_event.h>
+extern int send_hal_netlink(NETLINK_EVT *event);
+#endif
+
 #define MaxSector (~(sector_t)0)
 
 /* Bad block numbers are stored sorted in a single page.
@@ -62,6 +68,14 @@ struct md_rdev {
 
 	struct kobject	kobj;
 
+//Patch by QNAP:by KenChen for Robust RAID - ReadOnly function
+#ifdef CONFIG_MACH_QNAPTS
+	unsigned long	qflags;
+#define	QMD_ERR_SENT		1
+#define QMD_FEATURE_FLEX_RAID		2
+#define QMD_FEATURE_TEST_MODE		3	
+#endif
+//////////////////////////////////////////////////////////
 	/* A device can be in one of three states based on two flags:
 	 * Not working:   faulty==1 in_sync==0
 	 * Fully working: faulty==0 in_sync==1
@@ -167,6 +181,11 @@ enum flag_bits {
 				 * a want_replacement device with same
 				 * raid_disk number.
 				 */
+//*patch by QNAP: fix bug #986 on mantis, kernel panic caused by sleeping when interrupt
+#if defined(CONFIG_MACH_QNAPTS)
+	QNAP_NoDev,  		/* set this flag if low layer return -ENODEV.
+				 * Currently using in raid456.  */
+#endif
 };
 
 #define BB_LEN_MASK	(0x00000000000001FFULL)
@@ -177,6 +196,10 @@ enum flag_bits {
 #define BB_LEN(x)	(((x) & BB_LEN_MASK) + 1)
 #define BB_ACK(x)	(!!((x) & BB_ACK_MASK))
 #define BB_MAKE(a, l, ack) (((a)<<9) | ((l)-1) | ((u64)(!!(ack)) << 63))
+
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+extern void qnap_dm_thin_error_version(char *dev_name);
+#endif
 
 extern int md_is_badblock(struct badblocks *bb, sector_t s, int sectors,
 			  sector_t *first_bad, int *bad_sectors);
@@ -322,6 +345,11 @@ struct mddev {
 #define MD_RECOVERY_RESHAPE	8
 #define	MD_RECOVERY_FROZEN	9
 #define	MD_RECOVERY_ERROR	10
+//Patch by QNAP: enhance HAL error handler
+#if defined(CONFIG_MACH_QNAPTS) && defined(QNAP_HAL)
+#define	MD_QNAP_FROZEN	11 //only use for RAID5/RAID6
+#define MD_QNAP_HOTREPLACE 12 //[SDMD] csw: only used for hot-replace
+#endif
 
 	unsigned long			recovery;
 	/* If a RAID personality determines that recovery (of a particular
@@ -422,6 +450,16 @@ struct mddev {
 	struct work_struct flush_work;
 	struct work_struct event_work;	/* used by dm to report failure event */
 	void (*sync_super)(struct mddev *mddev, struct md_rdev *rdev);
+#ifdef CONFIG_MACH_QNAPTS
+/************************************************************
+ * Patch by QNAP:by PekoeChen for Robust RAID 
+ * the valuse to assign qflags shoud use the define of md_rdev->qflags
+ * #define QMD_ERR_SENT
+ * #define QMD_FEATURE_FLEX_RAID
+ * #define QMD_FEATURE_TEST_MODE
+ ************************************************************/
+	unsigned long qflags;
+#endif
 };
 
 
@@ -568,7 +606,9 @@ extern void md_unregister_thread(struct md_thread **threadp);
 extern void md_wakeup_thread(struct md_thread *thread);
 extern void md_check_recovery(struct mddev *mddev);
 extern void md_reap_sync_thread(struct mddev *mddev);
-extern void md_write_start(struct mddev *mddev, struct bio *bi);
+// QNAP Patch
+//extern void md_write_start(struct mddev *mddev, struct bio *bi);
+extern int md_write_start(struct mddev *mddev, struct bio *bi);
 extern void md_write_end(struct mddev *mddev);
 extern void md_done_sync(struct mddev *mddev, int blocks, int ok);
 extern void md_error(struct mddev *mddev, struct md_rdev *rdev);

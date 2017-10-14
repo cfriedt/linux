@@ -347,7 +347,7 @@ EXPORT_SYMBOL(dma_find_channel);
  */
 struct dma_chan *net_dma_find_channel(void)
 {
-	struct dma_chan *chan = dma_find_channel(DMA_MEMCPY);
+	struct dma_chan *chan = dma_find_channel(DMA_SG);
 	if (chan && !is_dma_copy_aligned(chan->device, 1, 1, 1))
 		return NULL;
 
@@ -1018,6 +1018,60 @@ dma_async_memcpy_pg_to_pg(struct dma_chan *chan, struct page *dest_pg,
 	return cookie;
 }
 EXPORT_SYMBOL(dma_async_memcpy_pg_to_pg);
+
+/**
+ * dma_async_memcpy_sg_to_sg - offloaded copy from sg to sg
+ * @chan: DMA channel to offload copy to
+ * @dest_pg: destination page
+ * @dest_off: offset in page to copy to
+ * @src_pg: source page
+ * @src_off: offset in page to copy from
+ * @len: length
+ */
+dma_cookie_t
+dma_async_memcpy_sg_to_sg(struct dma_chan *chan,
+	struct scatterlist *dst_sg, unsigned int dst_nents,
+	struct scatterlist *src_sg, unsigned int src_nents)
+{
+	struct dma_device *dev = chan->device;
+	struct dma_async_tx_descriptor *tx;
+	dma_cookie_t cookie;
+	unsigned long flags;
+	int src_sglen;
+	int dst_sglen;
+
+	/* Map DMA buffers */
+	src_sglen = dma_map_sg(chan->device->dev, src_sg,
+				src_nents, DMA_TO_DEVICE);
+	BUG_ON(!src_sglen);
+
+	dst_sglen = dma_map_sg(chan->device->dev, dst_sg,
+				dst_nents, DMA_FROM_DEVICE);
+	BUG_ON(!dst_sglen);
+
+	flags = DMA_CTRL_ACK;
+
+	tx = dev->device_prep_dma_sg(chan, dst_sg, dst_sglen,
+					     src_sg, src_sglen, flags);
+	if (!tx) {
+		dma_unmap_sg(chan->device->dev, src_sg,
+			   src_nents, DMA_TO_DEVICE);
+		dma_unmap_sg(chan->device->dev, dst_sg,
+			   dst_nents, DMA_FROM_DEVICE);
+		return -ENOMEM;
+	}
+
+	tx->callback = NULL;
+	cookie = tx->tx_submit(tx);
+
+	preempt_disable();
+	__this_cpu_inc(chan->local->memcpy_count);
+	preempt_enable();
+
+	return cookie;
+}
+EXPORT_SYMBOL(dma_async_memcpy_sg_to_sg);
+
 
 void dma_async_tx_descriptor_init(struct dma_async_tx_descriptor *tx,
 	struct dma_chan *chan)

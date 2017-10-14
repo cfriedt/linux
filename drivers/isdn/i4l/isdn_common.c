@@ -1,4 +1,4 @@
-/* $Id: isdn_common.c,v 1.1.2.3 2004/02/10 01:07:13 keil Exp $
+/* $Id: isdn_common.c,v 1.1.1.1 2014/03/19 14:07:31 franklee Exp $
  *
  * Linux ISDN subsystem, common used functions (linklevel).
  *
@@ -43,7 +43,7 @@ MODULE_LICENSE("GPL");
 isdn_dev *dev;
 
 static DEFINE_MUTEX(isdn_mutex);
-static char *isdn_revision = "$Revision: 1.1.2.3 $";
+static char *isdn_revision = "$Revision: 1.1.1.1 $";
 
 extern char *isdn_net_revision;
 #ifdef CONFIG_ISDN_PPP

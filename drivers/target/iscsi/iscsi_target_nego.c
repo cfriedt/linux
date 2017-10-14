@@ -22,7 +22,6 @@
 #include <scsi/iscsi_proto.h>
 #include <target/target_core_base.h>
 #include <target/target_core_fabric.h>
-#include <target/iscsi/iscsi_transport.h>
 
 #include "iscsi_target_core.h"
 #include "iscsi_target_parameters.h"
@@ -45,7 +44,7 @@ void convert_null_to_semi(char *buf, int len)
 			buf[i] = ';';
 }
 
-static int strlen_semi(char *buf)
+int strlen_semi(char *buf)
 {
 	int i = 0;
 
@@ -83,6 +82,11 @@ int extract_param(
 	if (*ptr == '0' && (*(ptr+1) == 'x' || *(ptr+1) == 'X')) {
 		ptr += 2; /* skip 0x */
 		*type = HEX;
+#ifdef CONFIG_MACH_QNAPTS // 2010/07/16 support the BASE64 encoding
+	} else if (*ptr == '0' && (*(ptr+1) == 'b' || *(ptr+1) == 'B')) {
+		ptr += 2; // skip 0b and 0B
+		*type = BASE64;
+#endif                
 	} else
 		*type = DECIMAL;
 
@@ -170,7 +174,7 @@ static void iscsi_remove_failed_auth_entry(struct iscsi_conn *conn)
 	kfree(conn->auth_protocol);
 }
 
-int iscsi_target_check_login_request(
+static int iscsi_target_check_login_request(
 	struct iscsi_conn *conn,
 	struct iscsi_login *login)
 {
@@ -187,8 +191,13 @@ int iscsi_target_check_login_request(
 	default:
 		pr_err("Received unknown opcode 0x%02x.\n",
 				login_req->opcode & ISCSI_OPCODE_MASK);
+#ifdef CONFIG_MACH_QNAPTS   // 2010/06/23 Nike Chen fix for iSCT Test_9.1
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+				ISCSI_LOGIN_STATUS_INVALID_REQUEST);
+#else                
 		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
 				ISCSI_LOGIN_STATUS_INIT_ERR);
+#endif 
 		return -1;
 	}
 
@@ -201,8 +210,8 @@ int iscsi_target_check_login_request(
 		return -1;
 	}
 
-	req_csg = ISCSI_LOGIN_CURRENT_STAGE(login_req->flags);
-	req_nsg = ISCSI_LOGIN_NEXT_STAGE(login_req->flags);
+	req_csg = (login_req->flags & ISCSI_FLAG_LOGIN_CURRENT_STAGE_MASK) >> 2;
+	req_nsg = (login_req->flags & ISCSI_FLAG_LOGIN_NEXT_STAGE_MASK);
 
 	if (req_csg != login->current_stage) {
 		pr_err("Initiator unexpectedly changed login stage"
@@ -271,6 +280,7 @@ static int iscsi_target_check_first_request(
 
 	list_for_each_entry(param, &conn->param_list->param_list, p_list) {
 		if (!strncmp(param->name, SESSIONTYPE, 11)) {
+#ifndef CONFIG_MACH_QNAPTS //Benjamin 20121120: Patch according to ABC. See RFC 3720 12.21: Default SessionType is Normal.            
 			if (!IS_PSTATE_ACCEPTOR(param)) {
 				pr_err("SessionType key not received"
 					" in first login request.\n");
@@ -278,6 +288,9 @@ static int iscsi_target_check_first_request(
 					ISCSI_LOGIN_STATUS_MISSING_FIELDS);
 				return -1;
 			}
+#else
+			if (IS_PSTATE_ACCEPTOR(param))
+#endif
 			if (!strncmp(param->value, DISCOVERY, 9))
 				return 0;
 		}
@@ -337,31 +350,87 @@ static int iscsi_target_do_tx_login_io(struct iscsi_conn *conn, struct iscsi_log
 	login_rsp = (struct iscsi_login_rsp *) login->rsp;
 
 	login_rsp->opcode		= ISCSI_OP_LOGIN_RSP;
-	hton24(login_rsp->dlength, login->rsp_length);
+
+	if(!login->cbit){
+		hton24(login_rsp->dlength, login->rsp_length);
+	}else{
+		hton24(login_rsp->dlength,0);
+	}
 	memcpy(login_rsp->isid, login->isid, 6);
 	login_rsp->tsih			= cpu_to_be16(login->tsih);
-	login_rsp->itt			= login->init_task_tag;
+	login_rsp->itt			= cpu_to_be32(login->init_task_tag);
 	login_rsp->statsn		= cpu_to_be32(conn->stat_sn++);
 	login_rsp->exp_cmdsn		= cpu_to_be32(conn->sess->exp_cmd_sn);
 	login_rsp->max_cmdsn		= cpu_to_be32(conn->sess->max_cmd_sn);
 
 	pr_debug("Sending Login Response, Flags: 0x%02x, ITT: 0x%08x,"
 		" ExpCmdSN; 0x%08x, MaxCmdSN: 0x%08x, StatSN: 0x%08x, Length:"
-		" %u\n", login_rsp->flags, (__force u32)login_rsp->itt,
+		" %u\n", login_rsp->flags, ntohl(login_rsp->itt),
 		ntohl(login_rsp->exp_cmdsn), ntohl(login_rsp->max_cmdsn),
 		ntohl(login_rsp->statsn), login->rsp_length);
 
-	padding = ((-login->rsp_length) & 3);
+	if(!login->cbit){
+		padding = ((-login->rsp_length) & 3);
+		login_rsp->flags &= ~ISCSI_FLAG_LOGIN_CONTINUE;
+		if (iscsi_login_tx_data(
+				conn,
+				login->rsp,
+				login->rsp_buf,
+				login->rsp_length + padding) < 0)
+			return -1;
+	}else{
+        	if (iscsi_login_tx_data(
+                        	conn,
+                        	login->rsp,
+                        	NULL,
+                        	0) < 0)
+                	return -1;
 
-	if (conn->conn_transport->iscsit_put_login_tx(conn, login,
-					login->rsp_length + padding) < 0)
+	}
+	login->rsp_length		= 0;
+	login_rsp->tsih			= be16_to_cpu(login_rsp->tsih);
+	login_rsp->itt			= be32_to_cpu(login_rsp->itt);
+	login_rsp->statsn		= be32_to_cpu(login_rsp->statsn);
+	mutex_lock(&sess->cmdsn_mutex);
+	login_rsp->exp_cmdsn		= be32_to_cpu(sess->exp_cmd_sn);
+	login_rsp->max_cmdsn		= be32_to_cpu(sess->max_cmd_sn);
+	mutex_unlock(&sess->cmdsn_mutex);
+
+	return 0;
+}
+
+static int iscsi_target_do_rx_login_io(struct iscsi_conn *conn, struct iscsi_login *login)
+{
+	u32 padding = 0, payload_length;
+	struct iscsi_login_req *login_req;
+
+	if (iscsi_login_rx_data(conn, login->req, ISCSI_HDR_LEN) < 0)
 		return -1;
 
-	login->rsp_length		= 0;
-	mutex_lock(&sess->cmdsn_mutex);
-	login_rsp->exp_cmdsn		= cpu_to_be32(sess->exp_cmd_sn);
-	login_rsp->max_cmdsn		= cpu_to_be32(sess->max_cmd_sn);
-	mutex_unlock(&sess->cmdsn_mutex);
+	login_req = (struct iscsi_login_req *) login->req;
+	payload_length			= ntoh24(login_req->dlength);
+	login_req->tsih			= be16_to_cpu(login_req->tsih);
+	login_req->itt			= be32_to_cpu(login_req->itt);
+	login_req->cid			= be16_to_cpu(login_req->cid);
+	login_req->cmdsn		= be32_to_cpu(login_req->cmdsn);
+	login_req->exp_statsn		= be32_to_cpu(login_req->exp_statsn);
+
+	pr_debug("Got Login Command, Flags 0x%02x, ITT: 0x%08x,"
+		" CmdSN: 0x%08x, ExpStatSN: 0x%08x, CID: %hu, Length: %u\n",
+		 login_req->flags, login_req->itt, login_req->cmdsn,
+		 login_req->exp_statsn, login_req->cid, payload_length);
+
+	if (iscsi_target_check_login_request(conn, login) < 0)
+		return -1;
+
+	padding = ((-payload_length) & 3);
+	memset(login->req_buf, 0, MAX_KEY_VALUE_PAIRS);
+
+	if (iscsi_login_rx_data(
+			conn,
+			login->req_buf,
+			payload_length + padding) < 0)
+		return -1;
 
 	return 0;
 }
@@ -371,7 +440,36 @@ static int iscsi_target_do_login_io(struct iscsi_conn *conn, struct iscsi_login 
 	if (iscsi_target_do_tx_login_io(conn, login) < 0)
 		return -1;
 
-	if (conn->conn_transport->iscsit_get_login_rx(conn, login) < 0)
+	if (iscsi_target_do_rx_login_io(conn, login) < 0)
+		return -1;
+
+	return 0;
+}
+
+static int iscsi_target_get_initial_payload(
+	struct iscsi_conn *conn,
+	struct iscsi_login *login)
+{
+	u32 padding = 0, payload_length;
+	struct iscsi_login_req *login_req;
+
+	login_req = (struct iscsi_login_req *) login->req;
+	payload_length = ntoh24(login_req->dlength);
+
+	pr_debug("Got Login Command, Flags 0x%02x, ITT: 0x%08x,"
+		" CmdSN: 0x%08x, ExpStatSN: 0x%08x, Length: %u\n",
+		login_req->flags, login_req->itt, login_req->cmdsn,
+		login_req->exp_statsn, payload_length);
+
+	if (iscsi_target_check_login_request(conn, login) < 0)
+		return -1;
+
+	padding = ((-payload_length) & 3);
+
+	if (iscsi_login_rx_data(
+			conn,
+			login->req_buf,
+			payload_length + padding) < 0)
 		return -1;
 
 	return 0;
@@ -413,8 +511,17 @@ static int iscsi_target_do_authentication(
 	payload_length = ntoh24(login_req->dlength);
 
 	param = iscsi_find_param_from_key(AUTHMETHOD, conn->param_list);
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (!param) {
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+		return -1;
+	}
+#else
 	if (!param)
 		return -1;
+#endif
 
 	authret = iscsi_handle_authentication(
 			conn,
@@ -427,11 +534,13 @@ static int iscsi_target_do_authentication(
 	case 0:
 		pr_debug("Received OK response"
 		" from LIO Authentication, continuing.\n");
+		login->authing = 1;
 		break;
 	case 1:
 		pr_debug("iSCSI security negotiation"
 			" completed successfully.\n");
 		login->auth_complete = 1;
+		login->authing =0;
 		if ((login_req->flags & ISCSI_FLAG_LOGIN_NEXT_STAGE1) &&
 		    (login_req->flags & ISCSI_FLAG_LOGIN_TRANSIT)) {
 			login_rsp->flags |= (ISCSI_FLAG_LOGIN_NEXT_STAGE1 |
@@ -472,18 +581,39 @@ static int iscsi_target_handle_csg_zero(
 	payload_length = ntoh24(login_req->dlength);
 
 	param = iscsi_find_param_from_key(AUTHMETHOD, conn->param_list);
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (!param) {
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+		return -1;
+	}
+#else
 	if (!param)
 		return -1;
+#endif
 
 	ret = iscsi_decode_text_input(
 			PHASE_SECURITY|PHASE_DECLARATIVE,
 			SENDER_INITIATOR|SENDER_RECEIVER,
 			login->req_buf,
 			payload_length,
-			conn);
+			conn->param_list);
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (ret < 0) {
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+		return -1;
+	}
+#else
 	if (ret < 0)
 		return -1;
+#endif
 
+	if(ret >1){
+		ret=-1;
+	}
 	if (ret > 0) {
 		if (login->auth_complete) {
 			pr_err("Initiator has already been"
@@ -507,8 +637,17 @@ static int iscsi_target_handle_csg_zero(
 			login->rsp_buf,
 			&login->rsp_length,
 			conn->param_list);
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (ret < 0) {
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+		return -1;
+	}
+#else
 	if (ret < 0)
 		return -1;
+#endif
 
 	if (!iscsi_check_negotiated_keys(conn->param_list)) {
 		if (ISCSI_TPG_ATTRIB(ISCSI_TPG_C(conn))->authentication &&
@@ -522,8 +661,13 @@ static int iscsi_target_handle_csg_zero(
 		}
 
 		if (ISCSI_TPG_ATTRIB(ISCSI_TPG_C(conn))->authentication &&
-		    !login->auth_complete)
-			return 0;
+		    !login->auth_complete){
+			if(login->authing){
+				iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+				return -1;
+			}else
+				return 0;	
+		}
 
 		if (strncmp(param->value, NONE, 4) && !login->auth_complete)
 			return 0;
@@ -541,6 +685,44 @@ do_auth:
 	return iscsi_target_do_authentication(conn, login);
 }
 
+
+int check_renego_maxburstlength(char *textbuf, int length){
+	char *tmpbuf, *start = NULL, *end = NULL;
+
+	tmpbuf = kzalloc(length + 1, GFP_KERNEL);
+	if (!tmpbuf) {
+		pr_err("Unable to allocate memory for tmpbuf.\n");
+		return -1;
+	}
+
+	memcpy(tmpbuf, textbuf, length);
+	tmpbuf[length] = '\0';
+	start = tmpbuf;
+	end = (start + length);
+
+	while (start < end) {
+		char *key, *value;
+		struct iscsi_param *param;
+
+		if (iscsi_extract_key_value(start, &key, &value) < 0) {
+			kfree(tmpbuf);
+			return -1;
+		}
+
+		pr_debug(">>%s<<Got key: %s=%s\n",__func__, key, value);
+		if(!strcmp(key,MAXBURSTLENGTH)){
+			kfree(tmpbuf);
+			return 1;
+		}
+
+		start += strlen(key) + strlen(value) + 2;
+	}
+
+	kfree(tmpbuf);
+	return 0;
+}
+
+
 static int iscsi_target_handle_csg_one(struct iscsi_conn *conn, struct iscsi_login *login)
 {
 	int ret;
@@ -552,36 +734,128 @@ static int iscsi_target_handle_csg_one(struct iscsi_conn *conn, struct iscsi_log
 	login_rsp = (struct iscsi_login_rsp *) login->rsp;
 	payload_length = ntoh24(login_req->dlength);
 
-	ret = iscsi_decode_text_input(
-			PHASE_OPERATIONAL|PHASE_DECLARATIVE,
-			SENDER_INITIATOR|SENDER_RECEIVER,
-			login->req_buf,
-			payload_length,
-			conn);
-	if (ret < 0) {
+
+	if(strlen(login->for_cbit)>0){
+
+		int c_length;
+		c_length=strlen(login->for_cbit);
+
+
+		char *new_buf;
+
+	        new_buf = kzalloc(MAX_KEY_VALUE_PAIRS+c_length, GFP_KERNEL);
+        	if (!new_buf) {
+                	pr_err("Unable to allocate memory for tmpbuf.\n");
+#ifdef CONFIG_MACH_QNAPTS
+			iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+					ISCSI_LOGIN_STATUS_NO_RESOURCES);
+#endif
+                	return -1;
+        	}
+
+
+		memcpy(new_buf,login->for_cbit,c_length);
+		memcpy(new_buf+c_length,login->req_buf,MAX_KEY_VALUE_PAIRS);
+
+		if(login->tsih && check_renego_maxburstlength(new_buf,payload_length+c_length)){
+	                //iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR, ISCSI_LOGIN_STATUS_NO_VERSION);
+			kfree(new_buf);
+			return -2;
+		}
+
+		ret = iscsi_decode_text_input(
+                                PHASE_OPERATIONAL|PHASE_DECLARATIVE,
+                                SENDER_INITIATOR|SENDER_RECEIVER,
+                                new_buf,
+                                payload_length+c_length,
+                                conn->param_list);
+		kfree(new_buf);
+
+	
+	}else{
+		if(login->tsih && check_renego_maxburstlength(login->req_buf,payload_length)){
+                        //iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR, ISCSI_LOGIN_STATUS_NO_VERSION);
+			return -2;
+		}
+
+		ret = iscsi_decode_text_input(
+				PHASE_OPERATIONAL|PHASE_DECLARATIVE,
+				SENDER_INITIATOR|SENDER_RECEIVER,
+				login->req_buf,
+				payload_length,
+				conn->param_list);
+	}
+
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (!login->cbit && ret < 0) {
 		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
-				ISCSI_LOGIN_STATUS_INIT_ERR);
+				ISCSI_LOGIN_STATUS_MISSING_FIELDS);
 		return -1;
 	}
+#else
+	if (!login->cbit && ret < 0)
+		return -1;
+#endif
+
+        if(ret >1){
+                int ppp=0;
+                char *tpp;
+                ppp=payload_length-(ret-1);
+                tpp=login->req_buf;
+                tpp+=ppp;
+		snprintf(login->for_cbit,512,"%s",tpp);
+		login->for_cbit[ret-1]='\0';
+                ret=-1;
+        }
+
 
 	if (login->first_request)
 		if (iscsi_target_check_first_request(conn, login) < 0)
 			return -1;
 
+#ifdef CONFIG_MACH_QNAPTS
+	int _ret;
+
+	_ret = iscsi_target_check_for_existing_instances(conn, login);
+	if (_ret < 0) {
+		if (!login->tsih)
+			iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+					ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+		return -1;
+	}
+#else
 	if (iscsi_target_check_for_existing_instances(conn, login) < 0)
 		return -1;
 
-	ret = iscsi_encode_text_output(
-			PHASE_OPERATIONAL|PHASE_DECLARATIVE,
-			SENDER_TARGET,
-			login->rsp_buf,
-			&login->rsp_length,
-			conn->param_list);
-	if (ret < 0) {
-		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
-				ISCSI_LOGIN_STATUS_INIT_ERR);
-		return -1;
+#endif
+
+	if(!login->cbit){
+        	pr_debug("Sending Login Response, Flags: 0x%02x, ITT: 0x%08x,"
+                	" ExpCmdSN; 0x%08x, MaxCmdSN: 0x%08x, StatSN: 0x%08x, Length:"
+                	" %u\n", login_rsp->flags, ntohl(login_rsp->itt),
+                	ntohl(login_rsp->exp_cmdsn), ntohl(login_rsp->max_cmdsn),
+                	ntohl(login_rsp->statsn), login->rsp_length);
+
+		ret = iscsi_encode_text_output(
+				PHASE_OPERATIONAL|PHASE_DECLARATIVE,
+				SENDER_TARGET,
+				login->rsp_buf,
+				&login->rsp_length,
+				conn->param_list);
+
+#ifdef CONFIG_MACH_QNAPTS
+		if (ret < 0) {
+			iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+					ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+			return -1;
+		}
+#else
+		if (ret < 0)
+			return -1;
+#endif
 	}
+
 
 	if (!login->auth_complete &&
 	     ISCSI_TPG_ATTRIB(ISCSI_TPG_C(conn))->authentication) {
@@ -593,11 +867,16 @@ static int iscsi_target_handle_csg_one(struct iscsi_conn *conn, struct iscsi_log
 		return -1;
 	}
 
-	if (!iscsi_check_negotiated_keys(conn->param_list))
-		if ((login_req->flags & ISCSI_FLAG_LOGIN_NEXT_STAGE3) &&
-		    (login_req->flags & ISCSI_FLAG_LOGIN_TRANSIT))
-			login_rsp->flags |= ISCSI_FLAG_LOGIN_NEXT_STAGE3 |
-					    ISCSI_FLAG_LOGIN_TRANSIT;
+	if (!iscsi_check_negotiated_keys(conn->param_list)){
+
+		if(!login->cbit && strlen(login->for_cbit)){
+			memset(login->for_cbit,0,512);
+                }else{
+			if ((login_req->flags & ISCSI_FLAG_LOGIN_NEXT_STAGE3) &&
+		    	(login_req->flags & ISCSI_FLAG_LOGIN_TRANSIT))
+				login_rsp->flags |= ISCSI_FLAG_LOGIN_NEXT_STAGE3 | ISCSI_FLAG_LOGIN_TRANSIT;
+		}
+	}
 
 	return 0;
 }
@@ -611,6 +890,7 @@ static int iscsi_target_do_login(struct iscsi_conn *conn, struct iscsi_login *lo
 	login_req = (struct iscsi_login_req *) login->req;
 	login_rsp = (struct iscsi_login_rsp *) login->rsp;
 
+	int ret=0;
 	while (1) {
 		if (++pdu_count > MAX_LOGIN_PDUS) {
 			pr_err("MAX_LOGIN_PDUS count reached.\n");
@@ -619,19 +899,33 @@ static int iscsi_target_do_login(struct iscsi_conn *conn, struct iscsi_login *lo
 			return -1;
 		}
 
-		switch (ISCSI_LOGIN_CURRENT_STAGE(login_req->flags)) {
+		switch ((login_req->flags & ISCSI_FLAG_LOGIN_CURRENT_STAGE_MASK) >> 2) {
 		case 0:
-			login_rsp->flags &= ~ISCSI_FLAG_LOGIN_CURRENT_STAGE_MASK;
+			login_rsp->flags |= (0 & ISCSI_FLAG_LOGIN_CURRENT_STAGE_MASK);
+
+			/* we will put possible resp in code if it is fail */
 			if (iscsi_target_handle_csg_zero(conn, login) < 0)
 				return -1;
 			break;
 		case 1:
 			login_rsp->flags |= ISCSI_FLAG_LOGIN_CURRENT_STAGE1;
-			if (iscsi_target_handle_csg_one(conn, login) < 0)
+			if( login_req->flags & ISCSI_FLAG_LOGIN_CONTINUE ){
+				login->cbit=1;
+			}else{
+				login_rsp->flags &= ~ISCSI_FLAG_LOGIN_CONTINUE;
+				login->cbit=0;
+			}
+
+			/* we will put possible resp in code if it is fail */
+			ret=iscsi_target_handle_csg_one(conn, login);	
+			if (ret < 0){
+				if(ret==-2)
+					iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR, ISCSI_LOGIN_STATUS_NO_VERSION);	
+
 				return -1;
+			}
 			if (login_rsp->flags & ISCSI_FLAG_LOGIN_TRANSIT) {
 				login->tsih = conn->sess->tsih;
-				login->login_complete = 1;
 				if (iscsi_target_do_tx_login_io(conn,
 						login) < 0)
 					return -1;
@@ -641,7 +935,8 @@ static int iscsi_target_do_login(struct iscsi_conn *conn, struct iscsi_login *lo
 		default:
 			pr_err("Illegal CSG: %d received from"
 				" Initiator, protocol error.\n",
-				ISCSI_LOGIN_CURRENT_STAGE(login_req->flags));
+				(login_req->flags & ISCSI_FLAG_LOGIN_CURRENT_STAGE_MASK)
+				>> 2);
 			break;
 		}
 
@@ -672,10 +967,29 @@ static void iscsi_initiatorname_tolower(
 	}
 }
 
+
+/* Jay Wei, 20140624 */
+static int is_initiatorname_illegal(char *i_buf_addr)
+{
+   char *ptr;
+   u32 iqn_size = strlen(i_buf_addr), i;
+   for (i =0; i< iqn_size; i++){
+   	ptr = &i_buf_addr[i];
+	if( (*ptr >= 'a' && *ptr <= 'z') || (*ptr >= '0' &&
+	     *ptr <= ':') || *ptr == '-' || *ptr == '.' ){
+			continue;
+	}
+	else
+		return 1;
+   }
+   return 0;
+}
+
+
 /*
  * Processes the first Login Request..
  */
-int iscsi_target_locate_portal(
+static int iscsi_target_locate_portal(
 	struct iscsi_np *np,
 	struct iscsi_conn *conn,
 	struct iscsi_login *login)
@@ -688,10 +1002,43 @@ int iscsi_target_locate_portal(
 	u32 payload_length;
 	int sessiontype = 0, ret = 0;
 
+#ifdef CONFIG_MACH_QNAPTS //Benjamin 20110322
+// RF3720 section 5.3, "The initial Login Request of the first connection of a session MAY include the SessionType key=value pair."
+	const char default_session[] = {SESSION_TYPE"="NORMAL};
+
+/* 20140513, adamhsu, redmine 8253 */
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(3,12,6))
+/* 20140522, adamhsu, redmine 8397, bugzilla 46218 */
+	struct se_node_acl *se_nacl = NULL;
+	u32 queue_depth = 0;
+	int tag_num = 0, tag_size = 0;
+#endif
+#endif
+
 	login_req = (struct iscsi_login_req *) login->req;
 	payload_length = ntoh24(login_req->dlength);
 
+	login->first_request	= 1;
+	login->leading_connection = (!login_req->tsih) ? 1 : 0;
+	login->current_stage	=
+		(login_req->flags & ISCSI_FLAG_LOGIN_CURRENT_STAGE_MASK) >> 2;
+	login->version_min	= login_req->min_version;
+	login->version_max	= login_req->max_version;
+	memcpy(login->isid, login_req->isid, 6);
+	login->cmd_sn		= login_req->cmdsn;
+	login->init_task_tag	= login_req->itt;
+	login->initial_exp_statsn = login_req->exp_statsn;
+	login->cid		= login_req->cid;
+	login->tsih		= login_req->tsih;
+
+	if (iscsi_target_get_initial_payload(conn, login) < 0)
+		return -1;
+
+#ifdef CONFIG_MACH_QNAPTS   //Benjamin 20110322
+	tmpbuf = kzalloc(payload_length + 1 + strlen(NORMAL) + 1, GFP_KERNEL);
+#else
 	tmpbuf = kzalloc(payload_length + 1, GFP_KERNEL);
+#endif 
 	if (!tmpbuf) {
 		pr_err("Unable to allocate memory for tmpbuf.\n");
 		return -1;
@@ -721,11 +1068,12 @@ int iscsi_target_locate_portal(
 
 		start += strlen(key) + strlen(value) + 2;
 	}
+
 	/*
 	 * See 5.3.  Login Phase.
 	 */
-	if (!i_buf) {
-		pr_err("InitiatorName key not received"
+	if (!i_buf || !(*i_buf)) {  // Jay Wei. 20140624 Added !(*i_buf)
+		pr_err("InitiatorName key or value not received"
 			" in first login request.\n");
 		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
 			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
@@ -739,16 +1087,45 @@ int iscsi_target_locate_portal(
 	 */
 	iscsi_initiatorname_tolower(i_buf);
 
+	/* Jay Wei. 20140624 Check the initiator name */
+	if ( is_initiatorname_illegal(i_buf) ) {
+		pr_err("InitiatorName is illegal in first login request.\n");
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+		        ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+		ret = -1;
+		goto out;
+	}
+
 	if (!s_buf) {
 		if (!login->leading_connection)
 			goto get_target;
-
+#ifdef CONFIG_MACH_QNAPTS	//Benjamin 20110322
+        // RF3720 section 5.3, "The initial Login Request of the first connection of a session MAY include the SessionType key=value pair."
+        if((payload_length + strlen(default_session) + 1) < MAX_KEY_VALUE_PAIRS) {
+            memcpy(tmpbuf + payload_length + 1, NORMAL, strlen(NORMAL));
+            s_buf = tmpbuf + payload_length + 1;
+            s_buf[strlen(NORMAL)] = '\0';
+            memcpy(login->req_buf + payload_length, default_session, strlen(default_session));
+            payload_length += strlen(default_session) + 1;
+            hton24(login_req->dlength, payload_length);
+            login->req_buf[payload_length - 1] = '\0';
+        }
+        else {
+    		pr_err("SessionType key not received"
+    			" in first login request.\n");
+    		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+    			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
+    		ret = -1;
+    		goto out;
+        }
+#else
 		pr_err("SessionType key not received"
 			" in first login request.\n");
 		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
 			ISCSI_LOGIN_STATUS_MISSING_FIELDS);
 		ret = -1;
 		goto out;
+#endif /* #ifdef CONFIG_MACH_QNAPTS */                
 	}
 
 	/*
@@ -780,7 +1157,18 @@ int iscsi_target_locate_portal(
 			goto out;
 		}
 		ret = 0;
+
+/* 20140513, adamhsu, redmine 8253 */
+#ifdef CONFIG_MACH_QNAPTS
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(3,12,6))
+		goto alloc_tags;
+#else
 		goto out;
+#endif
+
+#else /* !CONFIG_MACH_QNAPTS */
+		goto out;
+#endif
 	}
 
 get_target:
@@ -799,8 +1187,27 @@ get_target:
 	 */
 	tiqn = iscsit_get_tiqn_for_login(t_buf);
 	if (!tiqn) {
+#ifdef CONFIG_MACH_QNAPTS
+		int check_ret;
+
+		check_ret = iscsi_check_stop_failure_log(conn, 
+				FAIL_LOCATE_TIQN_TMP_FNAME, t_buf, 
+				conn->login_ip, MAX_FAIL_LOCATE_TIQN_MSG_CNT);
+
+		if (check_ret != 0) {
+			pr_err("Unable to locate Target IQN: %s from "
+				"login ip: %s\n", t_buf, conn->login_ip);
+
+			if (check_ret == 1)
+				pr_warn("hit max login failure msg count when "
+					"to locate Target IQN, stop to "
+					"show message. Please check your "
+					"iscsi system log later\n");
+		}
+#else
 		pr_err("Unable to locate Target IQN: %s in"
 			" Storage Node\n", t_buf);
+#endif
 		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
 				ISCSI_LOGIN_STATUS_SVC_UNAVAILABLE);
 		ret = -1;
@@ -808,13 +1215,46 @@ get_target:
 	}
 	pr_debug("Located Storage Object: %s\n", tiqn->tiqn);
 
+/* Jonathan Ho, 20140416,  one target can be logged in from only one initiator IQN */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SUPPORT_SINGLE_INIT_LOGIN)
+	if (!tiqn->cluster_enable) {
+		ret = iscsit_search_tiqn_for_initiator(tiqn, i_buf);
+		if (ret == -1) {
+			pr_err("Target: %s is connected by other initiator, login rejected\n", tiqn->tiqn);
+			iscsit_put_tiqn_for_login(tiqn);
+			iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_INITIATOR_ERR,
+					ISCSI_LOGIN_STATUS_TGT_FORBIDDEN);
+			goto out;
+		}
+	}
+#endif
 	/*
 	 * Locate Target Portal Group from Storage Node.
 	 */
 	conn->tpg = iscsit_get_tpg_from_np(tiqn, np);
 	if (!conn->tpg) {
+#ifdef CONFIG_MACH_QNAPTS
+		int check_ret;
+
+		check_ret = iscsi_check_stop_failure_log(conn, 
+			FAIL_LOCATE_TPG_TMP_FNAME, tiqn->tiqn, conn->login_ip,
+			MAX_FAIL_LOCATE_TPG_MSG_CNT);
+
+		if (check_ret != 0) {
+			pr_err("Unable to locate Target Portal Group"
+				" on %s from login ip: %s\n", tiqn->tiqn,
+				conn->login_ip);
+
+			if (check_ret == 1)
+				pr_warn("hit max login failure msg count when "
+					"to locate Target Portal Group, "
+					"stop to show message. Please check "
+					"your iscsi system log later\n");
+		}
+#else
 		pr_err("Unable to locate Target Portal Group"
 				" on %s\n", tiqn->tiqn);
+#endif
 		iscsit_put_tiqn_for_login(tiqn);
 		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
 				ISCSI_LOGIN_STATUS_SVC_UNAVAILABLE);
@@ -873,36 +1313,145 @@ get_target:
 		goto out;
 	}
 
+/* 20140513, adamhsu, redmine 8253 */
+#ifdef CONFIG_MACH_QNAPTS
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(3,12,6))
+	se_nacl = sess->se_sess->se_node_acl;
+	queue_depth = se_nacl->queue_depth;
+	pr_debug("queue_depth:0x%x\n", queue_depth);
+
+	/*
+	 * Setup pre-allocated tags based upon allowed per NodeACL CmdSN
+	 * depth for non immediate commands, plus extra tags for immediate
+	 * commands.
+	 *
+	 * Also enforce a ISCSIT_MIN_TAGS to prevent unnecessary contention
+	 * in per-cpu-ida tag allocation logic + small queue_depth.
+	 */
+alloc_tags:
+	tag_num = max_t(u32, ISCSIT_MIN_TAGS, queue_depth);
+	tag_num += (tag_num * 2) + ISCSIT_EXTRA_TAGS;
+	pr_debug("tag_num:0x%x\n", tag_num);
+
+	tag_size = sizeof(struct iscsi_cmd);
+
+	ret = transport_alloc_session_tags(sess->se_sess, tag_num, tag_size);
+	if (ret < 0) {
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+				    ISCSI_LOGIN_STATUS_NO_RESOURCES);
+		ret = -1;
+	}
+#endif
+#endif
 	ret = 0;
 out:
 	kfree(tmpbuf);
 	return ret;
 }
 
+struct iscsi_login *iscsi_target_init_negotiation(
+	struct iscsi_np *np,
+	struct iscsi_conn *conn,
+	char *login_pdu)
+{
+	struct iscsi_login *login;
+
+	login = kzalloc(sizeof(struct iscsi_login), GFP_KERNEL);
+	if (!login) {
+		pr_err("Unable to allocate memory for struct iscsi_login.\n");
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+				ISCSI_LOGIN_STATUS_NO_RESOURCES);
+		return NULL;
+	}
+
+	login->req = kmemdup(login_pdu, ISCSI_HDR_LEN, GFP_KERNEL);
+	if (!login->req) {
+		pr_err("Unable to allocate memory for Login Request.\n");
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+				ISCSI_LOGIN_STATUS_NO_RESOURCES);
+		goto out;
+	}
+
+	login->req_buf = kzalloc(MAX_KEY_VALUE_PAIRS, GFP_KERNEL);
+	if (!login->req_buf) {
+		pr_err("Unable to allocate memory for response buffer.\n");
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+				ISCSI_LOGIN_STATUS_NO_RESOURCES);
+		goto out;
+	}
+	login->for_cbit = kzalloc(512, GFP_KERNEL);
+        if (!login->for_cbit) {
+                pr_err("Unable to allocate memory for response buffer.\n");
+                iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+                                ISCSI_LOGIN_STATUS_NO_RESOURCES);
+                goto out;
+        }
+	login->cbit=0;
+	/*
+	 * SessionType: Discovery
+	 *
+	 *	Locates Default Portal
+	 *
+	 * SessionType: Normal
+	 *
+	 *	Locates Target Portal from NP -> Target IQN
+	 */
+	if (iscsi_target_locate_portal(np, conn, login) < 0)
+		goto out;
+
+	return login;
+out:
+	kfree(login->req);
+	kfree(login->req_buf);
+	kfree(login->for_cbit);
+	kfree(login);
+
+	return NULL;
+}
+
 int iscsi_target_start_negotiation(
 	struct iscsi_login *login,
 	struct iscsi_conn *conn)
 {
-	int ret;
+	int ret = -1;
+
+	login->rsp = kzalloc(ISCSI_HDR_LEN, GFP_KERNEL);
+	if (!login->rsp) {
+		pr_err("Unable to allocate memory for"
+				" Login Response.\n");
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+				ISCSI_LOGIN_STATUS_NO_RESOURCES);
+		ret = -1;
+		goto out;
+	}
+
+	login->rsp_buf = kzalloc(MAX_KEY_VALUE_PAIRS, GFP_KERNEL);
+	if (!login->rsp_buf) {
+		pr_err("Unable to allocate memory for"
+			" request buffer.\n");
+		iscsit_tx_login_rsp(conn, ISCSI_STATUS_CLS_TARGET_ERR,
+				ISCSI_LOGIN_STATUS_NO_RESOURCES);
+		ret = -1;
+		goto out;
+	}
 
 	ret = iscsi_target_do_login(conn, login);
+out:
 	if (ret != 0)
 		iscsi_remove_failed_auth_entry(conn);
 
-	iscsi_target_nego_release(conn);
+	iscsi_target_nego_release(login, conn);
 	return ret;
 }
 
-void iscsi_target_nego_release(struct iscsi_conn *conn)
+void iscsi_target_nego_release(
+	struct iscsi_login *login,
+	struct iscsi_conn *conn)
 {
-	struct iscsi_login *login = conn->conn_login;
-
-	if (!login)
-		return;
-
+	kfree(login->req);
+	kfree(login->rsp);
 	kfree(login->req_buf);
 	kfree(login->rsp_buf);
+	kfree(login->for_cbit);
 	kfree(login);
-
-	conn->conn_login = NULL;
 }

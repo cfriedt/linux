@@ -169,6 +169,12 @@ int dm_tm_commit(struct dm_transaction_manager *tm, struct dm_block *root)
 }
 EXPORT_SYMBOL_GPL(dm_tm_commit);
 
+int dm_tm_backup_commit(struct dm_transaction_manager *tm, struct dm_block *root)
+{
+    return dm_bm_flush_and_unlock(tm->bm, root);
+}
+EXPORT_SYMBOL_GPL(dm_tm_backup_commit);
+
 int dm_tm_new_block(struct dm_transaction_manager *tm,
 		    struct dm_block_validator *v,
 		    struct dm_block **result)
@@ -320,6 +326,7 @@ struct dm_block_manager *dm_tm_get_bm(struct dm_transaction_manager *tm)
 
 static int dm_tm_create_internal(struct dm_block_manager *bm,
 				 dm_block_t sb_location,
+				 dm_block_t backup_reserved,
 				 struct dm_transaction_manager **tm,
 				 struct dm_space_map **sm,
 				 int create,
@@ -339,7 +346,7 @@ static int dm_tm_create_internal(struct dm_block_manager *bm,
 
 	if (create) {
 		r = dm_sm_metadata_create(*sm, *tm, dm_bm_nr_blocks(bm),
-					  sb_location);
+					  sb_location, backup_reserved);
 		if (r) {
 			DMERR("couldn't create metadata space map");
 			goto bad;
@@ -362,10 +369,11 @@ bad:
 }
 
 int dm_tm_create_with_sm(struct dm_block_manager *bm, dm_block_t sb_location,
+			 dm_block_t backup_reserved,
 			 struct dm_transaction_manager **tm,
 			 struct dm_space_map **sm)
 {
-	return dm_tm_create_internal(bm, sb_location, tm, sm, 1, NULL, 0);
+	return dm_tm_create_internal(bm, sb_location, backup_reserved, tm, sm, 1, NULL, 0);
 }
 EXPORT_SYMBOL_GPL(dm_tm_create_with_sm);
 
@@ -374,7 +382,7 @@ int dm_tm_open_with_sm(struct dm_block_manager *bm, dm_block_t sb_location,
 		       struct dm_transaction_manager **tm,
 		       struct dm_space_map **sm)
 {
-	return dm_tm_create_internal(bm, sb_location, tm, sm, 0, sm_root, root_len);
+	return dm_tm_create_internal(bm, sb_location, 0, tm, sm, 0, sm_root, root_len);
 }
 EXPORT_SYMBOL_GPL(dm_tm_open_with_sm);
 

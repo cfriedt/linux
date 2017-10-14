@@ -33,6 +33,13 @@
 #include <linux/compat.h>
 
 #include "internal.h"
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+#include <linux/fnotify.h>
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 
 int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	struct file *filp)
@@ -119,6 +126,13 @@ static long do_sys_truncate(const char __user *pathname, loff_t length)
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
 	struct path path;
 	int error;
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	T_FILE_STATUS  tfsOrg;
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 
 	if (length < 0)	/* sorry, but loff_t says... */
 		return -EINVAL;
@@ -126,9 +140,29 @@ static long do_sys_truncate(const char __user *pathname, loff_t length)
 retry:
 	error = user_path_at(AT_FDCWD, pathname, lookup_flags, &path);
 	if (!error) {
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+		struct inode *inode;
+
+		inode = path.dentry->d_inode;
+		FILE_STATUS_BY_INODE(inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 		error = vfs_truncate(&path, length);
 		path_put(&path);
 	}
+
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!error && (FN_TRUNCATE & msys_nodify))
+		pfn_sys_file_notify(FN_TRUNCATE, MARG_1xI64, &path, NULL, 0, &tfsOrg, length, 0, 0, 0);
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
+
 	if (retry_estale(error, lookup_flags)) {
 		lookup_flags |= LOOKUP_REVAL;
 		goto retry;
@@ -154,6 +188,13 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	struct dentry *dentry;
 	struct fd f;
 	int error;
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	T_FILE_STATUS  tfsOrg;
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 
 	error = -EINVAL;
 	if (length < 0)
@@ -186,9 +227,24 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	error = locks_verify_truncate(inode, f.file, length);
 	if (!error)
 		error = security_path_truncate(&f.file->f_path);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!error)  FILE_STATUS_BY_INODE(inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 	if (!error)
 		error = do_truncate(dentry, length, ATTR_MTIME|ATTR_CTIME, f.file);
 	sb_end_write(inode->i_sb);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!error && (FN_TRUNCATE & msys_nodify))
+		pfn_sys_file_notify(FN_TRUNCATE, MARG_1xI64, &f.file->f_path, NULL, 0, &tfsOrg, length, 0, 0, 0);
+#endif	//QNAP_FNOTIFY
+#endif
+//////////////////////////////////
 out_putf:
 	fdput(f);
 out:
@@ -492,6 +548,16 @@ SYSCALL_DEFINE2(fchmod, unsigned int, fd, umode_t, mode)
 	if (file) {
 		audit_inode(NULL, file->f_path.dentry, 0);
 		err = chmod_common(&file->f_path, mode);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!err && file && (FN_CHMOD & msys_nodify)) {
+		T_FILE_STATUS  tfsOrg;
+		pfn_sys_file_notify(FN_CHMOD, MARG_1xI32, &file->f_path, NULL, 0, &tfsOrg, 0x1FF & mode, 0, 0, 0);
+	}
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 		fput(file);
 	}
 	return err;
@@ -506,6 +572,19 @@ retry:
 	error = user_path_at(dfd, filename, lookup_flags, &path);
 	if (!error) {
 		error = chmod_common(&path, mode);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!error && (FN_CHMOD & msys_nodify)) {
+		T_FILE_STATUS  tfsOrg;
+		struct inode *inode = path.dentry->d_inode;
+
+		FILE_STATUS_BY_INODE(inode, tfsOrg);
+		pfn_sys_file_notify(FN_CHMOD, MARG_1xI32, &path, NULL, 0, &tfsOrg, 0x1FF & mode, 0, 0, 0);
+	}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 		path_put(&path);
 		if (retry_estale(error, lookup_flags)) {
 			lookup_flags |= LOOKUP_REVAL;
@@ -562,6 +641,13 @@ SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 	struct path path;
 	int error = -EINVAL;
 	int lookup_flags;
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	T_FILE_STATUS  tfsOrg;
+#endif	//QNAP_FNOTIF
+#endif
+///////////////////////////////////
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
 		goto out;
@@ -576,8 +662,23 @@ retry:
 	error = mnt_want_write(path.mnt);
 	if (error)
 		goto out_release;
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	FILE_STATUS_BY_INODE(path.dentry->d_inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 	error = chown_common(&path, user, group);
 	mnt_drop_write(path.mnt);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!error && (FN_CHOWN & msys_nodify))
+		pfn_sys_file_notify(FN_CHOWN, MARG_2xI32, &path, NULL, 0, &tfsOrg, user, group, 0, 0);
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 out_release:
 	path_put(&path);
 	if (retry_estale(error, lookup_flags)) {
@@ -603,6 +704,13 @@ SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 {
 	struct fd f = fdget(fd);
 	int error = -EBADF;
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	T_FILE_STATUS  tfsOrg;
+#endif	//QNAP_FNOTIF
+#endif
+///////////////////////////////////
 
 	if (!f.file)
 		goto out;
@@ -611,8 +719,23 @@ SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 	if (error)
 		goto out_fput;
 	audit_inode(NULL, f.file->f_path.dentry, 0);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (f.file->f_path.dentry)  FILE_STATUS_BY_INODE(f.file->f_path.dentry->d_inode, tfsOrg);
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 	error = chown_common(&f.file->f_path, user, group);
 	mnt_drop_write_file(f.file);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+	if (!error && (FN_CHOWN & msys_nodify))
+		pfn_sys_file_notify(FN_CHOWN, MARG_2xI32, &f.file->f_path, NULL, 0, &tfsOrg, user, group, 0, 0);
+#endif	//QNAP_FNOTIFY
+#endif
+///////////////////////////////////
 out_fput:
 	fdput(f);
 out:
@@ -946,6 +1069,18 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 			} else {
 				fsnotify_open(f);
 				fd_install(fd, f);
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef	QNAP_FNOTIFY
+				if ((FN_OPEN & msys_nodify) && pfn_sys_file_notify)
+				{
+					T_FILE_STATUS  tfsOrg={0};
+					if (f->f_path.dentry)  FILE_STATUS_BY_INODE(f->f_path.dentry->d_inode, tfsOrg);
+					pfn_sys_file_notify(FN_OPEN, MARG_2xI32, &f->f_path, NULL, 0, &tfsOrg, flags, mode, 0, 0);
+				}
+#endif	//QNAP_FNOTIFY
+#endif
+////////////////////////////////////
 			}
 		}
 		putname(tmp);

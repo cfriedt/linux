@@ -45,6 +45,7 @@
 #include "compat.h"
 #include "delayed-inode.h"
 #include "ctree.h"
+#include "csum.h"
 #include "disk-io.h"
 #include "transaction.h"
 #include "btrfs_inode.h"
@@ -63,6 +64,7 @@
 
 static const struct super_operations btrfs_super_ops;
 static struct file_system_type btrfs_fs_type;
+static unsigned long btrfs_csum_initialized;
 
 static const char *btrfs_decode_error(int errno)
 {
@@ -1075,6 +1077,17 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	if (!(flags & MS_RDONLY))
 		mode |= FMODE_WRITE;
 
+	/* Initialize the data structures needed for
+	 * Btrfs checksum calculation- this is only
+	 * performed once and is freed on module exit
+	 */
+	if (!test_and_set_bit(1, &btrfs_csum_initialized)) {
+		error = btrfs_csum_init();
+
+		if (error)
+			return ERR_PTR(error);
+	}
+
 	error = btrfs_parse_early_options(data, mode, fs_type,
 					  &subvol_name, &subvol_objectid,
 					  &fs_devices);
@@ -1772,6 +1785,7 @@ static void __exit exit_btrfs_fs(void)
 	extent_map_exit();
 	extent_io_exit();
 	btrfs_interface_exit();
+	btrfs_csum_exit();
 	unregister_filesystem(&btrfs_fs_type);
 	btrfs_exit_sysfs();
 	btrfs_cleanup_fs_uuids();

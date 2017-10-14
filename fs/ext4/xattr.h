@@ -99,6 +99,9 @@ extern const struct xattr_handler ext4_xattr_trusted_handler;
 extern const struct xattr_handler ext4_xattr_acl_access_handler;
 extern const struct xattr_handler ext4_xattr_acl_default_handler;
 extern const struct xattr_handler ext4_xattr_security_handler;
+#ifdef CONFIG_EXT4_FS_RICHACL
+extern const struct xattr_handler ext4_richacl_xattr_handler;
+#endif
 
 extern ssize_t ext4_listxattr(struct dentry *, char *, size_t);
 

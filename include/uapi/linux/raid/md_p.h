@@ -272,7 +272,13 @@ struct mdp_superblock_1 {
 	 * into the 'roles' value.  If a device is spare or faulty, then it doesn't
 	 * have a meaningful role.
 	 */
+
+#if defined (CONFIG_MACH_QNAPTS) && defined (CONFIG_USE_STRIPE_ZONE)
+	__le16	dev_roles[256];	/* role in array, or 0xffff for a spare, or 0xfffe for faulty */
+	__le64	work_sectors[256];
+#else
 	__le16	dev_roles[0];	/* role in array, or 0xffff for a spare, or 0xfffe for faulty */
+#endif
 };
 
 /* feature_map bits */

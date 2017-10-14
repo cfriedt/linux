@@ -46,9 +46,12 @@
 #include <linux/utsname.h>
 #include <linux/pagemap.h>
 #include <linux/sunrpc/svcauth_gss.h>
-
-#include "idmap.h"
+#ifdef CONFIG_NFSV4_FS_RICHACL
+#include <linux/nfs4_acl.h>
+#else
 #include "acl.h"
+#endif
+#include "idmap.h"
 #include "xdr4.h"
 #include "vfs.h"
 #include "state.h"
@@ -162,8 +165,8 @@ static __be32 *read_buf(struct nfsd4_compoundargs *argp, u32 nbytes)
 	 */
 	memcpy(p, argp->p, avail);
 	/* step to next page */
-	argp->p = page_address(argp->pagelist[0]);
 	argp->pagelist++;
+	argp->p = page_address(argp->pagelist[0]);
 	if (argp->pagelen < PAGE_SIZE) {
 		argp->end = argp->p + (argp->pagelen>>2);
 		argp->pagelen = 0;

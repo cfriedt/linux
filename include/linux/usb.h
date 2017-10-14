@@ -393,6 +393,24 @@ enum usb_port_connect_type {
 	USB_PORT_NOT_USED,
 };
 
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+/*
+ * USB 2.0 Link Power Management (LPM) parameters.
+ */
+struct usb2_lpm_parameters {
+	/* Best effort service latency indicate how long the host will drive
+	 * resume on an exit from L1.
+	 */
+	unsigned int besl;
+
+	/* Timeout value in microseconds for the L1 inactivity (LPM) timer.
+	 * When the timer counts to zero, the parent hub will initiate a LPM
+	 * transition to L1.
+	 */
+	int timeout;
+};
+#endif
+
 /*
  * USB 3.0 Link Power Management (LPM) parameters.
  *
@@ -538,8 +556,14 @@ struct usb_device {
 	unsigned wusb:1;
 	unsigned lpm_capable:1;
 	unsigned usb2_hw_lpm_capable:1;
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+	unsigned usb2_hw_lpm_besl_capable:1;
+#endif
 	unsigned usb2_hw_lpm_enabled:1;
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+	unsigned usb2_hw_lpm_allowed:1;
 	unsigned usb3_lpm_enabled:1;
+#endif
 	int string_langid;
 
 	/* static strings from the device */
@@ -566,6 +590,9 @@ struct usb_device {
 	struct wusb_dev *wusb_dev;
 	int slot_id;
 	enum usb_device_removable removable;
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+	struct usb2_lpm_parameters l1_params;
+#endif
 	struct usb3_lpm_parameters u1_params;
 	struct usb3_lpm_parameters u2_params;
 	unsigned lpm_disable_count;

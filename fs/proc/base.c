@@ -1694,7 +1694,12 @@ int proc_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 	qname.name = name;
 	qname.len  = len;
 	qname.hash = full_name_hash(name, len);
-
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    qname.case_folding = 0;
+#endif
+#endif
 	child = d_lookup(dir, &qname);
 	if (!child) {
 		struct dentry *new;
@@ -2769,6 +2774,12 @@ static void proc_flush_task_mnt(struct vfsmount *mnt, pid_t pid, pid_t tgid)
 
 	name.name = buf;
 	name.len = snprintf(buf, sizeof(buf), "%d", tgid);
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    name.case_folding = 0;
+#endif
+#endif
 	leader = d_hash_and_lookup(mnt->mnt_root, &name);
 	if (!leader)
 		goto out;

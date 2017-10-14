@@ -1,4 +1,4 @@
-/* $Id: l3_1tr6.h,v 2.2.6.2 2001/09/23 22:24:49 kai Exp $
+/* $Id: l3_1tr6.h,v 1.1.1.1 2014/03/19 14:07:28 franklee Exp $
  *
  * German 1TR6 D-channel protocol defines
  *

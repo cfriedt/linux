@@ -487,6 +487,25 @@ writeback_single_inode(struct inode *inode, struct bdi_writeback *wb,
 {
 	int ret = 0;
 
+    //George Wu, 20130721, debug blkdev_writepages
+#ifdef CONFIG_MACH_QNAPTS
+#if 0
+    if(inode != NULL)
+    {
+    	if(inode->i_bdev != NULL)
+     	{
+       		if(inode->i_bdev->bd_disk != NULL)
+       		{
+     			printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "inode->i_bdev->bd_disk->major = %d\n", inode->i_bdev->bd_disk->major);
+       			printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "inode->i_bdev->bd_disk->first_minor = %d\n", inode->i_bdev->bd_disk->first_minor);
+       			printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "inode->i_bdev->bd_disk->minors = %d\n", inode->i_bdev->bd_disk->minors);
+		        printk(KERN_DEBUG "[BLKDEV_WRITEPAGES] " "inode->i_bdev->bd_disk->disk_name = %s\n", inode->i_bdev->bd_disk->disk_name);
+       		}
+       	}
+   	}
+#endif
+#endif
+
 	spin_lock(&inode->i_lock);
 	if (!atomic_read(&inode->i_count))
 		WARN_ON(!(inode->i_state & (I_WILL_FREE|I_FREEING)));
@@ -1008,8 +1027,14 @@ void bdi_writeback_workfn(struct work_struct *work)
 						struct bdi_writeback, dwork);
 	struct backing_dev_info *bdi = wb->bdi;
 	long pages_written;
-
+ 
+#ifdef CONFIG_MACH_QNAPTS  //fix Bug#49062
+	set_worker_desc("flush-%s", bdi->dev ?
+			dev_name(bdi->dev) : bdi->name);
+#else	
 	set_worker_desc("flush-%s", dev_name(bdi->dev));
+#endif
+					
 	current->flags |= PF_SWAPWRITE;
 
 	if (likely(!current_is_workqueue_rescuer() ||

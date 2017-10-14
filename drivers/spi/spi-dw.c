@@ -24,6 +24,7 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/spi/spi.h>
+#include <linux/gpio.h>
 
 #include "spi-dw.h"
 
@@ -59,7 +60,7 @@ struct chip_data {
 	u8 bits_per_word;
 	u16 clk_div;		/* baud rate divider */
 	u32 speed_hz;		/* baud rate */
-	void (*cs_control)(u32 command);
+	void (*cs_control)(struct dw_spi *dws, u32 command);
 };
 
 #ifdef CONFIG_DEBUG_FS
@@ -280,8 +281,11 @@ static void giveback(struct dw_spi *dws)
 					struct spi_transfer,
 					transfer_list);
 
-	if (!last_transfer->cs_change && dws->cs_control)
-		dws->cs_control(MRST_SPI_DEASSERT);
+	if (!last_transfer->cs_change && dws->cs_control &&
+			msg->spi->chip_select == 0)
+		dws->cs_control(dws, MRST_SPI_DEASSERT);
+
+	dw_writel(dws, DW_SPI_SER, 0);
 
 	msg->state = NULL;
 	if (msg->complete)
@@ -402,6 +406,7 @@ static void pump_transfers(unsigned long data)
 		goto early_exit;
 	}
 
+
 	/* Handle end of message */
 	if (message->state == DONE_STATE) {
 		message->status = 0;
@@ -433,6 +438,10 @@ static void pump_transfers(unsigned long data)
 		cs_change = 1;
 
 	cr0 = chip->cr0;
+
+	/* Enable CS when starting the message */
+	if (message->state == START_STATE)
+		spi_chip_sel(dws, spi->chip_select);
 
 	/* Handle per transfer options for bpw and speed */
 	if (transfer->speed_hz) {
@@ -477,21 +486,6 @@ static void pump_transfers(unsigned long data)
 	}
 	message->state = RUNNING_STATE;
 
-	/*
-	 * Adjust transfer mode if necessary. Requires platform dependent
-	 * chipselect mechanism.
-	 */
-	if (dws->cs_control) {
-		if (dws->rx && dws->tx)
-			chip->tmode = SPI_TMOD_TR;
-		else if (dws->rx)
-			chip->tmode = SPI_TMOD_RO;
-		else
-			chip->tmode = SPI_TMOD_TO;
-
-		cr0 &= ~SPI_TMOD_MASK;
-		cr0 |= (chip->tmode << SPI_TMOD_OFFSET);
-	}
 
 	/* Check if current transfer is a DMA transaction */
 	dws->dma_mapped = map_dma_buffers(dws);
@@ -522,7 +516,6 @@ static void pump_transfers(unsigned long data)
 			dw_writew(dws, DW_SPI_CTRL0, cr0);
 
 		spi_set_clk(dws, clk_div ? clk_div : chip->clk_div);
-		spi_chip_sel(dws, spi->chip_select);
 
 		/* Set the interrupt mask, for poll mode just disable all int */
 		spi_mask_intr(dws, 0xff);
@@ -623,11 +616,31 @@ static int dw_spi_transfer(struct spi_device *spi, struct spi_message *msg)
 	return 0;
 }
 
+static int dw_spi_gpio_cs_control_setup(int gpio)
+{
+	int status;
+
+	status = gpio_request(gpio, "dw_spi_gpio_cs_control");
+	if (status < 0)
+		return status;
+
+	status = gpio_direction_output(gpio, 1);
+
+	return status;
+}
+
+static void dw_spi_gpio_cs_control(struct dw_spi *dws, u32 value)
+{
+	/* CS is active low */
+	gpio_set_value(dws->master->cs_gpios[0], value ? 0 : 1);
+}
+
 /* This may be called twice for each spi dev */
 static int dw_spi_setup(struct spi_device *spi)
 {
 	struct dw_spi_chip *chip_info = NULL;
 	struct chip_data *chip;
+	int status;
 
 	if (spi->bits_per_word != 8 && spi->bits_per_word != 16)
 		return -EINVAL;
@@ -658,6 +671,13 @@ static int dw_spi_setup(struct spi_device *spi)
 		chip->tx_threshold = 0;
 
 		chip->enable_dma = chip_info->enable_dma;
+	} else if (spi->master->cs_gpios) {
+		/* DT defined GPIO to control the CS, perform setup and use it */
+		status = dw_spi_gpio_cs_control_setup(spi->master->cs_gpios[0]);
+		if (status)
+			return status;
+
+		chip->cs_control = dw_spi_gpio_cs_control;
 	}
 
 	if (spi->bits_per_word <= 8) {
@@ -829,6 +849,7 @@ int dw_spi_add_host(struct dw_spi *dws)
 	master->cleanup = dw_spi_cleanup;
 	master->setup = dw_spi_setup;
 	master->transfer = dw_spi_transfer;
+	master->dev.of_node = dws->parent_dev->of_node;
 
 	/* Basic HW init */
 	spi_hw_init(dws);

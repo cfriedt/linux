@@ -157,6 +157,11 @@ struct scsi_device {
 	unsigned no_read_capacity_16:1; /* Avoid READ_CAPACITY_16 cmds */
 	unsigned try_rc_10_first:1;	/* Try READ_CAPACACITY_10 first */
 	unsigned is_visible:1;	/* is the device visible in sysfs */
+//Patch by QNAP: only for HAL application
+    unsigned is_standby:1;
+    unsigned is_wakeup_cmd:1;
+    unsigned hal_enc_id:6;
+////////////////////////////////////////
 	unsigned wce_default_on:1;	/* Cache is ON by default */
 	unsigned no_dif:1;	/* T10 PI (DIF) should be disabled */
 

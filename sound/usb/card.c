@@ -84,6 +84,12 @@ static int device_setup[SNDRV_CARDS]; /* device parameter for this card */
 static bool ignore_ctl_error;
 static bool autoclock = true;
 
+#ifdef CONFIG_MACH_QNAPTS
+static int qnap_start_index = 0;
+module_param(qnap_start_index, int, 0644);
+MODULE_PARM_DESC(qnap_start_index, "USB audio device starting index");
+#endif
+
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for the USB audio adapter.");
 module_param_array(id, charp, NULL, 0444);

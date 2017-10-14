@@ -3,7 +3,8 @@
  *
  * This file contains ConfigFS logic for the Generic Target Engine project.
  *
- * (c) Copyright 2008-2012 RisingTide Systems LLC.
+ * Copyright (c) 2008-2011 Rising Tide Systems
+ * Copyright (c) 2008-2011 Linux-iSCSI.org
  *
  * Nicholas A. Bellinger <nab@kernel.org>
  *
@@ -49,6 +50,11 @@
 #include "target_core_pr.h"
 #include "target_core_rd.h"
 
+#ifdef CONFIG_MACH_QNAPTS
+#include "vaai_target_struc.h"
+#include "target_core_extern.h"
+#endif
+
 extern struct t10_alua_lu_gp *default_lu_gp;
 
 static LIST_HEAD(g_tf_list);
@@ -64,6 +70,15 @@ static struct config_group target_core_hbagroup;
 static struct config_group alua_group;
 static struct config_group alua_lu_gps_group;
 
+/* Jonathan Ho, 20131212, monitor ODX */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SHOW_OFFLOAD_STATS)
+u64 Xpcmd = 0;						/* Trasfer data per command in KB */
+unsigned int Tpcmd = 0;					/* Spend time per command in milliseconds */
+unsigned long cmd_done = 0;				/* Commands done */
+u64 Xtotal = 0;						/* Total transfer data in KB */
+u64 vaai_Xtotal = 0;					/* Total transfer data in KB */
+#endif /* SHOW_OFFLOAD_STATS */
+
 static inline struct se_hba *
 item_to_hba(struct config_item *item)
 {
@@ -77,13 +92,46 @@ static ssize_t target_core_attr_show(struct config_item *item,
 				      struct configfs_attribute *attr,
 				      char *page)
 {
+/* Jonathan Ho, 20140425, move SHOW_OFFLOAD_STATS from procFS to configFS */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SHOW_OFFLOAD_STATS)
+	if (!strcmp(attr->ca_name,"ods")) {
+		return sprintf(page, "%llu %u %lu %llu %llu\n", Xpcmd, Tpcmd, cmd_done, Xtotal, vaai_Xtotal);
+	}
+#endif /* SHOW_OFFLOAD_STATS */
 	return sprintf(page, "Target Engine Core ConfigFS Infrastructure %s"
 		" on %s/%s on "UTS_RELEASE"\n", TARGET_CORE_CONFIGFS_VERSION,
 		utsname()->sysname, utsname()->machine);
 }
 
+/* Jonathan Ho, 20140425, move SHOW_OFFLOAD_STATS from procFS to configFS */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SHOW_OFFLOAD_STATS)
+static ssize_t target_core_attr_store(struct config_item *item,
+				      struct configfs_attribute *attr,
+				      char *page, size_t count)
+{
+	if (!strcmp(attr->ca_name,"ods")) {
+		int value = 0;
+
+		sscanf(page, "%d", &value);
+		if (value == 0) {
+			Xpcmd = 0;
+			Tpcmd = 0;
+			cmd_done = 0;
+			Xtotal = 0;
+			vaai_Xtotal = 0;
+		}
+	}
+
+	return count;
+}
+#endif /* SHOW_OFFLOAD_STATS */
+
 static struct configfs_item_operations target_core_fabric_item_ops = {
 	.show_attribute = target_core_attr_show,
+/* Jonathan Ho, 20140425, move SHOW_OFFLOAD_STATS from procFS to configFS */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SHOW_OFFLOAD_STATS)
+	.store_attribute = target_core_attr_store,
+#endif /* SHOW_OFFLOAD_STATS */
 };
 
 static struct configfs_attribute target_core_item_attr_version = {
@@ -91,6 +139,15 @@ static struct configfs_attribute target_core_item_attr_version = {
 	.ca_name	= "version",
 	.ca_mode	= S_IRUGO,
 };
+
+/* Jonathan Ho, 20140425, move SHOW_OFFLOAD_STATS from procFS to configFS */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SHOW_OFFLOAD_STATS)
+static struct configfs_attribute target_core_item_attr_ods = {
+	.ca_owner	= THIS_MODULE,
+	.ca_name	= "ods",
+	.ca_mode	= (S_IRUGO|S_IWUSR),
+};
+#endif /* SHOW_OFFLOAD_STATS */
 
 static struct target_fabric_configfs *target_core_get_fabric(
 	const char *name)
@@ -246,6 +303,10 @@ static struct configfs_group_operations target_core_fabric_group_ops = {
  */
 static struct configfs_attribute *target_core_fabric_item_attrs[] = {
 	&target_core_item_attr_version,
+/* Jonathan Ho, 20140425, move SHOW_OFFLOAD_STATS from procFS to configFS */
+#if defined(CONFIG_MACH_QNAPTS) && defined(SHOW_OFFLOAD_STATS)
+	&target_core_item_attr_ods,
+#endif /* SHOW_OFFLOAD_STATS */
 	NULL,
 };
 
@@ -456,6 +517,14 @@ static int target_fabric_tf_ops_check(
 		pr_err("Missing tfo->queue_tm_rsp()\n");
 		return -EINVAL;
 	}
+	if (!tfo->set_fabric_sense_len) {
+		pr_err("Missing tfo->set_fabric_sense_len()\n");
+		return -EINVAL;
+	}
+	if (!tfo->get_fabric_sense_len) {
+		pr_err("Missing tfo->get_fabric_sense_len()\n");
+		return -EINVAL;
+	}
 	/*
 	 * We at least require tfo->fabric_make_wwn(), tfo->fabric_drop_wwn()
 	 * tfo->fabric_make_tpg() and tfo->fabric_drop_tpg() in
@@ -564,9 +633,123 @@ static ssize_t target_core_dev_show_attr_##_name(			\
 	struct se_dev_attrib *da,					\
 	char *page)							\
 {									\
-	return snprintf(page, PAGE_SIZE, "%u\n",			\
-		(u32)da->da_dev->dev_attrib._name);			\
+	struct se_device *dev;						\
+	struct se_subsystem_dev *se_dev = da->da_sub_dev;			\
+	ssize_t rb;							\
+									\
+	spin_lock(&se_dev->se_dev_lock);				\
+	dev = se_dev->se_dev_ptr;					\
+	if (!dev) {							\
+		spin_unlock(&se_dev->se_dev_lock); 			\
+		return -ENODEV;						\
+	}								\
+	rb = snprintf(page, PAGE_SIZE, "%llu\n",				\
+		(u64)dev->se_sub_dev->se_dev_attrib._name);		\
+	spin_unlock(&se_dev->se_dev_lock);				\
+	return rb;							\
 }
+#ifdef CONFIG_MACH_QNAPTS
+      /* when the file of allocatd is accessed, iscsi iblock will update it*/
+      /* modify by JS Chen 20131021 */
+#define DEF_DEV_ATTRIB_SHOW_FOR_GUI(_name)					\
+static ssize_t target_core_dev_show_attr_for_gui_##_name(			\
+	struct se_dev_attrib *da,					\
+	char *page)							\
+{									\
+	struct se_device *dev;						\
+	struct se_subsystem_dev *se_dev = da->da_sub_dev;			\
+	ssize_t rb;							\
+									\
+	spin_lock(&se_dev->se_dev_lock);				\
+	dev = se_dev->se_dev_ptr;					\
+	if (!dev) {							\
+		spin_unlock(&se_dev->se_dev_lock); 			\
+		return -ENODEV;						\
+	}								\
+	__update_allocated_attr(dev);\
+	rb = snprintf(page, PAGE_SIZE, "%llu\n",				\
+		(u64)dev->se_sub_dev->se_dev_attrib._name);		\
+	spin_unlock(&se_dev->se_dev_lock);				\
+	return rb;							\
+}
+static int target_check_syswp_magic_file()
+{
+/* TODO:
+ * this file name shall be matched with iscsi_util tool and shall be
+ * hided from lio iscsi source code
+ */
+#define SYSWP_MAGIC_FILE	"/tmp/syswp_magic_file"
+
+	struct file *fd = NULL;
+		
+	fd = filp_open(SYSWP_MAGIC_FILE, O_RDONLY , S_IRWXU); 
+	if (!IS_ERR (fd)){
+		filp_close(fd, NULL);
+		return 0;
+	}
+	return -1;
+}
+
+#define DEF_DEV_ATTRIB_SHOW_SYSWP(_name) 			\
+static ssize_t target_core_dev_show_syswp_attr_for_##_name(	\
+	struct se_dev_attrib *da,				\
+	char *page)						\
+{								\
+	LIO_SE_DEVICE *se_dev;					\
+	LIO_SE_SUBSYSTEM_DEV *se_sub_dev = da->da_sub_dev;	\
+	ssize_t rb;						\
+								\
+	spin_lock(&se_sub_dev->se_dev_lock);			\
+	se_dev = se_sub_dev->se_dev_ptr;			\
+	if (!se_dev) {						\
+		spin_unlock(&se_sub_dev->se_dev_lock);		\
+		return -ENODEV; 				\
+	}							\
+	rb = snprintf(page, PAGE_SIZE, "%llu\n",		\
+		(u64)se_dev->se_sub_dev->se_dev_attrib._name);	\
+	spin_unlock(&se_sub_dev->se_dev_lock);			\
+	return rb;						\
+}								\
+
+
+
+#define	DEF_DEV_ATTRIB_STORE_SYSWP(_name)			\
+static ssize_t target_core_dev_store_syswp_attr_for_##_name(	\
+	struct se_dev_attrib *da,				\
+	const char *page,					\
+	size_t count)						\
+{								\
+	struct se_device *se_dev;				\
+	struct se_subsystem_dev *se_sub_dev = da->da_sub_dev;	\
+	unsigned long val;					\
+	struct file *file = NULL;				\
+	int ret;						\
+								\
+	if (target_check_syswp_magic_file() < 0){		\
+		return count;	\
+	}	\
+								\
+	spin_lock(&se_sub_dev->se_dev_lock);			\
+	se_dev = se_sub_dev->se_dev_ptr;			\
+	if (!se_dev) {						\
+		spin_unlock(&se_sub_dev->se_dev_lock);		\
+		return -ENODEV; 				\
+	}							\
+	ret = strict_strtoul(page, 0, &val);				\
+	if (ret < 0) {							\
+		spin_unlock(&se_sub_dev->se_dev_lock);			\
+		pr_err("strict_strtoul() failed with"		\
+			" ret: %d\n", ret);				\
+		return -EINVAL; 					\
+	}								\
+	ret = se_dev_set_##_name(se_dev, (u32)val);			\
+	spin_unlock(&se_sub_dev->se_dev_lock);				\
+									\
+	return (!ret) ? count : -EINVAL;				\
+}								\
+
+#endif
+
 
 #define DEF_DEV_ATTRIB_STORE(_name)					\
 static ssize_t target_core_dev_store_attr_##_name(			\
@@ -574,16 +757,26 @@ static ssize_t target_core_dev_store_attr_##_name(			\
 	const char *page,						\
 	size_t count)							\
 {									\
+	struct se_device *dev;						\
+	struct se_subsystem_dev *se_dev = da->da_sub_dev;			\
 	unsigned long val;						\
 	int ret;							\
 									\
+	spin_lock(&se_dev->se_dev_lock);				\
+	dev = se_dev->se_dev_ptr;					\
+	if (!dev) {							\
+		spin_unlock(&se_dev->se_dev_lock);			\
+		return -ENODEV;						\
+	}								\
 	ret = strict_strtoul(page, 0, &val);				\
 	if (ret < 0) {							\
+		spin_unlock(&se_dev->se_dev_lock);                      \
 		pr_err("strict_strtoul() failed with"		\
 			" ret: %d\n", ret);				\
 		return -EINVAL;						\
 	}								\
-	ret = se_dev_set_##_name(da->da_dev, (u32)val);			\
+	ret = se_dev_set_##_name(dev, (u32)val);			\
+	spin_unlock(&se_dev->se_dev_lock);				\
 									\
 	return (!ret) ? count : -EINVAL;				\
 }
@@ -594,6 +787,19 @@ DEF_DEV_ATTRIB_STORE(_name);
 
 #define DEF_DEV_ATTRIB_RO(_name)					\
 DEF_DEV_ATTRIB_SHOW(_name);
+
+#ifdef CONFIG_MACH_QNAPTS
+#define DEF_DEV_ATTRIB_RO_FOR_GUI(_name)					\
+DEF_DEV_ATTRIB_SHOW_FOR_GUI(_name);
+
+
+#define DEF_DEV_ATTRIB_SYSWP(_name)	\
+DEF_DEV_ATTRIB_SHOW_SYSWP(_name);	\
+DEF_DEV_ATTRIB_STORE_SYSWP(_name);
+
+
+
+#endif
 
 CONFIGFS_EATTR_STRUCT(target_core_dev_attrib, se_dev_attrib);
 #define SE_DEV_ATTR(_name, _mode)					\
@@ -609,8 +815,24 @@ static struct target_core_dev_attrib_attribute				\
 	__CONFIGFS_EATTR_RO(_name,					\
 	target_core_dev_show_attr_##_name);
 
-DEF_DEV_ATTRIB(emulate_model_alias);
-SE_DEV_ATTR(emulate_model_alias, S_IRUGO | S_IWUSR);
+#ifdef CONFIG_MACH_QNAPTS
+      /* when the file of allocatd is accessed, iscsi iblock will update it*/
+      /* modify by JS Chen 20131021 */
+#define SE_DEV_ATTR_RO_FOR_GUI(_name);						\
+static struct target_core_dev_attrib_attribute				\
+			target_core_dev_attrib_##_name =		\
+	__CONFIGFS_EATTR_RO(_name,					\
+	target_core_dev_show_attr_for_gui_##_name);
+
+
+#define SE_DEV_ATTR_SYSWP(_name, _mode)		\
+static struct target_core_dev_attrib_attribute		\
+	target_core_dev_attrib_##_name =		\
+		__CONFIGFS_EATTR(_name, _mode,		\
+		target_core_dev_show_syswp_attr_for_##_name,	\
+		target_core_dev_store_syswp_attr_for_##_name);
+
+#endif
 
 DEF_DEV_ATTRIB(emulate_dpo);
 SE_DEV_ATTR(emulate_dpo, S_IRUGO | S_IWUSR);
@@ -654,6 +876,9 @@ SE_DEV_ATTR(block_size, S_IRUGO | S_IWUSR);
 DEF_DEV_ATTRIB_RO(hw_max_sectors);
 SE_DEV_ATTR_RO(hw_max_sectors);
 
+DEF_DEV_ATTRIB(max_sectors);
+SE_DEV_ATTR(max_sectors, S_IRUGO | S_IWUSR);
+
 DEF_DEV_ATTRIB(fabric_max_sectors);
 SE_DEV_ATTR(fabric_max_sectors, S_IRUGO | S_IWUSR);
 
@@ -678,13 +903,33 @@ SE_DEV_ATTR(unmap_granularity, S_IRUGO | S_IWUSR);
 DEF_DEV_ATTRIB(unmap_granularity_alignment);
 SE_DEV_ATTR(unmap_granularity_alignment, S_IRUGO | S_IWUSR);
 
-DEF_DEV_ATTRIB(max_write_same_len);
-SE_DEV_ATTR(max_write_same_len, S_IRUGO | S_IWUSR);
+DEF_DEV_ATTRIB(tp_threshold_enable);
+SE_DEV_ATTR(tp_threshold_enable, S_IRUGO | S_IWUSR);
+
+DEF_DEV_ATTRIB(tp_threshold_percent);
+SE_DEV_ATTR(tp_threshold_percent, S_IRUGO | S_IWUSR);
+
+DEF_DEV_ATTRIB(lun_index);
+SE_DEV_ATTR(lun_index, S_IRUGO | S_IWUSR);
+
+#ifdef CONFIG_MACH_QNAPTS
+#if 1 /* when the file of allocatd is accessed, iscsi iblock will update it*/
+      /* modify by JS Chen 20131021 */
+DEF_DEV_ATTRIB_RO_FOR_GUI(allocated);
+SE_DEV_ATTR_RO_FOR_GUI(allocated);
+#else
+DEF_DEV_ATTRIB_RO(allocated);
+SE_DEV_ATTR_RO(allocated);
+#endif
+
+DEF_DEV_ATTRIB_SYSWP(syswp);
+SE_DEV_ATTR_SYSWP(syswp, S_IRUGO | S_IWUSR);
+
+#endif /* CONFIG_MACH_QNAPTS */
 
 CONFIGFS_EATTR_OPS(target_core_dev_attrib, se_dev_attrib, da_group);
 
 static struct configfs_attribute *target_core_dev_attrib_attrs[] = {
-	&target_core_dev_attrib_emulate_model_alias.attr,
 	&target_core_dev_attrib_emulate_dpo.attr,
 	&target_core_dev_attrib_emulate_fua_write.attr,
 	&target_core_dev_attrib_emulate_fua_read.attr,
@@ -699,6 +944,7 @@ static struct configfs_attribute *target_core_dev_attrib_attrs[] = {
 	&target_core_dev_attrib_hw_block_size.attr,
 	&target_core_dev_attrib_block_size.attr,
 	&target_core_dev_attrib_hw_max_sectors.attr,
+	&target_core_dev_attrib_max_sectors.attr,
 	&target_core_dev_attrib_fabric_max_sectors.attr,
 	&target_core_dev_attrib_optimal_sectors.attr,
 	&target_core_dev_attrib_hw_queue_depth.attr,
@@ -707,7 +953,11 @@ static struct configfs_attribute *target_core_dev_attrib_attrs[] = {
 	&target_core_dev_attrib_max_unmap_block_desc_count.attr,
 	&target_core_dev_attrib_unmap_granularity.attr,
 	&target_core_dev_attrib_unmap_granularity_alignment.attr,
-	&target_core_dev_attrib_max_write_same_len.attr,
+	&target_core_dev_attrib_tp_threshold_enable.attr,
+	&target_core_dev_attrib_tp_threshold_percent.attr,
+	&target_core_dev_attrib_lun_index.attr,
+	&target_core_dev_attrib_allocated.attr,
+	&target_core_dev_attrib_syswp.attr,
 	NULL,
 };
 
@@ -748,6 +998,13 @@ static ssize_t target_core_dev_wwn_show_attr_vpd_unit_serial(
 	struct t10_wwn *t10_wwn,
 	char *page)
 {
+	struct se_subsystem_dev *se_dev = t10_wwn->t10_sub_dev;
+	struct se_device *dev;
+
+	dev = se_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
+
 	return sprintf(page, "T10 VPD Unit Serial Number: %s\n",
 		&t10_wwn->unit_serial[0]);
 }
@@ -757,7 +1014,8 @@ static ssize_t target_core_dev_wwn_store_attr_vpd_unit_serial(
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = t10_wwn->t10_dev;
+	struct se_subsystem_dev *su_dev = t10_wwn->t10_sub_dev;
+	struct se_device *dev;
 	unsigned char buf[INQUIRY_VPD_SERIAL_LEN];
 
 	/*
@@ -770,7 +1028,7 @@ static ssize_t target_core_dev_wwn_store_attr_vpd_unit_serial(
 	 * it is doing 'the right thing' wrt a world wide unique
 	 * VPD Unit Serial Number that OS dependent multipath can depend on.
 	 */
-	if (dev->dev_flags & DF_FIRMWARE_VPD_UNIT_SERIAL) {
+	if (su_dev->su_dev_flags & SDF_FIRMWARE_VPD_UNIT_SERIAL) {
 		pr_err("Underlying SCSI device firmware provided VPD"
 			" Unit Serial, ignoring request\n");
 		return -EOPNOTSUPP;
@@ -787,13 +1045,15 @@ static ssize_t target_core_dev_wwn_store_attr_vpd_unit_serial(
 	 * (underneath the initiator side OS dependent multipath code)
 	 * could cause negative effects.
 	 */
-	if (dev->export_count) {
-		pr_err("Unable to set VPD Unit Serial while"
-			" active %d $FABRIC_MOD exports exist\n",
-			dev->export_count);
-		return -EINVAL;
+	dev = su_dev->se_dev_ptr;
+	if (dev) {
+		if (atomic_read(&dev->dev_export_obj.obj_access_count)) {
+			pr_err("Unable to set VPD Unit Serial while"
+				" active %d $FABRIC_MOD exports exist\n",
+				atomic_read(&dev->dev_export_obj.obj_access_count));
+			return -EINVAL;
+		}
 	}
-
 	/*
 	 * This currently assumes ASCII encoding for emulated VPD Unit Serial.
 	 *
@@ -802,12 +1062,12 @@ static ssize_t target_core_dev_wwn_store_attr_vpd_unit_serial(
 	 */
 	memset(buf, 0, INQUIRY_VPD_SERIAL_LEN);
 	snprintf(buf, INQUIRY_VPD_SERIAL_LEN, "%s", page);
-	snprintf(dev->t10_wwn.unit_serial, INQUIRY_VPD_SERIAL_LEN,
+	snprintf(su_dev->t10_wwn.unit_serial, INQUIRY_VPD_SERIAL_LEN,
 			"%s", strstrip(buf));
-	dev->dev_flags |= DF_EMULATED_VPD_UNIT_SERIAL;
+	su_dev->su_dev_flags |= SDF_EMULATED_VPD_UNIT_SERIAL;
 
 	pr_debug("Target_Core_ConfigFS: Set emulated VPD Unit Serial:"
-			" %s\n", dev->t10_wwn.unit_serial);
+			" %s\n", su_dev->t10_wwn.unit_serial);
 
 	return count;
 }
@@ -821,9 +1081,15 @@ static ssize_t target_core_dev_wwn_show_attr_vpd_protocol_identifier(
 	struct t10_wwn *t10_wwn,
 	char *page)
 {
+	struct se_subsystem_dev *se_dev = t10_wwn->t10_sub_dev;
+	struct se_device *dev;
 	struct t10_vpd *vpd;
 	unsigned char buf[VPD_TMP_BUF_SIZE];
 	ssize_t len = 0;
+
+	dev = se_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
 
 	memset(buf, 0, VPD_TMP_BUF_SIZE);
 
@@ -862,9 +1128,15 @@ static ssize_t target_core_dev_wwn_show_attr_##_name(			\
 	struct t10_wwn *t10_wwn,					\
 	char *page)							\
 {									\
+	struct se_subsystem_dev *se_dev = t10_wwn->t10_sub_dev;		\
+	struct se_device *dev;						\
 	struct t10_vpd *vpd;							\
 	unsigned char buf[VPD_TMP_BUF_SIZE];				\
 	ssize_t len = 0;						\
+									\
+	dev = se_dev->se_dev_ptr;					\
+	if (!dev)							\
+		return -ENODEV;						\
 									\
 	spin_lock(&t10_wwn->t10_vpd_lock);				\
 	list_for_each_entry(vpd, &t10_wwn->t10_vpd_list, vpd_list) {	\
@@ -965,7 +1237,7 @@ static struct config_item_type target_core_dev_wwn_cit = {
 
 /*  Start functions for struct config_item_type target_core_dev_pr_cit */
 
-CONFIGFS_EATTR_STRUCT(target_core_dev_pr, se_device);
+CONFIGFS_EATTR_STRUCT(target_core_dev_pr, se_subsystem_dev);
 #define SE_DEV_PR_ATTR(_name, _mode)					\
 static struct target_core_dev_pr_attribute target_core_dev_pr_##_name = \
 	__CONFIGFS_EATTR(_name, _mode,					\
@@ -977,8 +1249,13 @@ static struct target_core_dev_pr_attribute target_core_dev_pr_##_name =	\
 	__CONFIGFS_EATTR_RO(_name,					\
 	target_core_dev_pr_show_attr_##_name);
 
-static ssize_t target_core_dev_pr_show_spc3_res(struct se_device *dev,
-		char *page)
+/*
+ * res_holder
+ */
+static ssize_t target_core_dev_pr_show_spc3_res(
+	struct se_device *dev,
+	char *page,
+	ssize_t *len)
 {
 	struct se_node_acl *se_nacl;
 	struct t10_pr_registration *pr_reg;
@@ -987,82 +1264,134 @@ static ssize_t target_core_dev_pr_show_spc3_res(struct se_device *dev,
 
 	memset(i_buf, 0, PR_REG_ISID_ID_LEN);
 
+	spin_lock(&dev->dev_reservation_lock);
 	pr_reg = dev->dev_pr_res_holder;
-	if (!pr_reg)
-		return sprintf(page, "No SPC-3 Reservation holder\n");
-
+	if (!pr_reg) {
+		*len += sprintf(page + *len, "No SPC-3 Reservation holder\n");
+		spin_unlock(&dev->dev_reservation_lock);
+		return *len;
+	}
 	se_nacl = pr_reg->pr_reg_nacl;
 	prf_isid = core_pr_dump_initiator_port(pr_reg, &i_buf[0],
 				PR_REG_ISID_ID_LEN);
 
-	return sprintf(page, "SPC-3 Reservation: %s Initiator: %s%s\n",
+	*len += sprintf(page + *len, "SPC-3 Reservation: %s Initiator: %s%s\n",
 		se_nacl->se_tpg->se_tpg_tfo->get_fabric_name(),
 		se_nacl->initiatorname, (prf_isid) ? &i_buf[0] : "");
+	spin_unlock(&dev->dev_reservation_lock);
+
+	return *len;
 }
 
-static ssize_t target_core_dev_pr_show_spc2_res(struct se_device *dev,
-		char *page)
+static ssize_t target_core_dev_pr_show_spc2_res(
+	struct se_device *dev,
+	char *page,
+	ssize_t *len)
 {
 	struct se_node_acl *se_nacl;
-	ssize_t len;
-
-	se_nacl = dev->dev_reserved_node_acl;
-	if (se_nacl) {
-		len = sprintf(page,
-			      "SPC-2 Reservation: %s Initiator: %s\n",
-			      se_nacl->se_tpg->se_tpg_tfo->get_fabric_name(),
-			      se_nacl->initiatorname);
-	} else {
-		len = sprintf(page, "No SPC-2 Reservation holder\n");
-	}
-	return len;
-}
-
-static ssize_t target_core_dev_pr_show_attr_res_holder(struct se_device *dev,
-		char *page)
-{
-	int ret;
-
-	if (dev->transport->transport_type == TRANSPORT_PLUGIN_PHBA_PDEV)
-		return sprintf(page, "Passthrough\n");
 
 	spin_lock(&dev->dev_reservation_lock);
-	if (dev->dev_reservation_flags & DRF_SPC2_RESERVATIONS)
-		ret = target_core_dev_pr_show_spc2_res(dev, page);
-	else
-		ret = target_core_dev_pr_show_spc3_res(dev, page);
+	se_nacl = dev->dev_reserved_node_acl;
+	if (!se_nacl) {
+		*len += sprintf(page + *len, "No SPC-2 Reservation holder\n");
+		spin_unlock(&dev->dev_reservation_lock);
+		return *len;
+	}
+	*len += sprintf(page + *len, "SPC-2 Reservation: %s Initiator: %s\n",
+		se_nacl->se_tpg->se_tpg_tfo->get_fabric_name(),
+		se_nacl->initiatorname);
 	spin_unlock(&dev->dev_reservation_lock);
-	return ret;
+
+	return *len;
+}
+
+static ssize_t target_core_dev_pr_show_attr_res_holder(
+	struct se_subsystem_dev *su_dev,
+	char *page)
+{
+	ssize_t len = 0;
+
+	if (!su_dev->se_dev_ptr)
+		return -ENODEV;
+
+	switch (su_dev->t10_pr.res_type) {
+	case SPC3_PERSISTENT_RESERVATIONS:
+		target_core_dev_pr_show_spc3_res(su_dev->se_dev_ptr,
+				page, &len);
+		break;
+	case SPC2_RESERVATIONS:
+		target_core_dev_pr_show_spc2_res(su_dev->se_dev_ptr,
+				page, &len);
+		break;
+	case SPC_PASSTHROUGH:
+		len += sprintf(page+len, "Passthrough\n");
+		break;
+	default:
+		len += sprintf(page+len, "Unknown\n");
+		break;
+	}
+
+	return len;
 }
 
 SE_DEV_PR_ATTR_RO(res_holder);
 
+/*
+ * res_pr_all_tgt_pts
+ */
 static ssize_t target_core_dev_pr_show_attr_res_pr_all_tgt_pts(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
+	struct se_device *dev;
+	struct t10_pr_registration *pr_reg;
 	ssize_t len = 0;
 
+	dev = su_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
+		return len;
+
 	spin_lock(&dev->dev_reservation_lock);
-	if (!dev->dev_pr_res_holder) {
+	pr_reg = dev->dev_pr_res_holder;
+	if (!pr_reg) {
 		len = sprintf(page, "No SPC-3 Reservation holder\n");
-	} else if (dev->dev_pr_res_holder->pr_reg_all_tg_pt) {
+		spin_unlock(&dev->dev_reservation_lock);
+		return len;
+	}
+	/*
+	 * See All Target Ports (ALL_TG_PT) bit in spcr17, section 6.14.3
+	 * Basic PERSISTENT RESERVER OUT parameter list, page 290
+	 */
+	if (pr_reg->pr_reg_all_tg_pt)
 		len = sprintf(page, "SPC-3 Reservation: All Target"
 			" Ports registration\n");
-	} else {
+	else
 		len = sprintf(page, "SPC-3 Reservation: Single"
 			" Target Port registration\n");
-	}
-
 	spin_unlock(&dev->dev_reservation_lock);
+
 	return len;
 }
 
 SE_DEV_PR_ATTR_RO(res_pr_all_tgt_pts);
 
+/*
+ * res_pr_generation
+ */
 static ssize_t target_core_dev_pr_show_attr_res_pr_generation(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
-	return sprintf(page, "0x%08x\n", dev->t10_pr.pr_generation);
+	if (!su_dev->se_dev_ptr)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
+		return 0;
+
+	return sprintf(page, "0x%08x\n", su_dev->t10_pr.pr_generation);
 }
 
 SE_DEV_PR_ATTR_RO(res_pr_generation);
@@ -1071,8 +1400,10 @@ SE_DEV_PR_ATTR_RO(res_pr_generation);
  * res_pr_holder_tg_port
  */
 static ssize_t target_core_dev_pr_show_attr_res_pr_holder_tg_port(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
+	struct se_device *dev;
 	struct se_node_acl *se_nacl;
 	struct se_lun *lun;
 	struct se_portal_group *se_tpg;
@@ -1080,13 +1411,20 @@ static ssize_t target_core_dev_pr_show_attr_res_pr_holder_tg_port(
 	struct target_core_fabric_ops *tfo;
 	ssize_t len = 0;
 
+	dev = su_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
+		return len;
+
 	spin_lock(&dev->dev_reservation_lock);
 	pr_reg = dev->dev_pr_res_holder;
 	if (!pr_reg) {
 		len = sprintf(page, "No SPC-3 Reservation holder\n");
-		goto out_unlock;
+		spin_unlock(&dev->dev_reservation_lock);
+		return len;
 	}
-
 	se_nacl = pr_reg->pr_reg_nacl;
 	se_tpg = se_nacl->se_tpg;
 	lun = pr_reg->pr_reg_tg_pt_lun;
@@ -1096,20 +1434,23 @@ static ssize_t target_core_dev_pr_show_attr_res_pr_holder_tg_port(
 		" Target Node Endpoint: %s\n", tfo->get_fabric_name(),
 		tfo->tpg_get_wwn(se_tpg));
 	len += sprintf(page+len, "SPC-3 Reservation: Relative Port"
-		" Identifier Tag: %hu %s Portal Group Tag: %hu"
+		" Identifer Tag: %hu %s Portal Group Tag: %hu"
 		" %s Logical Unit: %u\n", lun->lun_sep->sep_rtpi,
 		tfo->get_fabric_name(), tfo->tpg_get_tag(se_tpg),
 		tfo->get_fabric_name(), lun->unpacked_lun);
-
-out_unlock:
 	spin_unlock(&dev->dev_reservation_lock);
+
 	return len;
 }
 
 SE_DEV_PR_ATTR_RO(res_pr_holder_tg_port);
 
+/*
+ * res_pr_registered_i_pts
+ */
 static ssize_t target_core_dev_pr_show_attr_res_pr_registered_i_pts(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
 	struct target_core_fabric_ops *tfo;
 	struct t10_pr_registration *pr_reg;
@@ -1118,10 +1459,16 @@ static ssize_t target_core_dev_pr_show_attr_res_pr_registered_i_pts(
 	ssize_t len = 0;
 	int reg_count = 0, prf_isid;
 
+	if (!su_dev->se_dev_ptr)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
+		return len;
+
 	len += sprintf(page+len, "SPC-3 PR Registrations:\n");
 
-	spin_lock(&dev->t10_pr.registration_lock);
-	list_for_each_entry(pr_reg, &dev->t10_pr.registration_list,
+	spin_lock(&su_dev->t10_pr.registration_lock);
+	list_for_each_entry(pr_reg, &su_dev->t10_pr.registration_list,
 			pr_reg_list) {
 
 		memset(buf, 0, 384);
@@ -1141,7 +1488,7 @@ static ssize_t target_core_dev_pr_show_attr_res_pr_registered_i_pts(
 		len += sprintf(page+len, "%s", buf);
 		reg_count++;
 	}
-	spin_unlock(&dev->t10_pr.registration_lock);
+	spin_unlock(&su_dev->t10_pr.registration_lock);
 
 	if (!reg_count)
 		len += sprintf(page+len, "None\n");
@@ -1151,48 +1498,88 @@ static ssize_t target_core_dev_pr_show_attr_res_pr_registered_i_pts(
 
 SE_DEV_PR_ATTR_RO(res_pr_registered_i_pts);
 
+/*
+ * res_pr_type
+ */
 static ssize_t target_core_dev_pr_show_attr_res_pr_type(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
+	struct se_device *dev;
 	struct t10_pr_registration *pr_reg;
 	ssize_t len = 0;
 
+	dev = su_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
+		return len;
+
 	spin_lock(&dev->dev_reservation_lock);
 	pr_reg = dev->dev_pr_res_holder;
-	if (pr_reg) {
-		len = sprintf(page, "SPC-3 Reservation Type: %s\n",
-			core_scsi3_pr_dump_type(pr_reg->pr_res_type));
-	} else {
+	if (!pr_reg) {
 		len = sprintf(page, "No SPC-3 Reservation holder\n");
+		spin_unlock(&dev->dev_reservation_lock);
+		return len;
 	}
-
+	len = sprintf(page, "SPC-3 Reservation Type: %s\n",
+		core_scsi3_pr_dump_type(pr_reg->pr_res_type));
 	spin_unlock(&dev->dev_reservation_lock);
+
 	return len;
 }
 
 SE_DEV_PR_ATTR_RO(res_pr_type);
 
+/*
+ * res_type
+ */
 static ssize_t target_core_dev_pr_show_attr_res_type(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
-	if (dev->transport->transport_type == TRANSPORT_PLUGIN_PHBA_PDEV)
-		return sprintf(page, "SPC_PASSTHROUGH\n");
-	else if (dev->dev_reservation_flags & DRF_SPC2_RESERVATIONS)
-		return sprintf(page, "SPC2_RESERVATIONS\n");
-	else
-		return sprintf(page, "SPC3_PERSISTENT_RESERVATIONS\n");
+	ssize_t len = 0;
+
+	if (!su_dev->se_dev_ptr)
+		return -ENODEV;
+
+	switch (su_dev->t10_pr.res_type) {
+	case SPC3_PERSISTENT_RESERVATIONS:
+		len = sprintf(page, "SPC3_PERSISTENT_RESERVATIONS\n");
+		break;
+	case SPC2_RESERVATIONS:
+		len = sprintf(page, "SPC2_RESERVATIONS\n");
+		break;
+	case SPC_PASSTHROUGH:
+		len = sprintf(page, "SPC_PASSTHROUGH\n");
+		break;
+	default:
+		len = sprintf(page, "UNKNOWN\n");
+		break;
+	}
+
+	return len;
 }
 
 SE_DEV_PR_ATTR_RO(res_type);
 
+/*
+ * res_aptpl_active
+ */
+
 static ssize_t target_core_dev_pr_show_attr_res_aptpl_active(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
-	if (dev->transport->transport_type == TRANSPORT_PLUGIN_PHBA_PDEV)
+	if (!su_dev->se_dev_ptr)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
 		return 0;
 
 	return sprintf(page, "APTPL Bit Status: %s\n",
-		(dev->t10_pr.pr_aptpl_active) ? "Activated" : "Disabled");
+		(su_dev->t10_pr.pr_aptpl_active) ? "Activated" : "Disabled");
 }
 
 SE_DEV_PR_ATTR_RO(res_aptpl_active);
@@ -1201,9 +1588,13 @@ SE_DEV_PR_ATTR_RO(res_aptpl_active);
  * res_aptpl_metadata
  */
 static ssize_t target_core_dev_pr_show_attr_res_aptpl_metadata(
-		struct se_device *dev, char *page)
+	struct se_subsystem_dev *su_dev,
+	char *page)
 {
-	if (dev->transport->transport_type == TRANSPORT_PLUGIN_PHBA_PDEV)
+	if (!su_dev->se_dev_ptr)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
 		return 0;
 
 	return sprintf(page, "Ready to process PR APTPL metadata..\n");
@@ -1235,10 +1626,11 @@ static match_table_t tokens = {
 };
 
 static ssize_t target_core_dev_pr_store_attr_res_aptpl_metadata(
-	struct se_device *dev,
+	struct se_subsystem_dev *su_dev,
 	const char *page,
 	size_t count)
 {
+	struct se_device *dev;
 	unsigned char *i_fabric = NULL, *i_port = NULL, *isid = NULL;
 	unsigned char *t_fabric = NULL, *t_port = NULL;
 	char *orig, *ptr, *arg_p, *opts;
@@ -1250,12 +1642,14 @@ static ssize_t target_core_dev_pr_store_attr_res_aptpl_metadata(
 	u16 port_rpti = 0, tpgt = 0;
 	u8 type = 0, scope;
 
-	if (dev->transport->transport_type == TRANSPORT_PLUGIN_PHBA_PDEV)
-		return 0;
-	if (dev->dev_reservation_flags & DRF_SPC2_RESERVATIONS)
+	dev = su_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
+
+	if (su_dev->t10_pr.res_type != SPC3_PERSISTENT_RESERVATIONS)
 		return 0;
 
-	if (dev->export_count) {
+	if (atomic_read(&dev->dev_export_obj.obj_access_count)) {
 		pr_debug("Unable to process APTPL metadata while"
 			" active fabric exports exist\n");
 		return -EINVAL;
@@ -1398,7 +1792,7 @@ static ssize_t target_core_dev_pr_store_attr_res_aptpl_metadata(
 		goto out;
 	}
 
-	ret = core_scsi3_alloc_aptpl_registration(&dev->t10_pr, sa_res_key,
+	ret = core_scsi3_alloc_aptpl_registration(&su_dev->t10_pr, sa_res_key,
 			i_port, isid, mapped_lun, t_port, tpgt, target_lun,
 			res_holder, all_tg_pt, type);
 out:
@@ -1413,7 +1807,7 @@ out:
 
 SE_DEV_PR_ATTR(res_aptpl_metadata, S_IRUGO | S_IWUSR);
 
-CONFIGFS_EATTR_OPS(target_core_dev_pr, se_device, dev_pr_group);
+CONFIGFS_EATTR_OPS(target_core_dev_pr, se_subsystem_dev, se_dev_pr_group);
 
 static struct configfs_attribute *target_core_dev_pr_attrs[] = {
 	&target_core_dev_pr_res_holder.attr,
@@ -1445,14 +1839,18 @@ static struct config_item_type target_core_dev_pr_cit = {
 
 static ssize_t target_core_show_dev_info(void *p, char *page)
 {
-	struct se_device *dev = p;
-	struct se_subsystem_api *t = dev->transport;
+	struct se_subsystem_dev *se_dev = p;
+	struct se_hba *hba = se_dev->se_dev_hba;
+	struct se_subsystem_api *t = hba->transport;
 	int bl = 0;
 	ssize_t read_bytes = 0;
 
-	transport_dump_dev_state(dev, page, &bl);
+	if (!se_dev->se_dev_ptr)
+		return -ENODEV;
+
+	transport_dump_dev_state(se_dev->se_dev_ptr, page, &bl);
 	read_bytes += bl;
-	read_bytes += t->show_configfs_dev_params(dev, page+read_bytes);
+	read_bytes += t->show_configfs_dev_params(hba, se_dev, page+read_bytes);
 	return read_bytes;
 }
 
@@ -1469,10 +1867,17 @@ static ssize_t target_core_store_dev_control(
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = p;
-	struct se_subsystem_api *t = dev->transport;
+	struct se_subsystem_dev *se_dev = p;
+	struct se_hba *hba = se_dev->se_dev_hba;
+	struct se_subsystem_api *t = hba->transport;
 
-	return t->set_configfs_dev_params(dev, page, count);
+	if (!se_dev->se_dev_su_ptr) {
+		pr_err("Unable to locate struct se_subsystem_dev>se"
+				"_dev_su_ptr\n");
+		return -EINVAL;
+	}
+
+	return t->set_configfs_dev_params(hba, se_dev, page, count);
 }
 
 static struct target_core_configfs_attribute target_core_attr_dev_control = {
@@ -1485,12 +1890,12 @@ static struct target_core_configfs_attribute target_core_attr_dev_control = {
 
 static ssize_t target_core_show_dev_alias(void *p, char *page)
 {
-	struct se_device *dev = p;
+	struct se_subsystem_dev *se_dev = p;
 
-	if (!(dev->dev_flags & DF_USING_ALIAS))
+	if (!(se_dev->su_dev_flags & SDF_USING_ALIAS))
 		return 0;
 
-	return snprintf(page, PAGE_SIZE, "%s\n", dev->dev_alias);
+	return snprintf(page, PAGE_SIZE, "%s\n", se_dev->se_dev_alias);
 }
 
 static ssize_t target_core_store_dev_alias(
@@ -1498,8 +1903,8 @@ static ssize_t target_core_store_dev_alias(
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = p;
-	struct se_hba *hba = dev->se_hba;
+	struct se_subsystem_dev *se_dev = p;
+	struct se_hba *hba = se_dev->se_dev_hba;
 	ssize_t read_bytes;
 
 	if (count > (SE_DEV_ALIAS_LEN-1)) {
@@ -1509,18 +1914,19 @@ static ssize_t target_core_store_dev_alias(
 		return -EINVAL;
 	}
 
-	read_bytes = snprintf(&dev->dev_alias[0], SE_DEV_ALIAS_LEN, "%s", page);
+	read_bytes = snprintf(&se_dev->se_dev_alias[0], SE_DEV_ALIAS_LEN,
+			"%s", page);
 	if (!read_bytes)
 		return -EINVAL;
-	if (dev->dev_alias[read_bytes - 1] == '\n')
-		dev->dev_alias[read_bytes - 1] = '\0';
+	if (se_dev->se_dev_alias[read_bytes - 1] == '\n')
+		se_dev->se_dev_alias[read_bytes - 1] = '\0';
 
-	dev->dev_flags |= DF_USING_ALIAS;
+	se_dev->su_dev_flags |= SDF_USING_ALIAS;
 
 	pr_debug("Target_Core_ConfigFS: %s/%s set alias: %s\n",
 		config_item_name(&hba->hba_group.cg_item),
-		config_item_name(&dev->dev_group.cg_item),
-		dev->dev_alias);
+		config_item_name(&se_dev->se_dev_group.cg_item),
+		se_dev->se_dev_alias);
 
 	return read_bytes;
 }
@@ -1533,14 +1939,284 @@ static struct target_core_configfs_attribute target_core_attr_dev_alias = {
 	.store	= target_core_store_dev_alias,
 };
 
-static ssize_t target_core_show_dev_udev_path(void *p, char *page)
+#ifdef CONFIG_MACH_QNAPTS   
+// [S] Benjamin 20121031 for provision configfs
+static ssize_t target_core_show_dev_provision(void *p, char *page)
 {
-	struct se_device *dev = p;
+	struct se_subsystem_dev *se_dev = p;
 
-	if (!(dev->dev_flags & DF_USING_UDEV_PATH))
+	if (!(se_dev->su_dev_flags & SDF_USING_PROVISION))
 		return 0;
 
-	return snprintf(page, PAGE_SIZE, "%s\n", dev->udev_path);
+	return snprintf(page, PAGE_SIZE, "%s\n", se_dev->se_dev_provision);
+}
+
+static ssize_t target_core_store_dev_provision(
+	void *p,
+	const char *page,
+	size_t count)
+{
+	struct se_subsystem_dev *se_dev = p;
+	struct se_hba *hba = se_dev->se_dev_hba;
+	ssize_t read_bytes;
+
+#if defined(CONFIG_MACH_QNAPTS)
+	/* keep se_dev_provision[] to write_once */
+	unsigned char	dev_provision_str[SE_DEV_PROVISION_LEN];
+#endif
+
+	if (count > (SE_DEV_PROVISION_LEN - 1)) {
+		pr_err("provision count: %d exceeds"
+			" SE_DEV_PROVISION_LEN-1: %u\n", (int)count,
+			SE_DEV_PROVISION_LEN - 1);
+		return -EINVAL;
+	}
+
+#if defined(CONFIG_MACH_QNAPTS)
+	if (atomic_read(&se_dev->se_dev_provision_write_once)){
+		pr_err("se_dev_provision was set already. can't update again.\n");
+		return -EINVAL;
+	}
+
+	memset(dev_provision_str, 0, sizeof(dev_provision_str));
+	read_bytes = snprintf(&dev_provision_str[0], SE_DEV_PROVISION_LEN,
+			"%s", page);
+	if (!read_bytes){
+		pr_err("cat't format dev_provision_str string\n");
+		return -EINVAL;
+	}
+
+	if (dev_provision_str[read_bytes - 1] == '\n')
+		dev_provision_str[read_bytes - 1] = '\0';
+
+	/* check the dev provision string format */
+	if (strnicmp(dev_provision_str, "thin", sizeof(dev_provision_str)) 
+	&& strnicmp(dev_provision_str, "thick", sizeof(dev_provision_str))
+	)
+	{
+		pr_err("neither thick nor thin for dev_provision string\n");
+		return -EINVAL;
+	}
+#endif
+
+	read_bytes = snprintf(&se_dev->se_dev_provision[0], SE_DEV_PROVISION_LEN,
+			"%s", page);
+	if (!read_bytes)
+		return -EINVAL;
+	if (se_dev->se_dev_provision[read_bytes - 1] == '\n')
+		se_dev->se_dev_provision[read_bytes - 1] = '\0';
+
+	se_dev->su_dev_flags |= SDF_USING_PROVISION;
+
+
+	pr_debug("Target_Core_ConfigFS: %s/%s set provision: %s\n",
+		config_item_name(&hba->hba_group.cg_item),
+		config_item_name(&se_dev->se_dev_group.cg_item),
+		se_dev->se_dev_provision);
+
+#if defined(CONFIG_MACH_QNAPTS)
+
+	atomic_set(&se_dev->se_dev_provision_write_once, 1);
+#endif
+
+	return read_bytes;
+}
+
+static struct target_core_configfs_attribute target_core_attr_dev_provision = {
+	.attr	= { .ca_owner = THIS_MODULE,
+		    .ca_name = "provision",
+		    .ca_mode =  S_IRUGO | S_IWUSR },
+	.show	= target_core_show_dev_provision,
+	.store	= target_core_store_dev_provision,
+};
+// [E] Benjamin 20121031 for provision configfs
+
+// [S] Benjamin 20130117 for naa configfs
+static ssize_t target_core_show_dev_naa(void *p, char *page)
+{
+	struct se_subsystem_dev *se_dev = p;
+
+	if (!(se_dev->su_dev_flags & SDF_USING_NAA))
+		return 0;
+
+	return snprintf(page, PAGE_SIZE, "%s\n", se_dev->se_dev_naa);
+}
+
+static ssize_t target_core_store_dev_naa(
+	void *p,
+	const char *page,
+	size_t count)
+{
+	struct se_subsystem_dev *se_dev = p;
+	struct se_hba *hba = se_dev->se_dev_hba;
+	ssize_t read_bytes;
+
+	if (count > (SE_DEV_NAA_LEN - 1)) {
+		pr_err("naa count: %d exceeds SE_DEV_NAA_LEN-1: %u\n", 
+			(int)count, SE_DEV_NAA_LEN - 1);
+		return -EINVAL;
+	}
+
+	read_bytes = snprintf(&se_dev->se_dev_naa[0], SE_DEV_NAA_LEN,
+			"%s", page);
+	if (!read_bytes)
+		return -EINVAL;
+	if (se_dev->se_dev_naa[read_bytes - 1] == '\n')
+		se_dev->se_dev_naa[read_bytes - 1] = '\0';
+
+	se_dev->su_dev_flags |= SDF_USING_NAA;
+
+    pr_debug("Target_Core_ConfigFS: %s/%s set naa: %s\n",
+		config_item_name(&hba->hba_group.cg_item),
+		config_item_name(&se_dev->se_dev_group.cg_item),
+		se_dev->se_dev_naa);
+
+	return read_bytes;
+}
+
+static struct target_core_configfs_attribute target_core_attr_dev_naa = {
+	.attr	= { .ca_owner = THIS_MODULE,
+		    .ca_name = "naa",
+		    .ca_mode =  S_IRUGO | S_IWUSR },
+	.show	= target_core_show_dev_naa,
+	.store	= target_core_store_dev_naa,
+};
+// [E] Benjamin 20130117 for naa configfs
+
+
+
+#if defined(SUPPORT_LOGICAL_BLOCK_4KB_FROM_NAS_GUI)
+
+/* adamhsu 2013/06/07 - Support to set the logical block size from NAS GUI.
+ *
+ * Cause of the attribute item information in attrib folder are still not be set
+ * before to enable the LU, we need to put this information into another attribute
+ * item.
+ */
+
+/*
+ * @fn int target_core_show_dev_qlbs (void *p, char *page)
+ *
+ * @brief
+ * @note
+ * @param[in] p
+ * @param[in] page
+ * @retval
+ */
+static ssize_t target_core_show_dev_qlbs(
+    void *p, 
+    char *page
+    )
+{
+    struct se_subsystem_dev *se_sub_dev = p;
+    ssize_t rb;
+
+    /* TODO
+     *
+     * Shall we need to take care something more in this function ??
+     */
+    if (!(se_sub_dev->su_dev_flags & SDF_USING_QLBS))
+        return 0;
+    rb = snprintf(page, PAGE_SIZE, "%llu\n", (u64)se_sub_dev->se_dev_qlbs);
+    return rb;
+}
+
+/*
+ * @fn int target_core_store_dev_qlbs (void *p, char *page, size_t count)
+ *
+ * @brief
+ * @note
+ * @param[in] p
+ * @param[in] page
+ * @param[in] count 
+ * @retval
+ */
+static ssize_t target_core_store_dev_qlbs(
+    void *p,
+    const char *page,
+    size_t count)
+{
+    struct se_subsystem_dev *se_sub_dev = p;
+    struct se_hba *hba = se_sub_dev->se_dev_hba;
+    unsigned long val = 0;
+    int ret = 0;
+
+    /* TODO
+     *
+     * Shall we need to take care something more in this function ??
+     */
+    ret = strict_strtoul(page, 0, &val);
+    if (ret < 0) {
+        pr_err("strict_strtoul() failed with  ret: %d\n", ret);
+        return -EINVAL;
+    }
+
+    /* support 512 / 4096 byte currently */
+    if ((val != 512) && (val != 4096)
+#if 0
+    && (val != 1024) && (val != 2048)
+#endif
+    )
+    {
+        pr_err("se_sub_dev[%p]: Illegal value for block_device: %lu"
+            " for se sub device, must be 512, 1024, 2048 or 4096\n",
+            se_sub_dev, val);
+            return -EINVAL;
+    }
+
+    /**/
+    if (atomic_read(&se_sub_dev->se_dev_qlbs_write_once)){
+        pr_err("qlbs was setup already. Can't update again.\n");
+            return -EINVAL;
+    }
+
+    /* set the qlbs to write-once */
+    atomic_set(&se_sub_dev->se_dev_qlbs_write_once, 1);
+    se_sub_dev->su_dev_flags |= SDF_USING_QLBS;
+    se_sub_dev->se_dev_qlbs = val;
+
+    /* TODO: Actually, we can remove this code ...
+     *
+     * To check need to update the block size / hw block size for se_device or
+     * not since we will use se_dev_qlbs to do main key. Please make sure the
+     * LU was disabled / unmaped already before to update them.
+     */
+    spin_lock(&se_sub_dev->se_dev_lock);
+    if (se_sub_dev->se_dev_ptr){
+    	ret = se_dev_set_block_size(se_sub_dev->se_dev_ptr, (u32)val);
+    }
+    spin_unlock(&se_sub_dev->se_dev_lock);
+
+    /**/
+    pr_debug("Target_Core_ConfigFS: se_sub_dev[%p], %s/%s set qlbs: %u\n",
+        se_sub_dev,
+        config_item_name(&hba->hba_group.cg_item),
+        config_item_name(&se_sub_dev->se_dev_group.cg_item),
+        se_sub_dev->se_dev_qlbs);
+
+    return count;
+
+}
+
+static struct target_core_configfs_attribute target_core_attr_dev_qlbs = {
+	.attr	= { .ca_owner = THIS_MODULE,
+		    .ca_name = "qlbs",
+		    .ca_mode =  S_IRUGO | S_IWUSR },
+	.show	= target_core_show_dev_qlbs,
+	.store	= target_core_store_dev_qlbs,
+};
+#endif
+
+#endif /* #ifdef CONFIG_MACH_QNAPTS */
+
+static ssize_t target_core_show_dev_udev_path(void *p, char *page)
+{
+	struct se_subsystem_dev *se_dev = p;
+
+	if (!(se_dev->su_dev_flags & SDF_USING_UDEV_PATH))
+		return 0;
+
+	return snprintf(page, PAGE_SIZE, "%s\n", se_dev->se_dev_udev_path);
 }
 
 static ssize_t target_core_store_dev_udev_path(
@@ -1548,8 +2224,8 @@ static ssize_t target_core_store_dev_udev_path(
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = p;
-	struct se_hba *hba = dev->se_hba;
+	struct se_subsystem_dev *se_dev = p;
+	struct se_hba *hba = se_dev->se_dev_hba;
 	ssize_t read_bytes;
 
 	if (count > (SE_UDEV_PATH_LEN-1)) {
@@ -1559,19 +2235,19 @@ static ssize_t target_core_store_dev_udev_path(
 		return -EINVAL;
 	}
 
-	read_bytes = snprintf(&dev->udev_path[0], SE_UDEV_PATH_LEN,
+	read_bytes = snprintf(&se_dev->se_dev_udev_path[0], SE_UDEV_PATH_LEN,
 			"%s", page);
 	if (!read_bytes)
 		return -EINVAL;
-	if (dev->udev_path[read_bytes - 1] == '\n')
-		dev->udev_path[read_bytes - 1] = '\0';
+	if (se_dev->se_dev_udev_path[read_bytes - 1] == '\n')
+		se_dev->se_dev_udev_path[read_bytes - 1] = '\0';
 
-	dev->dev_flags |= DF_USING_UDEV_PATH;
+	se_dev->su_dev_flags |= SDF_USING_UDEV_PATH;
 
 	pr_debug("Target_Core_ConfigFS: %s/%s set udev_path: %s\n",
 		config_item_name(&hba->hba_group.cg_item),
-		config_item_name(&dev->dev_group.cg_item),
-		dev->udev_path);
+		config_item_name(&se_dev->se_dev_group.cg_item),
+		se_dev->se_dev_udev_path);
 
 	return read_bytes;
 }
@@ -1584,21 +2260,16 @@ static struct target_core_configfs_attribute target_core_attr_dev_udev_path = {
 	.store	= target_core_store_dev_udev_path,
 };
 
-static ssize_t target_core_show_dev_enable(void *p, char *page)
-{
-	struct se_device *dev = p;
-
-	return snprintf(page, PAGE_SIZE, "%d\n", !!(dev->dev_flags & DF_CONFIGURED));
-}
-
 static ssize_t target_core_store_dev_enable(
 	void *p,
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = p;
+	struct se_subsystem_dev *se_dev = p;
+	struct se_device *dev;
+	struct se_hba *hba = se_dev->se_dev_hba;
+	struct se_subsystem_api *t = hba->transport;
 	char *ptr;
-	int ret;
 
 	ptr = strstr(page, "1");
 	if (!ptr) {
@@ -1606,32 +2277,69 @@ static ssize_t target_core_store_dev_enable(
 				" is \"1\"\n");
 		return -EINVAL;
 	}
+#ifdef CONFIG_MACH_QNAPTS // 2010/07/20 Nike Chen, support online lun expansion
+	if (se_dev->se_dev_ptr) {
+		pr_warning("se_dev->se_dev_ptr already set for storage"
+				" object, try to change the storage size.\n");
+		if (t && t->change_dev_size)
+		    t->change_dev_size(se_dev->se_dev_ptr);        
+		return -EEXIST;
+	}
+#else
+	if (se_dev->se_dev_ptr) {
+		pr_err("se_dev->se_dev_ptr already set for storage"
+				" object\n");
+		return -EEXIST;
+	}    
+#endif 
+    
 
-	ret = target_configure_device(dev);
-	if (ret)
-		return ret;
+	if (t->check_configfs_dev_params(hba, se_dev) < 0)
+		return -EINVAL;
+
+	dev = t->create_virtdevice(hba, se_dev, se_dev->se_dev_su_ptr);
+	if (IS_ERR(dev))
+		return PTR_ERR(dev);
+	else if (!dev)
+		return -EINVAL;
+
+	se_dev->se_dev_ptr = dev;
+	pr_debug("Target_Core_ConfigFS: Registered se_dev->se_dev_ptr:"
+		" %p\n", se_dev->se_dev_ptr);
+
 	return count;
 }
 
 static struct target_core_configfs_attribute target_core_attr_dev_enable = {
 	.attr	= { .ca_owner = THIS_MODULE,
 		    .ca_name = "enable",
-		    .ca_mode =  S_IRUGO | S_IWUSR },
-	.show	= target_core_show_dev_enable,
+		    .ca_mode = S_IWUSR },
+	.show	= NULL,
 	.store	= target_core_store_dev_enable,
 };
 
 static ssize_t target_core_show_alua_lu_gp(void *p, char *page)
 {
-	struct se_device *dev = p;
+	struct se_device *dev;
+	struct se_subsystem_dev *su_dev = p;
 	struct config_item *lu_ci;
 	struct t10_alua_lu_gp *lu_gp;
 	struct t10_alua_lu_gp_member *lu_gp_mem;
 	ssize_t len = 0;
 
+	dev = su_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
+
+	if (su_dev->t10_alua.alua_type != SPC3_ALUA_EMULATED)
+		return len;
+
 	lu_gp_mem = dev->dev_alua_lu_gp_mem;
-	if (!lu_gp_mem)
-		return 0;
+	if (!lu_gp_mem) {
+		pr_err("NULL struct se_device->dev_alua_lu_gp_mem"
+				" pointer\n");
+		return -EINVAL;
+	}
 
 	spin_lock(&lu_gp_mem->lu_gp_mem_lock);
 	lu_gp = lu_gp_mem->lu_gp;
@@ -1650,17 +2358,24 @@ static ssize_t target_core_store_alua_lu_gp(
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = p;
-	struct se_hba *hba = dev->se_hba;
+	struct se_device *dev;
+	struct se_subsystem_dev *su_dev = p;
+	struct se_hba *hba = su_dev->se_dev_hba;
 	struct t10_alua_lu_gp *lu_gp = NULL, *lu_gp_new = NULL;
 	struct t10_alua_lu_gp_member *lu_gp_mem;
 	unsigned char buf[LU_GROUP_NAME_BUF];
 	int move = 0;
 
-	lu_gp_mem = dev->dev_alua_lu_gp_mem;
-	if (!lu_gp_mem)
-		return 0;
+	dev = su_dev->se_dev_ptr;
+	if (!dev)
+		return -ENODEV;
 
+	if (su_dev->t10_alua.alua_type != SPC3_ALUA_EMULATED) {
+		pr_warn("SPC3_ALUA_EMULATED not enabled for %s/%s\n",
+			config_item_name(&hba->hba_group.cg_item),
+			config_item_name(&su_dev->se_dev_group.cg_item));
+		return -EINVAL;
+	}
 	if (count > LU_GROUP_NAME_BUF) {
 		pr_err("ALUA LU Group Alias too large!\n");
 		return -EINVAL;
@@ -1681,6 +2396,14 @@ static ssize_t target_core_store_alua_lu_gp(
 		if (!lu_gp_new)
 			return -ENODEV;
 	}
+	lu_gp_mem = dev->dev_alua_lu_gp_mem;
+	if (!lu_gp_mem) {
+		if (lu_gp_new)
+			core_alua_put_lu_gp_from_name(lu_gp_new);
+		pr_err("NULL struct se_device->dev_alua_lu_gp_mem"
+				" pointer\n");
+		return -EINVAL;
+	}
 
 	spin_lock(&lu_gp_mem->lu_gp_mem_lock);
 	lu_gp = lu_gp_mem->lu_gp;
@@ -1694,7 +2417,7 @@ static ssize_t target_core_store_alua_lu_gp(
 				" from ALUA LU Group: core/alua/lu_gps/%s, ID:"
 				" %hu\n",
 				config_item_name(&hba->hba_group.cg_item),
-				config_item_name(&dev->dev_group.cg_item),
+				config_item_name(&su_dev->se_dev_group.cg_item),
 				config_item_name(&lu_gp->lu_gp_group.cg_item),
 				lu_gp->lu_gp_id);
 
@@ -1719,7 +2442,7 @@ static ssize_t target_core_store_alua_lu_gp(
 		" core/alua/lu_gps/%s, ID: %hu\n",
 		(move) ? "Moving" : "Adding",
 		config_item_name(&hba->hba_group.cg_item),
-		config_item_name(&dev->dev_group.cg_item),
+		config_item_name(&su_dev->se_dev_group.cg_item),
 		config_item_name(&lu_gp_new->lu_gp_group.cg_item),
 		lu_gp_new->lu_gp_id);
 
@@ -1742,49 +2465,87 @@ static struct configfs_attribute *lio_core_dev_attrs[] = {
 	&target_core_attr_dev_udev_path.attr,
 	&target_core_attr_dev_enable.attr,
 	&target_core_attr_dev_alua_lu_gp.attr,
+#ifdef CONFIG_MACH_QNAPTS   
+	//Benjamin 20121031 for provision configfs	
+	&target_core_attr_dev_provision.attr,
+	//Benjamin 20130117 for naa configfs	
+	&target_core_attr_dev_naa.attr,	
+
+#if defined(SUPPORT_LOGICAL_BLOCK_4KB_FROM_NAS_GUI)
+	&target_core_attr_dev_qlbs.attr,	
+#endif
+#ifdef QNAP_SHARE_JOURNAL
+	&target_core_attr_dev_bbu_journal.attr,
+#endif
+#endif	
 	NULL,
 };
 
 static void target_core_dev_release(struct config_item *item)
 {
-	struct config_group *dev_cg = to_config_group(item);
-	struct se_device *dev =
-		container_of(dev_cg, struct se_device, dev_group);
+	struct se_subsystem_dev *se_dev = container_of(to_config_group(item),
+				struct se_subsystem_dev, se_dev_group);
+	struct se_hba *hba = item_to_hba(&se_dev->se_dev_hba->hba_group.cg_item);
+	struct se_subsystem_api *t = hba->transport;
+	struct config_group *dev_cg = &se_dev->se_dev_group;
 
 	kfree(dev_cg->default_groups);
-	target_free_device(dev);
+	/*
+	 * This pointer will set when the storage is enabled with:
+	 *`echo 1 > $CONFIGFS/core/$HBA/$DEV/dev_enable`
+	 */
+	if (se_dev->se_dev_ptr) {
+		pr_debug("Target_Core_ConfigFS: Calling se_free_"
+			"virtual_device() for se_dev_ptr: %p\n",
+			se_dev->se_dev_ptr);
+
+		se_free_virtual_device(se_dev->se_dev_ptr, hba);
+	} else {
+		/*
+		 * Release struct se_subsystem_dev->se_dev_su_ptr..
+		 */
+		pr_debug("Target_Core_ConfigFS: Calling t->free_"
+			"device() for se_dev_su_ptr: %p\n",
+			se_dev->se_dev_su_ptr);
+
+		t->free_device(se_dev->se_dev_su_ptr);
+	}
+
+	pr_debug("Target_Core_ConfigFS: Deallocating se_subsystem"
+			"_dev_t: %p\n", se_dev);
+	kfree(se_dev);
 }
 
 static ssize_t target_core_dev_show(struct config_item *item,
 				     struct configfs_attribute *attr,
 				     char *page)
 {
-	struct config_group *dev_cg = to_config_group(item);
-	struct se_device *dev =
-		container_of(dev_cg, struct se_device, dev_group);
+	struct se_subsystem_dev *se_dev = container_of(
+			to_config_group(item), struct se_subsystem_dev,
+			se_dev_group);
 	struct target_core_configfs_attribute *tc_attr = container_of(
 			attr, struct target_core_configfs_attribute, attr);
 
 	if (!tc_attr->show)
 		return -EINVAL;
 
-	return tc_attr->show(dev, page);
+	return tc_attr->show(se_dev, page);
 }
 
 static ssize_t target_core_dev_store(struct config_item *item,
 				      struct configfs_attribute *attr,
 				      const char *page, size_t count)
 {
-	struct config_group *dev_cg = to_config_group(item);
-	struct se_device *dev =
-		container_of(dev_cg, struct se_device, dev_group);
+	struct se_subsystem_dev *se_dev = container_of(
+			to_config_group(item), struct se_subsystem_dev,
+			se_dev_group);
 	struct target_core_configfs_attribute *tc_attr = container_of(
 			attr, struct target_core_configfs_attribute, attr);
 
 	if (!tc_attr->store)
 		return -EINVAL;
 
-	return tc_attr->store(dev, page, count);
+	return tc_attr->store(se_dev, page, count);
 }
 
 static struct configfs_item_operations target_core_dev_item_ops = {
@@ -1874,6 +2635,7 @@ static ssize_t target_core_alua_lu_gp_show_attr_members(
 {
 	struct se_device *dev;
 	struct se_hba *hba;
+	struct se_subsystem_dev *su_dev;
 	struct t10_alua_lu_gp_member *lu_gp_mem;
 	ssize_t len = 0, cur_len;
 	unsigned char buf[LU_GROUP_NAME_BUF];
@@ -1883,11 +2645,12 @@ static ssize_t target_core_alua_lu_gp_show_attr_members(
 	spin_lock(&lu_gp->lu_gp_lock);
 	list_for_each_entry(lu_gp_mem, &lu_gp->lu_gp_mem_list, lu_gp_mem_list) {
 		dev = lu_gp_mem->lu_gp_mem_dev;
-		hba = dev->se_hba;
+		su_dev = dev->se_sub_dev;
+		hba = su_dev->se_dev_hba;
 
 		cur_len = snprintf(buf, LU_GROUP_NAME_BUF, "%s/%s\n",
 			config_item_name(&hba->hba_group.cg_item),
-			config_item_name(&dev->dev_group.cg_item));
+			config_item_name(&su_dev->se_dev_group.cg_item));
 		cur_len++; /* Extra byte for NULL terminator */
 
 		if ((cur_len + len) > PAGE_SIZE) {
@@ -2025,7 +2788,7 @@ static ssize_t target_core_alua_tg_pt_gp_store_attr_alua_access_state(
 	const char *page,
 	size_t count)
 {
-	struct se_device *dev = tg_pt_gp->tg_pt_gp_dev;
+	struct se_subsystem_dev *su_dev = tg_pt_gp->tg_pt_gp_su_dev;
 	unsigned long tmp;
 	int new_state, ret;
 
@@ -2049,7 +2812,7 @@ static ssize_t target_core_alua_tg_pt_gp_store_attr_alua_access_state(
 		return -EINVAL;
 	}
 
-	ret = core_alua_do_port_transition(tg_pt_gp, dev,
+	ret = core_alua_do_port_transition(tg_pt_gp, su_dev->se_dev_ptr,
 					NULL, NULL, new_state, 0);
 	return (!ret) ? count : -EINVAL;
 }
@@ -2204,26 +2967,6 @@ static ssize_t target_core_alua_tg_pt_gp_store_attr_trans_delay_msecs(
 SE_DEV_ALUA_TG_PT_ATTR(trans_delay_msecs, S_IRUGO | S_IWUSR);
 
 /*
- * implict_trans_secs
- */
-static ssize_t target_core_alua_tg_pt_gp_show_attr_implict_trans_secs(
-	struct t10_alua_tg_pt_gp *tg_pt_gp,
-	char *page)
-{
-	return core_alua_show_implict_trans_secs(tg_pt_gp, page);
-}
-
-static ssize_t target_core_alua_tg_pt_gp_store_attr_implict_trans_secs(
-	struct t10_alua_tg_pt_gp *tg_pt_gp,
-	const char *page,
-	size_t count)
-{
-	return core_alua_store_implict_trans_secs(tg_pt_gp, page, count);
-}
-
-SE_DEV_ALUA_TG_PT_ATTR(implict_trans_secs, S_IRUGO | S_IWUSR);
-
-/*
  * preferred
  */
 
@@ -2347,7 +3090,6 @@ static struct configfs_attribute *target_core_alua_tg_pt_gp_attrs[] = {
 	&target_core_alua_tg_pt_gp_alua_write_metadata.attr,
 	&target_core_alua_tg_pt_gp_nonop_delay_msecs.attr,
 	&target_core_alua_tg_pt_gp_trans_delay_msecs.attr,
-	&target_core_alua_tg_pt_gp_implict_trans_secs.attr,
 	&target_core_alua_tg_pt_gp_preferred.attr,
 	&target_core_alua_tg_pt_gp_tg_pt_gp_id.attr,
 	&target_core_alua_tg_pt_gp_members.attr,
@@ -2385,10 +3127,11 @@ static struct config_group *target_core_alua_create_tg_pt_gp(
 	struct t10_alua *alua = container_of(group, struct t10_alua,
 					alua_tg_pt_gps_group);
 	struct t10_alua_tg_pt_gp *tg_pt_gp;
+	struct se_subsystem_dev *su_dev = alua->t10_sub_dev;
 	struct config_group *alua_tg_pt_gp_cg = NULL;
 	struct config_item *alua_tg_pt_gp_ci = NULL;
 
-	tg_pt_gp = core_alua_allocate_tg_pt_gp(alua->t10_dev, name, 0);
+	tg_pt_gp = core_alua_allocate_tg_pt_gp(su_dev, name, 0);
 	if (!tg_pt_gp)
 		return NULL;
 
@@ -2485,10 +3228,10 @@ static struct config_group *target_core_make_subdev(
 	const char *name)
 {
 	struct t10_alua_tg_pt_gp *tg_pt_gp;
+	struct se_subsystem_dev *se_dev;
 	struct se_subsystem_api *t;
 	struct config_item *hba_ci = &group->cg_item;
 	struct se_hba *hba = item_to_hba(hba_ci);
-	struct se_device *dev;
 	struct config_group *dev_cg = NULL, *tg_pt_gp_cg = NULL;
 	struct config_group *dev_stat_grp = NULL;
 	int errno = -ENOMEM, ret;
@@ -2501,80 +3244,132 @@ static struct config_group *target_core_make_subdev(
 	 */
 	t = hba->transport;
 
-	dev = target_alloc_device(hba, name);
-	if (!dev)
-		goto out_unlock;
+	se_dev = kzalloc(sizeof(struct se_subsystem_dev), GFP_KERNEL);
+	if (!se_dev) {
+		pr_err("Unable to allocate memory for"
+				" struct se_subsystem_dev\n");
+		goto unlock;
+	}
 
-	dev_cg = &dev->dev_group;
 
-	dev_cg->default_groups = kmalloc(sizeof(struct config_group *) * 6,
+#if defined(CONFIG_MACH_QNAPTS)
+
+	atomic_set(&se_dev->se_dev_provision_write_once, 0);
+
+#if defined(SUPPORT_LOGICAL_BLOCK_4KB_FROM_NAS_GUI)
+	atomic_set(&se_dev->se_dev_qlbs_write_once, 0);
+#endif
+#endif
+
+
+	INIT_LIST_HEAD(&se_dev->t10_wwn.t10_vpd_list);
+	spin_lock_init(&se_dev->t10_wwn.t10_vpd_lock);
+	INIT_LIST_HEAD(&se_dev->t10_pr.registration_list);
+	INIT_LIST_HEAD(&se_dev->t10_pr.aptpl_reg_list);
+	spin_lock_init(&se_dev->t10_pr.registration_lock);
+	spin_lock_init(&se_dev->t10_pr.aptpl_reg_lock);
+	INIT_LIST_HEAD(&se_dev->t10_alua.tg_pt_gps_list);
+	spin_lock_init(&se_dev->t10_alua.tg_pt_gps_lock);
+	spin_lock_init(&se_dev->se_dev_lock);
+	se_dev->t10_pr.pr_aptpl_buf_len = PR_APTPL_BUF_LEN;
+	se_dev->t10_wwn.t10_sub_dev = se_dev;
+	se_dev->t10_alua.t10_sub_dev = se_dev;
+	se_dev->se_dev_attrib.da_sub_dev = se_dev;
+
+	se_dev->se_dev_hba = hba;
+	dev_cg = &se_dev->se_dev_group;
+
+	dev_cg->default_groups = kzalloc(sizeof(struct config_group) * 7,
 			GFP_KERNEL);
 	if (!dev_cg->default_groups)
-		goto out_free_device;
+		goto out;
+	/*
+	 * Set se_dev_su_ptr from struct se_subsystem_api returned void ptr
+	 * for ->allocate_virtdevice()
+	 *
+	 * se_dev->se_dev_ptr will be set after ->create_virtdev()
+	 * has been called successfully in the next level up in the
+	 * configfs tree for device object's struct config_group.
+	 */
+	se_dev->se_dev_su_ptr = t->allocate_virtdevice(hba, name);
+	if (!se_dev->se_dev_su_ptr) {
+		pr_err("Unable to locate subsystem dependent pointer"
+			" from allocate_virtdevice()\n");
+		goto out;
+	}
 
-	config_group_init_type_name(dev_cg, name, &target_core_dev_cit);
-	config_group_init_type_name(&dev->dev_attrib.da_group, "attrib",
+	config_group_init_type_name(&se_dev->se_dev_group, name,
+			&target_core_dev_cit);
+	config_group_init_type_name(&se_dev->se_dev_attrib.da_group, "attrib",
 			&target_core_dev_attrib_cit);
-	config_group_init_type_name(&dev->dev_pr_group, "pr",
+	config_group_init_type_name(&se_dev->se_dev_pr_group, "pr",
 			&target_core_dev_pr_cit);
-	config_group_init_type_name(&dev->t10_wwn.t10_wwn_group, "wwn",
+	config_group_init_type_name(&se_dev->t10_wwn.t10_wwn_group, "wwn",
 			&target_core_dev_wwn_cit);
-	config_group_init_type_name(&dev->t10_alua.alua_tg_pt_gps_group,
+	config_group_init_type_name(&se_dev->t10_alua.alua_tg_pt_gps_group,
 			"alua", &target_core_alua_tg_pt_gps_cit);
-	config_group_init_type_name(&dev->dev_stat_grps.stat_group,
+	config_group_init_type_name(&se_dev->dev_stat_grps.stat_group,
 			"statistics", &target_core_stat_cit);
 
-	dev_cg->default_groups[0] = &dev->dev_attrib.da_group;
-	dev_cg->default_groups[1] = &dev->dev_pr_group;
-	dev_cg->default_groups[2] = &dev->t10_wwn.t10_wwn_group;
-	dev_cg->default_groups[3] = &dev->t10_alua.alua_tg_pt_gps_group;
-	dev_cg->default_groups[4] = &dev->dev_stat_grps.stat_group;
+	dev_cg->default_groups[0] = &se_dev->se_dev_attrib.da_group;
+	dev_cg->default_groups[1] = &se_dev->se_dev_pr_group;
+	dev_cg->default_groups[2] = &se_dev->t10_wwn.t10_wwn_group;
+	dev_cg->default_groups[3] = &se_dev->t10_alua.alua_tg_pt_gps_group;
+	dev_cg->default_groups[4] = &se_dev->dev_stat_grps.stat_group;
 	dev_cg->default_groups[5] = NULL;
 	/*
 	 * Add core/$HBA/$DEV/alua/default_tg_pt_gp
 	 */
-	tg_pt_gp = core_alua_allocate_tg_pt_gp(dev, "default_tg_pt_gp", 1);
+	tg_pt_gp = core_alua_allocate_tg_pt_gp(se_dev, "default_tg_pt_gp", 1);
 	if (!tg_pt_gp)
-		goto out_free_dev_cg_default_groups;
-	dev->t10_alua.default_tg_pt_gp = tg_pt_gp;
+		goto out;
 
-	tg_pt_gp_cg = &dev->t10_alua.alua_tg_pt_gps_group;
-	tg_pt_gp_cg->default_groups = kmalloc(sizeof(struct config_group *) * 2,
+	tg_pt_gp_cg = &se_dev->t10_alua.alua_tg_pt_gps_group;
+	tg_pt_gp_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
 				GFP_KERNEL);
 	if (!tg_pt_gp_cg->default_groups) {
 		pr_err("Unable to allocate tg_pt_gp_cg->"
 				"default_groups\n");
-		goto out_free_tg_pt_gp;
+		goto out;
 	}
 
 	config_group_init_type_name(&tg_pt_gp->tg_pt_gp_group,
 			"default_tg_pt_gp", &target_core_alua_tg_pt_gp_cit);
 	tg_pt_gp_cg->default_groups[0] = &tg_pt_gp->tg_pt_gp_group;
 	tg_pt_gp_cg->default_groups[1] = NULL;
+	se_dev->t10_alua.default_tg_pt_gp = tg_pt_gp;
 	/*
 	 * Add core/$HBA/$DEV/statistics/ default groups
 	 */
-	dev_stat_grp = &dev->dev_stat_grps.stat_group;
-	dev_stat_grp->default_groups = kmalloc(sizeof(struct config_group *) * 4,
+	dev_stat_grp = &se_dev->dev_stat_grps.stat_group;
+	dev_stat_grp->default_groups = kzalloc(sizeof(struct config_group) * 4,
 				GFP_KERNEL);
 	if (!dev_stat_grp->default_groups) {
 		pr_err("Unable to allocate dev_stat_grp->default_groups\n");
-		goto out_free_tg_pt_gp_cg_default_groups;
+		goto out;
 	}
-	target_stat_setup_dev_default_groups(dev);
+	target_stat_setup_dev_default_groups(se_dev);
+
+	pr_debug("Target_Core_ConfigFS: Allocated struct se_subsystem_dev:"
+		" %p se_dev_su_ptr: %p\n", se_dev, se_dev->se_dev_su_ptr);
 
 	mutex_unlock(&hba->hba_access_mutex);
-	return dev_cg;
-
-out_free_tg_pt_gp_cg_default_groups:
-	kfree(tg_pt_gp_cg->default_groups);
-out_free_tg_pt_gp:
-	core_alua_free_tg_pt_gp(tg_pt_gp);
-out_free_dev_cg_default_groups:
-	kfree(dev_cg->default_groups);
-out_free_device:
-	target_free_device(dev);
-out_unlock:
+	return &se_dev->se_dev_group;
+out:
+	if (se_dev->t10_alua.default_tg_pt_gp) {
+		core_alua_free_tg_pt_gp(se_dev->t10_alua.default_tg_pt_gp);
+		se_dev->t10_alua.default_tg_pt_gp = NULL;
+	}
+	if (dev_stat_grp)
+		kfree(dev_stat_grp->default_groups);
+	if (tg_pt_gp_cg)
+		kfree(tg_pt_gp_cg->default_groups);
+	if (dev_cg)
+		kfree(dev_cg->default_groups);
+	if (se_dev->se_dev_su_ptr)
+		t->free_device(se_dev->se_dev_su_ptr);
+	kfree(se_dev);
+unlock:
 	mutex_unlock(&hba->hba_access_mutex);
 	return ERR_PTR(errno);
 }
@@ -2583,19 +3378,18 @@ static void target_core_drop_subdev(
 	struct config_group *group,
 	struct config_item *item)
 {
-	struct config_group *dev_cg = to_config_group(item);
-	struct se_device *dev =
-		container_of(dev_cg, struct se_device, dev_group);
+	struct se_subsystem_dev *se_dev = container_of(to_config_group(item),
+				struct se_subsystem_dev, se_dev_group);
 	struct se_hba *hba;
 	struct config_item *df_item;
-	struct config_group *tg_pt_gp_cg, *dev_stat_grp;
+	struct config_group *dev_cg, *tg_pt_gp_cg, *dev_stat_grp;
 	int i;
 
-	hba = item_to_hba(&dev->se_hba->hba_group.cg_item);
+	hba = item_to_hba(&se_dev->se_dev_hba->hba_group.cg_item);
 
 	mutex_lock(&hba->hba_access_mutex);
 
-	dev_stat_grp = &dev->dev_stat_grps.stat_group;
+	dev_stat_grp = &se_dev->dev_stat_grps.stat_group;
 	for (i = 0; dev_stat_grp->default_groups[i]; i++) {
 		df_item = &dev_stat_grp->default_groups[i]->cg_item;
 		dev_stat_grp->default_groups[i] = NULL;
@@ -2603,7 +3397,7 @@ static void target_core_drop_subdev(
 	}
 	kfree(dev_stat_grp->default_groups);
 
-	tg_pt_gp_cg = &dev->t10_alua.alua_tg_pt_gps_group;
+	tg_pt_gp_cg = &se_dev->t10_alua.alua_tg_pt_gps_group;
 	for (i = 0; tg_pt_gp_cg->default_groups[i]; i++) {
 		df_item = &tg_pt_gp_cg->default_groups[i]->cg_item;
 		tg_pt_gp_cg->default_groups[i] = NULL;
@@ -2614,15 +3408,17 @@ static void target_core_drop_subdev(
 	 * core_alua_free_tg_pt_gp() is called from ->default_tg_pt_gp
 	 * directly from target_core_alua_tg_pt_gp_release().
 	 */
-	dev->t10_alua.default_tg_pt_gp = NULL;
+	se_dev->t10_alua.default_tg_pt_gp = NULL;
 
+	dev_cg = &se_dev->se_dev_group;
 	for (i = 0; dev_cg->default_groups[i]; i++) {
 		df_item = &dev_cg->default_groups[i]->cg_item;
 		dev_cg->default_groups[i] = NULL;
 		config_item_put(df_item);
 	}
 	/*
-	 * se_dev is released from target_core_dev_item_ops->release()
+	 * The releasing of se_dev and associated se_dev->se_dev_ptr is done
+	 * from target_core_dev_item_ops->release() ->target_core_dev_release().
 	 */
 	config_item_put(item);
 	mutex_unlock(&hba->hba_access_mutex);
@@ -2685,10 +3481,13 @@ static ssize_t target_core_hba_store_attr_hba_mode(struct se_hba *hba,
 		return -EINVAL;
 	}
 
-	if (hba->dev_count) {
+	spin_lock(&hba->device_lock);
+	if (!list_empty(&hba->hba_dev_list)) {
 		pr_err("Unable to set hba_mode with active devices\n");
+		spin_unlock(&hba->device_lock);
 		return -EINVAL;
 	}
+	spin_unlock(&hba->device_lock);
 
 	ret = transport->pmode_enable_hba(hba, mode_flag);
 	if (ret < 0)
@@ -2840,11 +3639,10 @@ static int __init target_core_init_configfs(void)
 	 * and ALUA Logical Unit Group and Target Port Group infrastructure.
 	 */
 	target_cg = &subsys->su_group;
-	target_cg->default_groups = kmalloc(sizeof(struct config_group) * 2,
+	target_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
 				GFP_KERNEL);
 	if (!target_cg->default_groups) {
 		pr_err("Unable to allocate target_cg->default_groups\n");
-		ret = -ENOMEM;
 		goto out_global;
 	}
 
@@ -2856,11 +3654,10 @@ static int __init target_core_init_configfs(void)
 	 * Create ALUA infrastructure under /sys/kernel/config/target/core/alua/
 	 */
 	hba_cg = &target_core_hbagroup;
-	hba_cg->default_groups = kmalloc(sizeof(struct config_group *) * 2,
+	hba_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
 				GFP_KERNEL);
 	if (!hba_cg->default_groups) {
 		pr_err("Unable to allocate hba_cg->default_groups\n");
-		ret = -ENOMEM;
 		goto out_global;
 	}
 	config_group_init_type_name(&alua_group,
@@ -2872,11 +3669,10 @@ static int __init target_core_init_configfs(void)
 	 * groups under /sys/kernel/config/target/core/alua/
 	 */
 	alua_cg = &alua_group;
-	alua_cg->default_groups = kmalloc(sizeof(struct config_group *) * 2,
+	alua_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
 			GFP_KERNEL);
 	if (!alua_cg->default_groups) {
 		pr_err("Unable to allocate alua_cg->default_groups\n");
-		ret = -ENOMEM;
 		goto out_global;
 	}
 
@@ -2888,17 +3684,14 @@ static int __init target_core_init_configfs(void)
 	 * Add core/alua/lu_gps/default_lu_gp
 	 */
 	lu_gp = core_alua_allocate_lu_gp("default_lu_gp", 1);
-	if (IS_ERR(lu_gp)) {
-		ret = -ENOMEM;
+	if (IS_ERR(lu_gp))
 		goto out_global;
-	}
 
 	lu_gp_cg = &alua_lu_gps_group;
-	lu_gp_cg->default_groups = kmalloc(sizeof(struct config_group *) * 2,
+	lu_gp_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
 			GFP_KERNEL);
 	if (!lu_gp_cg->default_groups) {
 		pr_err("Unable to allocate lu_gp_cg->default_groups\n");
-		ret = -ENOMEM;
 		goto out_global;
 	}
 
@@ -2926,8 +3719,7 @@ static int __init target_core_init_configfs(void)
 	if (ret < 0)
 		goto out;
 
-	ret = core_dev_setup_virtual_lun0();
-	if (ret < 0)
+	if (core_dev_setup_virtual_lun0() < 0)
 		goto out;
 
 	return 0;

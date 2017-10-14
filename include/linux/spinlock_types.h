@@ -81,6 +81,14 @@ typedef struct spinlock {
 #define __SPIN_LOCK_UNLOCKED(lockname) \
 	(spinlock_t ) __SPIN_LOCK_INITIALIZER(lockname)
 
+#ifdef CONFIG_ARM
+// QNAP Patch
+#ifdef CONFIG_MACH_QNAPTS
+#define SPIN_LOCK_UNLOCKED	__SPIN_LOCK_UNLOCKED(old_style_spin_init)
+#endif // CONFIG_MACH_QNAPTS
+#endif // CONFIG_ARM
+///////////////////////////////////
+
 #define DEFINE_SPINLOCK(x)	spinlock_t x = __SPIN_LOCK_UNLOCKED(x)
 
 #include <linux/rwlock_types.h>

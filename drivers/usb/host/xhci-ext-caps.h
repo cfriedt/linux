@@ -71,6 +71,9 @@
 
 /* USB 2.0 xHCI 1.0 hardware LMP capability - section 7.2.2.1.3.2 */
 #define XHCI_HLC               (1 << 19)
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+#define XHCI_BLC               (1 << 20)
+#endif
 
 /* command register values to disable interrupts and halt the HC */
 /* start/stop HC execution - do not write unless HC is halted*/

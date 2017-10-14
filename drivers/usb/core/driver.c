@@ -467,8 +467,13 @@ int usb_driver_claim_interface(struct usb_driver *driver,
 	int lpm_disable_error;
 
 	if (dev->driver)
+//Patch by QNAP:fix UPS disconnect and release usbhid driver	
+#ifdef CONFIG_MACH_QNAPTS
+		return 0;
+#else
 		return -EBUSY;
-
+#endif
+/////////////////////////////////////////////
 	udev = interface_to_usbdev(iface);
 
 	dev->driver = &driver->drvwrap.driver;
@@ -1773,6 +1778,10 @@ int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable)
 	struct usb_hcd *hcd = bus_to_hcd(udev->bus);
 	int ret = -EPERM;
 
+#ifdef CONFIG_MACH_QNAPTS // Benjamin 2013/03/18 for USB S3 resume issue
+	if (enable && !udev->usb2_hw_lpm_allowed)
+		return 0;
+#endif
 	if (hcd->driver->set_usb2_hw_lpm) {
 		ret = hcd->driver->set_usb2_hw_lpm(hcd, udev, enable);
 		if (!ret)

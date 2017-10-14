@@ -1333,7 +1333,10 @@ struct net_device {
 
 	/* group the device belongs to */
 	int group;
-
+// QNAP patch : phy link up/down 
+	unsigned int link_sts;
+	unsigned int phy_link;
+////////////////////////////////
 	struct pm_qos_request	pm_qos_req;
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)

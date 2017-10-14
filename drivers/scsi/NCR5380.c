@@ -28,6 +28,9 @@
 
 /*
  * $Log: NCR5380.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:35  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
 
  * Revision 1.10 1998/9/2	Alan Cox
  *				(alan@lxorguk.ukuu.org.uk)

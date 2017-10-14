@@ -181,7 +181,7 @@ static struct ext4_new_flex_group_data *alloc_flex_gd(unsigned long flexbg_size)
 	if (flex_gd == NULL)
 		goto out3;
 
-	if (flexbg_size >= UINT_MAX / sizeof(struct ext4_new_flex_group_data))
+	if (flexbg_size >= UINT_MAX / sizeof(struct ext4_new_group_data))
 		goto out2;
 	flex_gd->count = flexbg_size;
 
@@ -1017,12 +1017,20 @@ exit_free:
  * do not copy the full number of backups at this time.  The resize
  * which changed s_groups_count will backup again.
  */
-static void update_backups(struct super_block *sb, int blk_off, char *data,
-			   int size, int meta_bg)
+/* Benjamin 20110620: for solving overflow while calling sb_getblk. */
+#ifdef CONFIG_MACH_QNAPTS
+static void update_backups(struct super_block *sb, sector_t blk_off, char *data, int size, int meta_bg)
+#else
+static void update_backups(struct super_block *sb, int blk_off, char *data, int size, int meta_bg)
+#endif
 {
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	ext4_group_t last;
+#ifdef CONFIG_MACH_QNAPTS
+    const ext4_fsblk_t bpg = EXT4_BLOCKS_PER_GROUP(sb);
+#else
 	const int bpg = EXT4_BLOCKS_PER_GROUP(sb);
+#endif
 	unsigned three = 1;
 	unsigned five = 5;
 	unsigned seven = 7;
@@ -1306,10 +1314,12 @@ static void ext4_update_super(struct super_block *sb,
 		free_blocks += group_data[i].free_blocks_count;
 	}
 
+#ifndef CONFIG_MACH_QNAPTS
 	reserved_blocks = ext4_r_blocks_count(es) * 100;
 	reserved_blocks = div64_u64(reserved_blocks, ext4_blocks_count(es));
 	reserved_blocks *= blocks_count;
 	do_div(reserved_blocks, 100);
+#endif
 
 	ext4_blocks_count_set(es, ext4_blocks_count(es) + blocks_count);
 	ext4_free_blocks_count_set(es, ext4_free_blocks_count(es) + free_blocks);
@@ -1656,12 +1666,10 @@ errout:
 		err = err2;
 
 	if (!err) {
-		ext4_fsblk_t first_block;
-		first_block = ext4_group_first_block_no(sb, 0);
 		if (test_opt(sb, DEBUG))
 			printk(KERN_DEBUG "EXT4-fs: extended group to %llu "
 			       "blocks\n", ext4_blocks_count(es));
-		update_backups(sb, EXT4_SB(sb)->s_sbh->b_blocknr - first_block,
+		update_backups(sb, EXT4_SB(sb)->s_sbh->b_blocknr,
 			       (char *)es, sizeof(struct ext4_super_block), 0);
 	}
 	return err;
@@ -1905,7 +1913,7 @@ retry:
 			n_desc_blocks = o_desc_blocks +
 				le16_to_cpu(es->s_reserved_gdt_blocks);
 			n_group = n_desc_blocks * EXT4_DESC_PER_BLOCK(sb);
-			n_blocks_count = n_group * EXT4_BLOCKS_PER_GROUP(sb);
+			n_blocks_count = (ext4_fsblk_t)n_group * EXT4_BLOCKS_PER_GROUP(sb);
 			n_group--; /* set to last group number */
 		}
 

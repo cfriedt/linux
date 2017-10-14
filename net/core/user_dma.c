@@ -31,7 +31,7 @@
 #include <net/tcp.h>
 #include <net/netdma.h>
 
-#define NET_DMA_DEFAULT_COPYBREAK 4096
+#define NET_DMA_DEFAULT_COPYBREAK  (1 << 20) /* don't enable NET_DMA by default */
 
 int sysctl_tcp_dma_copybreak = NET_DMA_DEFAULT_COPYBREAK;
 EXPORT_SYMBOL(sysctl_tcp_dma_copybreak);
@@ -52,21 +52,46 @@ int dma_skb_copy_datagram_iovec(struct dma_chan *chan,
 {
 	int start = skb_headlen(skb);
 	int i, copy = start - offset;
-	struct sk_buff *frag_iter;
 	dma_cookie_t cookie = 0;
+	struct sg_table	*dst_sgt;
+	struct sg_table	*src_sgt;
+	struct scatterlist *dst_sg;
+	int	dst_sg_len;
+	struct scatterlist *src_sg;
+	int		src_sg_len = skb_shinfo(skb)->nr_frags;
+	size_t	dst_len = len;
+	size_t	dst_offset = offset;
 
+	pr_debug("%s %d copy %d len %d nr_iovecs %d skb frags %d\n",
+			__func__, __LINE__, copy, len, pinned_list->nr_iovecs,
+			src_sg_len);
+
+	dst_sgt = pinned_list->sgts;
+
+	if (copy > 0)
+		src_sg_len += 1;
+
+	src_sgt = pinned_list->sgts + 1;
+
+	dst_sg = dst_sgt->sgl;
+	src_sg = src_sgt->sgl;
+	src_sg_len = 0;
 	/* Copy header. */
 	if (copy > 0) {
 		if (copy > len)
 			copy = len;
-		cookie = dma_memcpy_to_iovec(chan, to, pinned_list,
-					    skb->data + offset, copy);
-		if (cookie < 0)
-			goto fault;
+
+		sg_set_buf(src_sg, skb->data + offset, copy);
+		pr_debug("%s %d: add src buf page %p. addr %p len 0x%x\n", __func__,
+				__LINE__, virt_to_page(skb->data),
+				skb->data, copy);
+
 		len -= copy;
+		src_sg_len++;
 		if (len == 0)
-			goto end;
+			goto fill_dst_sg;
 		offset += copy;
+		src_sg = sg_next(src_sg);
 	}
 
 	/* Copy paged appendix. Hmm... why does this look so complicated? */
@@ -84,48 +109,36 @@ int dma_skb_copy_datagram_iovec(struct dma_chan *chan,
 			if (copy > len)
 				copy = len;
 
-			cookie = dma_memcpy_pg_to_iovec(chan, to, pinned_list, page,
-					frag->page_offset + offset - start, copy);
-			if (cookie < 0)
-				goto fault;
+			sg_set_page(src_sg, page, copy, frag->page_offset +
+					offset - start);
+			pr_debug("%s %d: add src buf [%d] page %p. len 0x%x\n", __func__,
+				__LINE__, i, page, copy);
+			src_sg = sg_next(src_sg);
+			src_sg_len++;
 			len -= copy;
 			if (len == 0)
-				goto end;
+				break;
 			offset += copy;
 		}
 		start = end;
 	}
 
-	skb_walk_frags(skb, frag_iter) {
-		int end;
+fill_dst_sg:
+	dst_sg_len = dma_memcpy_fill_sg_from_iovec(chan, to, pinned_list, dst_sg, dst_offset, dst_len);
+	BUG_ON(dst_sg_len <= 0);
 
-		WARN_ON(start > offset + len);
+	cookie = dma_async_memcpy_sg_to_sg(chan,
+					dst_sgt->sgl,
+					dst_sg_len,
+					src_sgt->sgl,
+					src_sg_len);
 
-		end = start + frag_iter->len;
-		copy = end - offset;
-		if (copy > 0) {
-			if (copy > len)
-				copy = len;
-			cookie = dma_skb_copy_datagram_iovec(chan, frag_iter,
-							     offset - start,
-							     to, copy,
-							     pinned_list);
-			if (cookie < 0)
-				goto fault;
-			len -= copy;
-			if (len == 0)
-				goto end;
-			offset += copy;
-		}
-		start = end;
-	}
 
-end:
 	if (!len) {
 		skb->dma_cookie = cookie;
+
 		return cookie;
 	}
 
-fault:
 	return -EFAULT;
 }

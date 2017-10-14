@@ -745,8 +745,8 @@ fill_invalid_ext:
 			}
 			/* page ref released in bl_end_io_write_zero */
 			index = isect >> PAGE_CACHE_SECTOR_SHIFT;
-			dprintk("%s zero %dth page: index %lu isect %llu\n",
-				__func__, npg_zero, index,
+			dprintk("%s zero %dth page: index %llu isect %llu\n",
+				__func__, npg_zero, (unsigned long long)index,
 				(unsigned long long)isect);
 			page = bl_find_get_zeroing_page(header->inode, index,
 							cow_read);
@@ -1219,7 +1219,8 @@ static u64 pnfs_num_cont_bytes(struct inode *inode, pgoff_t idx)
 	end = DIV_ROUND_UP(i_size_read(inode), PAGE_CACHE_SIZE);
 	if (end != NFS_I(inode)->npages) {
 		rcu_read_lock();
-		end = radix_tree_next_hole(&mapping->page_tree, idx + 1, ULONG_MAX);
+		end = radix_tree_next_hole(&mapping->page_tree, idx + 1,
+					   RDX_TREE_KEY_MAX_VALUE);
 		rcu_read_unlock();
 	}
 

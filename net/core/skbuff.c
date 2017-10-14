@@ -515,8 +515,27 @@ static void skb_release_data(struct sk_buff *skb)
 			       &skb_shinfo(skb)->dataref)) {
 		if (skb_shinfo(skb)->nr_frags) {
 			int i;
-			for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
-				skb_frag_unref(skb, i);
+			int nr_frags = skb_shinfo(skb)->nr_frags;
+
+			if(nr_frags > 1) {
+				unsigned int c = 0;
+				for (i = 0; i < nr_frags - 1; i++) {
+					struct page *page = skb_frag_page(&skb_shinfo(skb)->frags[i]);
+					struct page *next_page = skb_frag_page(&skb_shinfo(skb)->frags[i + 1]);
+					if (!PageCompound(page) && (page == next_page)) {
+						c++;
+						continue;
+					} else {
+						put_page_n(page, c + 1);
+						c = 0;
+					}
+				}
+
+				put_page_n(skb_frag_page(&skb_shinfo(skb)->frags[i]), c + 1);
+			} else {
+				for (i = 0; i < nr_frags; i++)
+					skb_frag_unref(skb, i);
+			}
 		}
 
 		/*

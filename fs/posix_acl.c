@@ -215,10 +215,117 @@ posix_acl_from_mode(umode_t mode, gfp_t flags)
 int
 posix_acl_permission(struct inode *inode, const struct posix_acl *acl, int want)
 {
-	const struct posix_acl_entry *pa, *pe, *mask_obj;
+	const struct posix_acl_entry *pa, *pe;
 	int found = 0;
+#ifdef CONFIG_MACH_QNAPTS
+	int qnap_acl = 0, qnap_mask = 0, found_mask = 0;
+#endif
 
 	want &= MAY_READ | MAY_WRITE | MAY_EXEC | MAY_NOT_BLOCK;
+
+#ifdef CONFIG_MACH_QNAPTS	// modify "check access algorithm" of POSIX ACL
+	if (current_fsuid() == 99) {	// httpdusr
+		qnap_acl = 7;
+		goto end_qnap_acl;
+	}
+	FOREACH_ACL_ENTRY(pa, acl, pe) {
+		switch(pa->e_tag) {
+			case ACL_USER_OBJ:
+
+				if (uid_eq(inode->i_uid, current_fsuid())){
+
+					if (pa->e_perm & 7) {
+						qnap_acl = qnap_acl | pa->e_perm;
+					}
+					else {
+						qnap_acl = 0;
+						goto end_qnap_acl;
+					}
+				}
+				break;
+			case ACL_USER:
+				if (uid_eq(pa->e_uid, current_fsuid())){
+
+					if (pa->e_perm & 7) {
+						qnap_acl = qnap_acl | pa->e_perm;
+					}
+					else {
+						qnap_acl = 0;
+						goto end_qnap_acl;
+					}
+				}
+				break;
+			case ACL_GROUP_OBJ:
+//marked because of bug 18730
+/*
+				if (in_group_p(inode->i_gid)) {
+					found = 1;
+					if (pa->e_perm & 7) {
+						qnap_acl = qnap_acl | pa->e_perm;
+					}
+//If g::---, that means the owning group has been removed from permission,
+//not deny permission.
+					else {
+						qnap_acl = 0;
+						goto end_qnap_acl;
+					}
+				}
+*/
+				break;
+			case ACL_GROUP:
+				if (in_group_p(pa->e_gid)) {
+					found = 1;
+					if (pa->e_perm & 7) {
+						qnap_acl = qnap_acl | pa->e_perm;
+					}
+					else {
+						qnap_acl = 0;
+						goto end_qnap_acl;
+					}
+				}
+				break;
+			case ACL_MASK:
+				found_mask = 1;
+				if (pa->e_perm & 7) {
+					qnap_mask = qnap_mask | pa->e_perm;
+				}
+				else {
+					qnap_mask = 0;
+					goto end_qnap_acl;
+				}
+				break;
+			case ACL_OTHER:
+//ingnore others permission
+/*
+				if (found)
+					break;
+				if (pa->e_perm & 7) {
+					qnap_acl = qnap_acl | pa->e_perm;
+				}
+				else {
+					qnap_acl = 0;
+					goto end_qnap_acl;
+				}
+*/
+				break;
+			default:
+				return -EIO;
+		}
+	}
+end_qnap_acl:
+//	printk(KERN_INFO "QNAP access right = [%d]\n", qnap_acl);
+	if (found_mask) {
+		if ((qnap_acl & qnap_mask & want) == want)
+			return 0;
+//		printk(KERN_INFO "qnap_acl=[%d], qnap_mask=[%d], want=[%d]\n", qnap_acl, qnap_mask, want);
+		return -EACCES;
+	}
+	if ((qnap_acl & want) == want)
+		return 0;
+//	printk(KERN_INFO "qnap_acl=[%d] want=[%d]\n", qnap_acl, want);
+	return -EACCES;
+#else
+	const struct posix_acl_entry *mask_obj;
 
 	FOREACH_ACL_ENTRY(pa, acl, pe) {
                 switch(pa->e_tag) {
@@ -271,6 +378,7 @@ check_perm:
 	if ((pa->e_perm & want) == want)
 		return 0;
 	return -EACCES;
+#endif
 }
 
 /*

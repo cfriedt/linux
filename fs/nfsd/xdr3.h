@@ -106,6 +106,20 @@ struct nfsd3_commitargs {
 	__u32			count;
 };
 
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+struct nfsd3_vstorageargs {
+        int                     operation;
+        struct svc_fh           fh;
+        struct svc_fh           dst;
+        __u64                   magic;
+        __u64                   offset;
+        __u64                   count;
+        __u32                   flags;
+};
+#endif
+#endif
+
 struct nfsd3_getaclargs {
 	struct svc_fh		fh;
 	int			mask;
@@ -220,6 +234,20 @@ struct nfsd3_commitres {
 	struct svc_fh		fh;
 };
 
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+struct nfsd3_vstorageres {
+        __be32                  status;
+        int                     operation;
+        __u32                   primitives;
+        __u64                   count;
+        __u64                   totalBytes;
+        __u64                   allocatedBytes;
+        __u64                   uniqueBytes;
+};
+#endif
+#endif
+
 struct nfsd3_getaclres {
 	__be32			status;
 	struct svc_fh		fh;
@@ -297,6 +325,12 @@ int nfs3svc_decode_readdirplusargs(struct svc_rqst *, __be32 *,
 				struct nfsd3_readdirargs *);
 int nfs3svc_decode_commitargs(struct svc_rqst *, __be32 *,
 				struct nfsd3_commitargs *);
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+int nfs3svc_decode_vstorageargs(struct svc_rqst *, __be32 *,
+                                struct nfsd3_vstorageargs *);
+#endif
+#endif
 int nfs3svc_encode_voidres(struct svc_rqst *, __be32 *, void *);
 int nfs3svc_encode_attrstat(struct svc_rqst *, __be32 *,
 				struct nfsd3_attrstat *);
@@ -326,7 +360,12 @@ int nfs3svc_encode_pathconfres(struct svc_rqst *, __be32 *,
 				struct nfsd3_pathconfres *);
 int nfs3svc_encode_commitres(struct svc_rqst *, __be32 *,
 				struct nfsd3_commitres *);
-
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI)	// 2012/12/04 Cindy Jen add for NFS VAAI
+int nfs3svc_encode_vstorageres(struct svc_rqst *, __be32 *,
+                                struct nfsd3_vstorageres *);
+#endif
+#endif
 int nfs3svc_release_fhandle(struct svc_rqst *, __be32 *,
 				struct nfsd3_attrstat *);
 int nfs3svc_release_fhandle2(struct svc_rqst *, __be32 *,
@@ -341,6 +380,19 @@ int nfs3svc_encode_entry_plus(void *, const char *name,
 __be32 *nfs3svc_encode_post_op_attr(struct svc_rqst *rqstp, __be32 *p,
 				struct svc_fh *fhp);
 __be32 *nfs3svc_decode_fh(__be32 *p, struct svc_fh *fhp);
+
+#ifdef CONFIG_MACH_QNAPTS
+#if defined(NFS_VAAI) && (ENABLE_DBG_PRINT == 1)	// 2012/12/04 Cindy Jen add for NFS VAAI
+#define DBG_PRINT(fmt, args...) \
+    do{ \
+        printk(KERN_DEBUG "[NFS_VAAI] " fmt, ##args); \
+    }while(0)
+#else
+#define DBG_PRINT(fmt, args...)
+#endif
+#else
+#define DBG_PRINT(fmt, args...)
+#endif
 
 
 #endif /* _LINUX_NFSD_XDR3_H */

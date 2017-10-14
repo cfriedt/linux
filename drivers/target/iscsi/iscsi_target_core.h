@@ -1,6 +1,10 @@
 #ifndef ISCSI_TARGET_CORE_H
 #define ISCSI_TARGET_CORE_H
 
+/* 20140513, adamhsu, redmine 8253 */
+#ifdef CONFIG_MACH_QNAPTS
+#include <linux/version.h>
+#endif
 #include <linux/in.h>
 #include <linux/configfs.h>
 #include <net/sock.h>
@@ -11,24 +15,73 @@
 
 #define ISCSIT_VERSION			"v4.1.0-rc2"
 #define ISCSI_MAX_DATASN_MISSING_COUNT	16
+#ifdef CONFIG_MACH_QNAPTS
+#define ISCSI_TX_THREAD_TCP_TIMEOUT 30
+#define ISCSI_RX_THREAD_TCP_TIMEOUT 30	
+#else
 #define ISCSI_TX_THREAD_TCP_TIMEOUT	2
 #define ISCSI_RX_THREAD_TCP_TIMEOUT	2
+#endif
 #define SECONDS_FOR_ASYNC_LOGOUT	10
 #define SECONDS_FOR_ASYNC_TEXT		10
 #define SECONDS_FOR_LOGOUT_COMP		15
 #define WHITE_SPACE			" \t\v\f\n\r"
 
+#ifdef CONFIG_MACH_QNAPTS
+#if (LINUX_VERSION_CODE == KERNEL_VERSION(3,12,6))
+/* 20140513, adamhsu, redmine 8253
+ *
+ * Add code to make compiler happy during to build vhost driver. 
+ * The reason to do this is cause of vhost driver will co-work with LIO
+ * target code
+ */
+#define ISCSIT_MIN_TAGS			16
+#define ISCSIT_EXTRA_TAGS		8
+#endif
+
+#define MAX_FAIL_LOCATE_TIQN_MSG_CNT	10
+#define MAX_FAIL_LOCATE_TPG_MSG_CNT	10
+
+#define FAIL_LOCATE_TIQN_TMP_FNAME	"/tmp/iscsi_fail_tiqn_msg_max_cnt_%s_%s"
+#define FAIL_LOCATE_TPG_TMP_FNAME	"/tmp/iscsi_fail_tpg_msg_max_cnt_%s_%s"
+#endif
+
 /* struct iscsi_node_attrib sanity values */
+#ifdef CONFIG_MACH_QNAPTS
+#define NA_DATAOUT_TIMEOUT		45
+#else
 #define NA_DATAOUT_TIMEOUT		3
+#endif
+
 #define NA_DATAOUT_TIMEOUT_MAX		60
 #define NA_DATAOUT_TIMEOUT_MIX		2
 #define NA_DATAOUT_TIMEOUT_RETRIES	5
 #define NA_DATAOUT_TIMEOUT_RETRIES_MAX	15
 #define NA_DATAOUT_TIMEOUT_RETRIES_MIN	1
-#define NA_NOPIN_TIMEOUT		15
+#ifdef CONFIG_MACH_QNAPTS
+/* 2014/04/02, adamhsu, redmine 7738
+ * To change the value from 45 secs to 25 secs 
+ * for [iSCT test case: Test 15.2 NOP-In Ping Requeston Timeout]
+ */
+//#define NA_NOPIN_TIMEOUT	       25
+
+/* Jay Wei, 20140910, redmine 8449
+ * Change the value from 25 sec to 10 sec
+ * for Citrix multipath test.
+ */
+#define NA_NOPIN_TIMEOUT		10
+#else
+#define NA_NOPIN_TIMEOUT		5
+#endif
+
 #define NA_NOPIN_TIMEOUT_MAX		60
 #define NA_NOPIN_TIMEOUT_MIN		3
-#define NA_NOPIN_RESPONSE_TIMEOUT	30
+#ifdef CONFIG_MACH_QNAPTS
+#define NA_NOPIN_RESPONSE_TIMEOUT	45
+#else
+#define NA_NOPIN_RESPONSE_TIMEOUT	5
+#endif
+
 #define NA_NOPIN_RESPONSE_TIMEOUT_MAX	60
 #define NA_NOPIN_RESPONSE_TIMEOUT_MIN	3
 #define NA_RANDOM_DATAIN_PDU_OFFSETS	0
@@ -40,14 +93,33 @@
 
 /* struct iscsi_tpg_attrib sanity values */
 #define TA_AUTHENTICATION		1
+#ifdef CONFIG_MACH_QNAPTS
+#define TA_LOGIN_TIMEOUT		30
+#else
 #define TA_LOGIN_TIMEOUT		15
+#endif
+
 #define TA_LOGIN_TIMEOUT_MAX		30
 #define TA_LOGIN_TIMEOUT_MIN		5
+#ifdef CONFIG_MACH_QNAPTS
+#define TA_NETIF_TIMEOUT		30	
+#define TA_NETIF_TIMEOUT_MAX		60
+#else
 #define TA_NETIF_TIMEOUT		2
 #define TA_NETIF_TIMEOUT_MAX		15
+#endif
+
 #define TA_NETIF_TIMEOUT_MIN		2
 #define TA_GENERATE_NODE_ACLS		0
+
+
+#ifdef CONFIG_MACH_QNAPTS
+/* follow the latest kernel to adjust it */
+#define TA_DEFAULT_CMDSN_DEPTH		64
+#else
 #define TA_DEFAULT_CMDSN_DEPTH		16
+#endif
+
 #define TA_DEFAULT_CMDSN_DEPTH_MAX	512
 #define TA_DEFAULT_CMDSN_DEPTH_MIN	1
 #define TA_CACHE_DYNAMIC_ACLS		0
@@ -60,7 +132,7 @@
 
 #define ISCSI_IOV_DATA_BUFFER		5
 
-enum iscsit_transport_type {
+enum tpg_np_network_transport_table {
 	ISCSI_TCP				= 0,
 	ISCSI_SCTP_TCP				= 1,
 	ISCSI_SCTP_UDP				= 2,
@@ -133,6 +205,11 @@ enum cmd_flags_table {
 	ICF_ATTACHED_TO_RQUEUE			= 0x00000040,
 	ICF_OOO_CMDSN				= 0x00000080,
 	ICF_REJECT_FAIL_CONN			= 0x00000100,
+
+#if defined(CONFIG_MACH_QNAPTS)
+	/* 2014/08/16, adamhsu, redmine 9055,9076,9278 */
+	ICF_DELAYED_REMOVE			= 0x80000000,
+#endif
 };
 
 /* struct iscsi_cmd->i_state */
@@ -224,6 +301,7 @@ enum iscsi_timer_flags_table {
 /* Used for struct iscsi_np->np_flags */
 enum np_flags_table {
 	NPF_IP_NETWORK		= 0x00,
+	NPF_SCTP_STRUCT_FILE	= 0x01 /* Bugfix */
 };
 
 /* Used for struct iscsi_np->np_thread_state */
@@ -239,16 +317,10 @@ struct iscsi_conn_ops {
 	u8	HeaderDigest;			/* [0,1] == [None,CRC32C] */
 	u8	DataDigest;			/* [0,1] == [None,CRC32C] */
 	u32	MaxRecvDataSegmentLength;	/* [512..2**24-1] */
-	u32	MaxXmitDataSegmentLength;	/* [512..2**24-1] */
 	u8	OFMarker;			/* [0,1] == [No,Yes] */
 	u8	IFMarker;			/* [0,1] == [No,Yes] */
 	u32	OFMarkInt;			/* [1..65535] */
 	u32	IFMarkInt;			/* [1..65535] */
-	/*
-	 * iSER specific connection parameters
-	 */
-	u32	InitiatorRecvDataSegmentLength;	/* [512..2**24-1] */
-	u32	TargetRecvDataSegmentLength;	/* [512..2**24-1] */
 };
 
 struct iscsi_sess_ops {
@@ -270,10 +342,6 @@ struct iscsi_sess_ops {
 	u8	DataSequenceInOrder;		/* [0,1] == [No,Yes] */
 	u8	ErrorRecoveryLevel;		/* [0..2] */
 	u8	SessionType;			/* [0,1] == [Normal,Discovery]*/
-	/*
-	 * iSER specific session parameters
-	 */
-	u8	RDMAExtensions;			/* [0,1] == [No,Yes] */
 };
 
 struct iscsi_queue_req {
@@ -293,7 +361,6 @@ struct iscsi_data_count {
 };
 
 struct iscsi_param_list {
-	bool			iser;
 	struct list_head	param_list;
 	struct list_head	extra_response_list;
 };
@@ -306,11 +373,12 @@ struct iscsi_datain_req {
 	u32			runlength;
 	u32			data_length;
 	u32			data_offset;
+	u32			data_offset_end;
 	u32			data_sn;
 	u32			next_burst_len;
 	u32			read_data_done;
 	u32			seq_send_order;
-	struct list_head	cmd_datain_node;
+	struct list_head	dr_list;
 } ____cacheline_aligned;
 
 struct iscsi_ooo_cmdsn {
@@ -338,6 +406,7 @@ struct iscsi_r2t {
 	u32			targ_xfer_tag;
 	u32			xfer_len;
 	struct list_head	r2t_list;
+	u32			for_snack;
 } ____cacheline_aligned;
 
 struct iscsi_cmd {
@@ -371,7 +440,7 @@ struct iscsi_cmd {
 	/* Command flags */
 	enum cmd_flags_table	cmd_flags;
 	/* Initiator Task Tag assigned from Initiator */
-	itt_t			init_task_tag;
+	u32			init_task_tag;
 	/* Target Transfer Tag assigned from Target */
 	u32			targ_xfer_tag;
 	/* CmdSN assigned from Initiator */
@@ -390,6 +459,8 @@ struct iscsi_cmd {
 	u32			buf_ptr_size;
 	/* Used to store DataDigest */
 	u32			data_crc;
+	/* Total size in bytes associated with command */
+	u32			data_length;
 	/* Counter for MaxOutstandingR2T */
 	u32			outstanding_r2ts;
 	/* Next R2T Offset when DataSequenceInOrder=Yes */
@@ -442,6 +513,12 @@ struct iscsi_cmd {
 	spinlock_t		error_lock;
 	/* spinlock for adding R2Ts */
 	spinlock_t		r2t_lock;
+
+#if defined(CONFIG_MACH_QNAPTS)
+	/* 2014/08/16, adamhsu, redmine 9055,9076,9278 (debug purpose) */
+	struct list_head	cmd_rec_node;
+#endif
+
 	/* DataIN List */
 	struct list_head	datain_list;
 	/* R2T List */
@@ -471,12 +548,15 @@ struct iscsi_cmd {
 	/* Session the command is part of,  used for connection recovery */
 	struct iscsi_session	*sess;
 	/* list_head for connection list */
-	struct list_head	i_conn_node;
+	struct list_head	i_list;
 	/* The TCM I/O descriptor that is accessed via container_of() */
 	struct se_cmd		se_cmd;
 	/* Sense buffer that will be mapped into outgoing status */
 #define ISCSI_SENSE_BUFFER_LEN          (TRANSPORT_SENSE_BUFFER + 2)
 	unsigned char		sense_buffer[ISCSI_SENSE_BUFFER_LEN];
+
+	struct scatterlist	*t_mem_sg;
+	u32			t_mem_sg_nents;
 
 	u32			padding;
 	u8			pad_bytes[4];
@@ -484,20 +564,28 @@ struct iscsi_cmd {
 	struct scatterlist	*first_data_sg;
 	u32			first_data_sg_off;
 	u32			kmapped_nents;
-	sense_reason_t		sense_reason;
-	void (*release_cmd)(struct iscsi_cmd *);
+	u32			discoverysession;
+
 }  ____cacheline_aligned;
 
 struct iscsi_tmr_req {
 	bool			task_reassign:1;
+	u32			ref_cmd_sn;
 	u32			exp_data_sn;
-	struct iscsi_cmd	*ref_cmd;
 	struct iscsi_conn_recovery *conn_recovery;
 	struct se_tmr_req	*se_tmr_req;
 };
 
 struct iscsi_conn {
-	wait_queue_head_t	queues_wq;
+
+#ifdef CONFIG_MACH_QNAPTS
+    /* Patch about the sleeping code in iscsi_target_tx_thread() is 
+     * susceptible to the classic missed wakeup race.
+     */
+    wait_queue_head_t   queues_wq;
+	struct mutex		locate_failure_cnt_mutex;
+#endif
+
 	/* Authentication Successful for this connection */
 	u8			auth_complete;
 	/* State connection is currently in */
@@ -506,6 +594,8 @@ struct iscsi_conn {
 	u8			network_transport;
 	enum iscsi_timer_flags_table nopin_timer_flags;
 	enum iscsi_timer_flags_table nopin_response_timer_flags;
+	u8			tx_immediate_queue;
+	u8			tx_response_queue;
 	/* Used to know what thread encountered a transport failure */
 	u8			which_thread;
 	/* connection id assigned by the Initiator */
@@ -514,11 +604,11 @@ struct iscsi_conn {
 	u16			login_port;
 	u16			local_port;
 	int			net_size;
-	int			login_family;
 	u32			auth_id;
+#define CONNFLAG_SCTP_STRUCT_FILE			0x01
 	u32			conn_flags;
 	/* Used for iscsi_tx_login_rsp() */
-	itt_t			login_itt;
+	u32			login_itt;
 	u32			exp_statsn;
 	/* Per connection status sequence number */
 	u32			stat_sn;
@@ -574,12 +664,9 @@ struct iscsi_conn {
 	struct list_head	immed_queue_list;
 	struct list_head	response_queue_list;
 	struct iscsi_conn_ops	*conn_ops;
-	struct iscsi_login	*conn_login;
-	struct iscsit_transport *conn_transport;
 	struct iscsi_param_list	*param_list;
 	/* Used for per connection auth state machine */
 	void			*auth_protocol;
-	void			*context;
 	struct iscsi_login_thread_s *login_thread;
 	struct iscsi_portal_group *tpg;
 	/* Pointer to parent session */
@@ -594,7 +681,6 @@ struct iscsi_conn_recovery {
 	u16			cid;
 	u32			cmd_count;
 	u32			maxrecvdatasegmentlength;
-	u32			maxxmitdatasegmentlength;
 	int			ready_for_reallegiance;
 	struct list_head	conn_recovery_cmd_list;
 	spinlock_t		conn_recovery_cmd_lock;
@@ -614,13 +700,16 @@ struct iscsi_session {
 	/* state session is currently in */
 	u32			session_state;
 	/* session wide counter: initiator assigned task tag */
-	itt_t			init_task_tag;
+	u32			init_task_tag;
 	/* session wide counter: target assigned task tag */
 	u32			targ_xfer_tag;
 	u32			cmdsn_window;
 
 	/* protects cmdsn values */
 	struct mutex		cmdsn_mutex;
+#ifdef QNAP_KERNEL_STORAGE_V2
+	struct mutex		info_mutex;
+#endif
 	/* session wide counter: expected command sequence number */
 	u32			exp_cmd_sn;
 	/* session wide counter: maximum allowed command sequence number */
@@ -629,6 +718,12 @@ struct iscsi_session {
 
 	/* LIO specific session ID */
 	u32			sid;
+#ifdef CONFIG_MACH_QNAPTS   // record the exact login time
+    /* record the exact login time */
+	__u64		login_time;
+	/* Jonathan Ho, 20131029, handle immediate cmd as non-immediate cmd */
+	u8			skip_inc_exp_cmd_sn;
+#endif        
 	char			auth_type[8];
 	/* unique within the target */
 	int			session_index;
@@ -678,20 +773,21 @@ struct iscsi_login {
 	u8 first_request;
 	u8 version_min;
 	u8 version_max;
-	u8 login_complete;
-	u8 login_failed;
 	char isid[6];
 	u32 cmd_sn;
-	itt_t init_task_tag;
+	u32 init_task_tag;
 	u32 initial_exp_statsn;
 	u32 rsp_length;
 	u16 cid;
 	u16 tsih;
-	char req[ISCSI_HDR_LEN];
-	char rsp[ISCSI_HDR_LEN];
+	char *req;
+	char *rsp;
 	char *req_buf;
 	char *rsp_buf;
-	struct iscsi_conn *conn;
+	int cbit;
+	char *for_cbit;
+	int authing;
+	
 } ____cacheline_aligned;
 
 struct iscsi_node_attrib {
@@ -772,8 +868,6 @@ struct iscsi_np {
 	struct task_struct	*np_thread;
 	struct timer_list	np_login_timer;
 	struct iscsi_portal_group *np_login_tpg;
-	void			*np_context;
-	struct iscsit_transport *np_transport;
 	struct list_head	np_list;
 } ____cacheline_aligned;
 
@@ -850,6 +944,10 @@ struct iscsi_tiqn {
 	struct iscsi_sess_err_stats  sess_err_stats;
 	struct iscsi_login_stats     login_stats;
 	struct iscsi_logout_stats    logout_stats;
+/* Jonathan Ho, 20140418, create a configFS attribute: cluster_enable */	 
+#if defined(CONFIG_MACH_QNAPTS) && defined(SUPPORT_SINGLE_INIT_LOGIN)	 
+        int cluster_enable;	 
+#endif
 } ____cacheline_aligned;
 
 #define WWN_STAT_GRPS(tiqn)	(&(tiqn)->tiqn_stat_grps)

@@ -11,6 +11,7 @@
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/ratelimit.h>
+#include <linux/fast_clone.h>
 
 struct dm_dev;
 struct dm_target;
@@ -106,6 +107,22 @@ typedef int (*dm_iterate_devices_fn) (struct dm_target *ti,
 typedef void (*dm_io_hints_fn) (struct dm_target *ti,
 				struct queue_limits *limits);
 
+typedef int (*locate_thin_callout_fn) (struct block_device *dev,
+ 	sector_t start, sector_t len, void *remap_desc, void **pool);
+
+typedef int (*dm_locate_thin_fn) (struct dm_target *ti, locate_thin_callout_fn fn, sector_t start, sector_t len, void *remap_desc, void **thin);
+
+   /* Parameters
+ 	* @IN *data : the exact same data pointer passed in validate function
+ 	* @IN next_dev: next-level data device pointer, for dm-layer to invalidate lower level
+ 	* @IN start : the start sector address of next-level data device after remapped
+ 	*/
+
+typedef int (*invalidate_callback_fn) (void* data, struct block_device *next_dev, sector_t start);
+
+typedef int (*dm_invalidate_fn) (struct dm_target *ti, sector_t start, sector_t len, invalidate_callback_fn fn, void* data);
+
+typedef int (*dm_fast_block_clone_fn) (struct dm_target *ti, THIN_REMAP_DESC *srd, THIN_REMAP_DESC *drd, sector_t len);
 /*
  * Returns:
  *    0: The target can handle the next I/O immediately.
@@ -161,7 +178,9 @@ struct target_type {
 	dm_busy_fn busy;
 	dm_iterate_devices_fn iterate_devices;
 	dm_io_hints_fn io_hints;
-
+ 	dm_locate_thin_fn locate_thin;
+ 	dm_invalidate_fn invalidate;
+ 	dm_fast_block_clone_fn fast_block_clone;
 	/* For internal device-mapper use. */
 	struct list_head list;
 };
@@ -272,6 +291,11 @@ struct dm_target {
 	 * Set if this target does not return zeroes on discarded blocks.
 	 */
 	bool discard_zeroes_data_unsupported:1;
+
+    /*
+     * Set if this target will encrypt data
+     */
+    bool encrypt_data:1;
 };
 
 /* Each target can link one of these into the table */
@@ -405,12 +429,13 @@ int dm_noflush_suspending(struct dm_target *ti);
 union map_info *dm_get_mapinfo(struct bio *bio);
 union map_info *dm_get_rq_mapinfo(struct request *rq);
 
+struct queue_limits *dm_get_queue_limits(struct mapped_device *md);
+
 /*
  * Geometry functions.
  */
 int dm_get_geometry(struct mapped_device *md, struct hd_geometry *geo);
 int dm_set_geometry(struct mapped_device *md, struct hd_geometry *geo);
-
 
 /*-----------------------------------------------------------------
  * Functions for manipulating device-mapper tables.

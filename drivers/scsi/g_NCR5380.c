@@ -79,7 +79,10 @@
  */
 
 /*
- * $Log: generic_NCR5380.c,v $
+ * $Log: g_NCR5380.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:44  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 /* settings for DTC3181E card with only Mustek scanner attached */

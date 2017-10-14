@@ -795,6 +795,21 @@ asmlinkage long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
 				  u64 mask, int fd,
 				  const char  __user *pathname);
 asmlinkage long sys_syncfs(int fd);
+//Patch by QNAP: Add for recycle_bin feature, Review recycle_bin
+//Patch by QNAP: Scan and compare by case insensitive filename
+#ifdef CONFIG_MACH_QNAPTS
+asmlinkage long sys_qnap_rmdir(const char __user * pathname);
+asmlinkage long sys_qnap_unlink(const char __user *pathname);
+asmlinkage long sys_qnap_find_filename(const char __user *path,const char __user *file);
+#endif
+/////////////////////////////////////////////////////////////////
+
+//Patch by QNAP: Add IP filter
+#ifdef CONFIG_MACH_QNAPTS
+asmlinkage long sys_set_ipsec_rules(const char __user *arg, int len );
+asmlinkage long sys_get_ipsec_vio_acc_list( char __user *arg, int len );
+#endif
+/////////////////////////////////////////////////////////////////
 
 asmlinkage long sys_fork(void);
 asmlinkage long sys_vfork(void);
@@ -802,8 +817,13 @@ asmlinkage long sys_vfork(void);
 asmlinkage long sys_clone(unsigned long, unsigned long, int __user *, int,
 	       int __user *);
 #else
+#ifdef CONFIG_CLONE_BACKWARDS3
+asmlinkage long sys_clone(unsigned long, unsigned long, int, int __user *,
+			  int __user *, int);
+#else
 asmlinkage long sys_clone(unsigned long, unsigned long, int __user *,
 	       int __user *, int);
+#endif
 #endif
 
 asmlinkage long sys_execve(const char __user *filename,

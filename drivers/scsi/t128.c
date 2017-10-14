@@ -104,6 +104,9 @@
  
 /*
  * $Log: t128.c,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:43  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #include <linux/signal.h>

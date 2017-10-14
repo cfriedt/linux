@@ -456,8 +456,8 @@ static int ecryptfs_encrypt_extent(struct page *enc_extent_page,
 					  crypt_stat->extent_size, extent_iv);
 	if (rc < 0) {
 		printk(KERN_ERR "%s: Error attempting to encrypt page with "
-		       "page->index = [%ld], extent_offset = [%ld]; "
-		       "rc = [%d]\n", __func__, page->index, extent_offset,
+		       "page->index = [%lld], extent_offset = [%ld]; "
+		       "rc = [%d]\n", __func__, (unsigned long long)page->index, extent_offset,
 		       rc);
 		goto out;
 	}
@@ -564,8 +564,8 @@ static int ecryptfs_decrypt_extent(struct page *page,
 					  crypt_stat->extent_size, extent_iv);
 	if (rc < 0) {
 		printk(KERN_ERR "%s: Error attempting to decrypt to page with "
-		       "page->index = [%ld], extent_offset = [%ld]; "
-		       "rc = [%d]\n", __func__, page->index, extent_offset,
+		       "page->index = [%lld], extent_offset = [%ld]; "
+		       "rc = [%d]\n", __func__, (unsigned long long)page->index, extent_offset,
 		       rc);
 		goto out;
 	}
@@ -805,7 +805,8 @@ int ecryptfs_init_crypt_ctx(struct ecryptfs_crypt_stat *crypt_stat)
 	}
 	mutex_lock(&crypt_stat->cs_tfm_mutex);
 	rc = ecryptfs_crypto_api_algify_cipher_name(&full_alg_name,
-						    crypt_stat->cipher, "cbc");
+						    crypt_stat->cipher,
+						    crypt_stat->cipher_mode);
 	if (rc)
 		goto out_unlock;
 	crypt_stat->tfm = crypto_alloc_ablkcipher(full_alg_name, 0, 0);
@@ -814,8 +815,9 @@ int ecryptfs_init_crypt_ctx(struct ecryptfs_crypt_stat *crypt_stat)
 		rc = PTR_ERR(crypt_stat->tfm);
 		crypt_stat->tfm = NULL;
 		ecryptfs_printk(KERN_ERR, "cryptfs: init_crypt_ctx(): "
-				"Error initializing cipher [%s]\n",
-				crypt_stat->cipher);
+				"Error initializing cipher [%s] and mode [%s]\n",
+				crypt_stat->cipher,
+				crypt_stat->cipher_mode);
 		goto out_unlock;
 	}
 	crypto_ablkcipher_set_flags(crypt_stat->tfm, CRYPTO_TFM_REQ_WEAK_KEY);
@@ -977,6 +979,7 @@ static void ecryptfs_set_default_crypt_stat_vals(
 						      mount_crypt_stat);
 	ecryptfs_set_default_sizes(crypt_stat);
 	strcpy(crypt_stat->cipher, ECRYPTFS_DEFAULT_CIPHER);
+	strcpy(crypt_stat->cipher_mode, ECRYPTFS_DEFAULT_CIPHER_MODE);
 	crypt_stat->key_size = ECRYPTFS_DEFAULT_KEY_BYTES;
 	crypt_stat->flags &= ~(ECRYPTFS_KEY_VALID);
 	crypt_stat->file_version = ECRYPTFS_FILE_VERSION;
@@ -1010,6 +1013,7 @@ int ecryptfs_new_file_context(struct inode *ecryptfs_inode)
 	    &ecryptfs_superblock_to_private(
 		    ecryptfs_inode->i_sb)->mount_crypt_stat;
 	int cipher_name_len;
+	int cipher_mode_name_len;
 	int rc = 0;
 
 	ecryptfs_set_default_crypt_stat_vals(crypt_stat, mount_crypt_stat);
@@ -1029,6 +1033,13 @@ int ecryptfs_new_file_context(struct inode *ecryptfs_inode)
 	       mount_crypt_stat->global_default_cipher_name,
 	       cipher_name_len);
 	crypt_stat->cipher[cipher_name_len] = '\0';
+    cipher_mode_name_len =
+    	strlen(mount_crypt_stat->global_default_cipher_mode_name);
+    memcpy(crypt_stat->cipher_mode,
+    mount_crypt_stat->global_default_cipher_mode_name,
+    	cipher_mode_name_len);
+    crypt_stat->cipher_mode[cipher_mode_name_len] = '\0';
+
 	crypt_stat->key_size =
 		mount_crypt_stat->global_default_cipher_key_size;
 	ecryptfs_generate_new_key(crypt_stat);
@@ -1138,6 +1149,68 @@ void ecryptfs_write_crypt_stat_flags(char *page_virt,
 	flags |= ((((u8)crypt_stat->file_version) << 24) & 0xFF000000);
 	put_unaligned_be32(flags, page_virt);
 	(*written) = 4;
+}
+
+struct ecryptfs_cipher_mode_code_str_map_elem {
+	char mode_str[ECRYPTFS_MAX_CIPHER_MODE_NAME_SIZE + 1];
+	u8 mode_code;
+};
+
+static struct ecryptfs_cipher_mode_code_str_map_elem
+ecryptfs_cipher_mode_code_str_map[] = {
+	{"cbc", ECRYPTFS_CIPHER_MODE_CBC},
+	{"ctr", ECRYPTFS_CIPHER_MODE_CTR}
+};
+
+/**
++ * ecryptfs_code_for_cipher_mode_string
++ *  <at> mode_name: The string alias for the cipher mode
++ *
++ * Retruns zero on no match, or the cipher code on match
++ */
+u8 ecryptfs_code_for_cipher_mode_string(char *mode_name)
+{
+	int i;
+	u8 code = 0;
+	struct ecryptfs_cipher_mode_code_str_map_elem *map =
+		ecryptfs_cipher_mode_code_str_map;
+
+	for (i = 0; i < ARRAY_SIZE(ecryptfs_cipher_mode_code_str_map); i++)
+		if (strcmp(mode_name, map[i].mode_str) == 0) {
+			code = map[i].mode_code;
+			break;
+		}
+
+	return code;
+}
+
+/**
+ * ecryptfs_cipher_mode_code_to_string
+ *  <at> str: Destination to write out the cipher mode name
+ *  <at> cipher_code: The code to conver to cipher mode name string
+ *
+ * Retruns zero in success
+ */
+int ecryptfs_cipher_mode_code_to_string(char *str, u8 mode_code)
+{
+	int rc = 0;
+	int i;
+	struct ecryptfs_cipher_mode_code_str_map_elem *map =
+		ecryptfs_cipher_mode_code_str_map;
+
+	str[0] = '\0';
+	for (i = 0; i < ARRAY_SIZE(ecryptfs_cipher_mode_code_str_map); i++)
+		if (mode_code == map[i].mode_code) {
+			strcpy(str, map[i].mode_str);
+			break;
+		}
+	if (str[0] == '\0') {
+		ecryptfs_printk(KERN_WARNING, "Cipher mode not recognized: "
+				"[%d]\n", mode_code);
+		rc = -EINVAL;
+	}
+
+	return rc;
 }
 
 struct ecryptfs_cipher_code_str_map_elem {

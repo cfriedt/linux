@@ -97,6 +97,11 @@ EXPORT_SYMBOL(system_serial_high);
 unsigned int elf_hwcap __read_mostly;
 EXPORT_SYMBOL(elf_hwcap);
 
+#if defined(CONFIG_MACH_QNAPTS)
+unsigned long cpu_clock_freq = 0;
+EXPORT_SYMBOL(cpu_clock_freq);
+#endif
+
 
 #ifdef MULTI_CPU
 struct processor processor __read_mostly;
@@ -891,6 +896,12 @@ static int c_show(struct seq_file *m, void *v)
 		seq_printf(m, "model name\t: %s rev %d (%s)\n",
 			   cpu_name, cpuid & 15, elf_platform);
 
+#if defined(CONFIG_MACH_QNAPTS)
+        if (cpu_clock_freq)
+            seq_printf(m, "Speed\t\t: %lu.%01luGHz\n",
+                cpu_clock_freq / 1000000000,
+                (cpu_clock_freq / 100000000) % 10);
+#else
 #if defined(CONFIG_SMP)
 		seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
 			   per_cpu(cpu_data, i).loops_per_jiffy / (500000UL/HZ),
@@ -899,6 +910,7 @@ static int c_show(struct seq_file *m, void *v)
 		seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
 			   loops_per_jiffy / (500000/HZ),
 			   (loops_per_jiffy / (5000/HZ)) % 100);
+#endif
 #endif
 		/* dump out the processor features */
 		seq_puts(m, "Features\t: ");

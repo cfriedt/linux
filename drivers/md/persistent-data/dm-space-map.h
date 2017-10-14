@@ -53,6 +53,7 @@ struct dm_space_map {
 	 * new_block will increment the returned block.
 	 */
 	int (*new_block)(struct dm_space_map *sm, dm_block_t *b);
+	int (*new_reserve_block)(struct dm_space_map *sm, dm_block_t *b);
 
 	/*
 	 * The root contains all the information needed to fix the space map.
@@ -63,6 +64,13 @@ struct dm_space_map {
 	int (*copy_root)(struct dm_space_map *sm, void *copy_to_here_le, size_t len);
 
 	/*
+     * A reserved space interface for thick volume space allocation. If size equals
+     * UINT64_MAX, we clear the reserve blocks. We should make thin more generalized 
+     * for future reserve space for individual volumes.
+     */
+    int (*reserve)(struct dm_space_map *sm, dm_block_t size, dm_block_t threshold);
+    
+    /*
 	 * You can register one threshold callback which is edge-triggered
 	 * when the free space in the space map drops below the threshold.
 	 */
@@ -132,6 +140,11 @@ static inline int dm_sm_new_block(struct dm_space_map *sm, dm_block_t *b)
 	return sm->new_block(sm, b);
 }
 
+static inline int dm_sm_new_reserve_block(struct dm_space_map *sm, dm_block_t *b)
+{
+    return sm->new_reserve_block(sm, b);
+}
+
 static inline int dm_sm_root_size(struct dm_space_map *sm, size_t *result)
 {
 	return sm->root_size(sm, result);
@@ -153,5 +166,12 @@ static inline int dm_sm_register_threshold_callback(struct dm_space_map *sm,
 	return -EINVAL;
 }
 
+static inline int dm_sm_reserve(struct dm_space_map *sm, dm_block_t size, dm_block_t threshold)
+{
+    if (sm->reserve)
+        return sm->reserve(sm, size, threshold);
+
+    return -EINVAL;
+}
 
 #endif	/* _LINUX_DM_SPACE_MAP_H */

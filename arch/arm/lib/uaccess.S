@@ -15,10 +15,10 @@
 #include <asm/assembler.h>
 #include <asm/errno.h>
 #include <asm/domain.h>
+#include <asm/page.h>
 
 		.text
 
-#define PAGE_SHIFT 12
 
 /* Prototype: int __copy_to_user(void *to, const char *from, size_t n)
  * Purpose  : copy a block to user memory from kernel memory

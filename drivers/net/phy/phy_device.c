@@ -120,10 +120,25 @@ static int phy_needs_fixup(struct phy_device *phydev, struct phy_fixup *fixup)
 		if (strcmp(fixup->bus_id, PHY_ANY_ID) != 0)
 			return 0;
 
-	if ((fixup->phy_uid & fixup->phy_uid_mask) !=
-			(phydev->phy_id & fixup->phy_uid_mask))
-		if (fixup->phy_uid != PHY_ANY_UID)
-			return 0;
+	if (!phydev->is_c45) {
+		if ((fixup->phy_uid & fixup->phy_uid_mask) !=
+				(phydev->phy_id & fixup->phy_uid_mask))
+			if (fixup->phy_uid != PHY_ANY_UID)
+				return 0;
+	} else {
+		const int num_ids = ARRAY_SIZE(phydev->c45_ids.device_ids);
+		int i;
+
+		for (i = 1; i < num_ids; i++) {
+			if (!(phydev->c45_ids.devices_in_package & (1 << i)))
+				continue;
+
+			if ((fixup->phy_uid & fixup->phy_uid_mask) !=
+				(phydev->c45_ids.device_ids[i] & fixup->phy_uid_mask))
+				if (fixup->phy_uid != PHY_ANY_UID)
+					return 0;
+		}
+	}
 
 	return 1;
 }

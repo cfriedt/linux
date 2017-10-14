@@ -55,6 +55,14 @@ EXPORT_SYMBOL_GPL(fs_kobj);
  */
 DEFINE_BRLOCK(vfsmount_lock);
 
+//Patch by QNAP: implement fnotify function
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef QNAP_FNOTIFY
+EXPORT_SYMBOL(vfsmount_lock);
+#endif
+#endif
+///////////////////////////////////
+
 static inline unsigned long hash(struct vfsmount *mnt, struct dentry *dentry)
 {
 	unsigned long tmp = ((unsigned long)mnt / L1_CACHE_BYTES);
@@ -678,6 +686,25 @@ static void __touch_mnt_namespace(struct mnt_namespace *ns)
 		wake_up_interruptible(&ns->poll);
 	}
 }
+
+#ifdef CONFIG_MACH_QNAPTS
+struct vfsmount *qnap_lookup_vfsmount(struct dentry *dentry)
+{
+	unsigned u;
+
+	for (u = 0; u < HASH_SIZE; u++) {
+		struct mount *p;
+
+		// Kevin Liao 20131121: How about if the volume is mounted twice on two different path?
+		list_for_each_entry(p, &mount_hashtable[u], mnt_hash) {
+			if (p->mnt.mnt_root == dentry)
+				return &(p->mnt);
+		}
+	}
+	return NULL;
+}
+EXPORT_SYMBOL(qnap_lookup_vfsmount);
+#endif
 
 /*
  * vfsmount lock must be held for write
@@ -1429,7 +1456,7 @@ struct vfsmount *collect_mounts(struct path *path)
 			 CL_COPY_ALL | CL_PRIVATE);
 	namespace_unlock();
 	if (IS_ERR(tree))
-		return NULL;
+		return ERR_CAST(tree);
 	return &tree->mnt;
 }
 

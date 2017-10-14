@@ -1,4 +1,4 @@
-/* $Id: isdn_x25iface.c,v 1.1.2.2 2004/01/12 22:37:19 keil Exp $
+/* $Id: isdn_x25iface.c,v 1.1.1.1 2014/03/19 14:07:31 franklee Exp $
  *
  * Linux ISDN subsystem, X.25 related functions
  *

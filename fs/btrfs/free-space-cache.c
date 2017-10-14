@@ -28,7 +28,7 @@
 #include "extent_io.h"
 #include "inode-map.h"
 
-#define BITS_PER_BITMAP		(PAGE_CACHE_SIZE * 8)
+#define BITS_PER_BITMAP		(PAGE_CACHE_SIZE * 8LLU)
 #define MAX_CACHE_BYTES_PER_GIG	(32 * 1024)
 
 static int link_free_space(struct btrfs_free_space_ctl *ctl,

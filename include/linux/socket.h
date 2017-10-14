@@ -263,6 +263,13 @@ struct ucred {
 #define MSG_CMSG_COMPAT	0		/* We never have 32 bit fixups */
 #endif
 
+//Patch by QNAP:enhance performance from socket to file
+// Kevin Liao 20120720: The original definition is 0x10000 & 0x20000, but
+// 3.4 adds its own 0x10000 and 0x20000. Therefore I change them to 0x1000000 & 0x2000000.
+// TBD - Check whether the user mode application need to be modified...
+#define MSG_KERNSPACE       0x1000000
+#define MSG_NOCATCHSIGNAL   0x2000000
+////////////////////////////////////////////////////////
 
 /* Setsockoptions(2) level. Thanks to BSD these must match IPPROTO_xxx */
 #define SOL_IP		0
@@ -315,6 +322,9 @@ extern int csum_partial_copy_fromiovecend(unsigned char *kdata,
 extern int verify_iovec(struct msghdr *m, struct iovec *iov, struct sockaddr_storage *address, int mode);
 extern int memcpy_toiovecend(const struct iovec *v, unsigned char *kdata,
 			     int offset, int len);
+//Patch by QNAP:enhance performance from socket to file
+extern void memcpy_tokerneliovec(struct iovec *iov, unsigned char *kdata, int len);
+//////////////////////////////////////////////////////////////////////////////
 extern int move_addr_to_kernel(void __user *uaddr, int ulen, struct sockaddr_storage *kaddr);
 extern int put_cmsg(struct msghdr*, int level, int type, int len, void *data);
 

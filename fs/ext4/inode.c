@@ -43,10 +43,21 @@
 #include "xattr.h"
 #include "acl.h"
 #include "truncate.h"
+#ifdef CONFIG_EXT4_FS_RICHACL
+#include "richacl.h"
+#endif
+
+
 
 #include <trace/events/ext4.h>
 
 #define MPAGE_DA_EXTENT_TAIL 0x01
+
+//Patch by QNAP:fix sendfile quota issue
+#ifdef CONFIG_MACH_QNAPTS
+#define FIX_QUOTA_ISSUE
+#endif
+/////////////////////////////////////////////////////////
 
 static __u32 ext4_inode_csum(struct inode *inode, struct ext4_inode *raw,
 			      struct ext4_inode_info *ei)
@@ -340,6 +351,9 @@ void ext4_da_update_reserve_space(struct inode *inode,
 {
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 	struct ext4_inode_info *ei = EXT4_I(inode);
+#ifdef CONFIG_MACH_QNAPTS
+	s64 reserved = 0;
+#endif
 
 	spin_lock(&ei->i_block_reservation_lock);
 	trace_ext4_da_update_reserve_space(inode, used, quota_claim);
@@ -351,6 +365,17 @@ void ext4_da_update_reserve_space(struct inode *inode,
 		WARN_ON(1);
 		used = ei->i_reserved_data_blocks;
 	}
+
+#ifdef CONFIG_MACH_QNAPTS
+	if (unlikely(ei->i_allocated_meta_blocks > ei->i_reserved_meta_blocks)) {
+		ext4_msg(inode->i_sb, KERN_NOTICE, "%s: ino %lu, allocated %d "
+			 "with only %d reserved metadata blocks\n", __func__,
+			 inode->i_ino, ei->i_allocated_meta_blocks,
+			 ei->i_reserved_meta_blocks);
+		WARN_ON(1);
+		ei->i_allocated_meta_blocks = ei->i_reserved_meta_blocks;
+	}
+#endif
 
 	if (unlikely(ei->i_allocated_meta_blocks > ei->i_reserved_meta_blocks)) {
 		ext4_warning(inode->i_sb, "ino %lu, allocated %d "
@@ -365,9 +390,18 @@ void ext4_da_update_reserve_space(struct inode *inode,
 
 	/* Update per-inode reservations */
 	ei->i_reserved_data_blocks -= used;
+#ifdef CONFIG_MACH_QNAPTS
+	reserved += used;
+#endif
 	ei->i_reserved_meta_blocks -= ei->i_allocated_meta_blocks;
+#ifdef CONFIG_MACH_QNAPTS
+	reserved += ei->i_allocated_meta_blocks;
+#endif
 	percpu_counter_sub(&sbi->s_dirtyclusters_counter,
 			   used + ei->i_allocated_meta_blocks);
+#ifdef CONFIG_MACH_QNAPTS
+		reserved += ei->i_reserved_meta_blocks;
+#endif
 	ei->i_allocated_meta_blocks = 0;
 
 	if (ei->i_reserved_data_blocks == 0) {
@@ -378,9 +412,16 @@ void ext4_da_update_reserve_space(struct inode *inode,
 		 */
 		percpu_counter_sub(&sbi->s_dirtyclusters_counter,
 				   ei->i_reserved_meta_blocks);
+#ifdef CONFIG_MACH_QNAPTS
+		reserved += ei->i_reserved_meta_blocks;
+#endif
 		ei->i_reserved_meta_blocks = 0;
 		ei->i_da_metadata_calc_len = 0;
 	}
+#ifdef CONFIG_MACH_QNAPTS
+	reserved <<= (inode->i_sb->s_blocksize_bits - SECTOR_SHIFT);
+	//printk("ext4_da_update_reserve_space0: %lld, %lld\n", reserved, -reserved);
+#endif
 	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
 
 	/* Update quota subsystem for data blocks */
@@ -625,6 +666,7 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 		status = map->m_flags & EXT4_MAP_UNWRITTEN ?
 				EXTENT_STATUS_UNWRITTEN : EXTENT_STATUS_WRITTEN;
 		if (!(flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE) &&
+		    !(status & EXTENT_STATUS_WRITTEN) &&
 		    ext4_find_delalloc_range(inode, map->m_lblk,
 					     map->m_lblk + map->m_len - 1))
 			status |= EXTENT_STATUS_DELAYED;
@@ -735,6 +777,7 @@ found:
 		status = map->m_flags & EXT4_MAP_UNWRITTEN ?
 				EXTENT_STATUS_UNWRITTEN : EXTENT_STATUS_WRITTEN;
 		if (!(flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE) &&
+		    !(status & EXTENT_STATUS_WRITTEN) &&
 		    ext4_find_delalloc_range(inode, map->m_lblk,
 					     map->m_lblk + map->m_len - 1))
 			status |= EXTENT_STATUS_DELAYED;
@@ -1057,7 +1100,16 @@ retry_journal:
 
 		ext4_journal_stop(handle);
 		if (pos + len > inode->i_size) {
+//Patch by QNAP:fix sendfile quota issue
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef FIX_QUOTA_ISSUE
+#else
 			ext4_truncate_failed_write(inode);
+#endif
+#else
+			ext4_truncate_failed_write(inode);
+#endif
+////////////////////////////////////////////////////
 			/*
 			 * If truncate failed early the inode might
 			 * still be on the orphan list; we need to
@@ -1118,10 +1170,13 @@ static int ext4_write_end(struct file *file,
 		}
 	}
 
-	if (ext4_has_inline_data(inode))
-		copied = ext4_write_inline_data_end(inode, pos, len,
-						    copied, page);
-	else
+	if (ext4_has_inline_data(inode)) {
+		ret = ext4_write_inline_data_end(inode, pos, len,
+						 copied, page);
+		if (ret < 0)
+			goto errout;
+		copied = ret;
+	} else
 		copied = block_write_end(file, mapping, pos,
 					 len, copied, page, fsdata);
 
@@ -1288,7 +1343,11 @@ repeat:
 	 * We do still charge estimated metadata to the sb though;
 	 * we cannot afford to run out of free blocks.
 	 */
+#ifdef CONFIG_MACH_QNAPTS
+	if (ext4_claim_free_clusters(inode->i_sb, md_needed, 0)) {
+#else
 	if (ext4_claim_free_clusters(sbi, md_needed, 0)) {
+#endif
 		ei->i_da_metadata_calc_len = save_len;
 		ei->i_da_metadata_calc_last_lblock = save_last_lblock;
 		spin_unlock(&ei->i_block_reservation_lock);
@@ -1316,6 +1375,9 @@ static int ext4_da_reserve_space(struct inode *inode, ext4_lblk_t lblock)
 	int ret;
 	ext4_lblk_t save_last_lblock;
 	int save_len;
+#ifdef CONFIG_MACH_QNAPTS
+	s64 reserved = 0;
+#endif
 
 	/*
 	 * We will charge metadata quota at writeout time; this saves
@@ -1347,7 +1409,11 @@ repeat:
 	 * We do still charge estimated metadata to the sb though;
 	 * we cannot afford to run out of free blocks.
 	 */
+#ifdef CONFIG_MACH_QNAPTS
+	if (ext4_claim_free_clusters(inode->i_sb, md_needed + 1, 0)) {
+#else
 	if (ext4_claim_free_clusters(sbi, md_needed + 1, 0)) {
+#endif
 		ei->i_da_metadata_calc_len = save_len;
 		ei->i_da_metadata_calc_last_lblock = save_last_lblock;
 		spin_unlock(&ei->i_block_reservation_lock);
@@ -1359,7 +1425,15 @@ repeat:
 		return -ENOSPC;
 	}
 	ei->i_reserved_data_blocks++;
+#ifdef CONFIG_MACH_QNAPTS
+	reserved++;
+#endif
 	ei->i_reserved_meta_blocks += md_needed;
+#ifdef CONFIG_MACH_QNAPTS
+	reserved += md_needed;
+	reserved <<= (inode->i_sb->s_blocksize_bits - SECTOR_SHIFT);
+	//printk("ext4_da_reserve_space0: %lld\n", reserved);
+#endif
 	spin_unlock(&ei->i_block_reservation_lock);
 
 	return 0;       /* success */
@@ -1369,6 +1443,9 @@ static void ext4_da_release_space(struct inode *inode, int to_free)
 {
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 	struct ext4_inode_info *ei = EXT4_I(inode);
+#ifdef CONFIG_MACH_QNAPTS
+	s64 reserved = 0;
+#endif
 
 	if (!to_free)
 		return;		/* Nothing to release, exit */
@@ -1391,6 +1468,9 @@ static void ext4_da_release_space(struct inode *inode, int to_free)
 		to_free = ei->i_reserved_data_blocks;
 	}
 	ei->i_reserved_data_blocks -= to_free;
+#ifdef CONFIG_MACH_QNAPTS
+	reserved += to_free;
+#endif
 
 	if (ei->i_reserved_data_blocks == 0) {
 		/*
@@ -1402,12 +1482,20 @@ static void ext4_da_release_space(struct inode *inode, int to_free)
 		 */
 		percpu_counter_sub(&sbi->s_dirtyclusters_counter,
 				   ei->i_reserved_meta_blocks);
+#ifdef CONFIG_MACH_QNAPTS
+		reserved += ei->i_reserved_meta_blocks;
+#endif
 		ei->i_reserved_meta_blocks = 0;
 		ei->i_da_metadata_calc_len = 0;
 	}
 
 	/* update fs dirty data blocks counter */
 	percpu_counter_sub(&sbi->s_dirtyclusters_counter, to_free);
+
+#ifdef CONFIG_MACH_QNAPTS
+	reserved <<= (inode->i_sb->s_blocksize_bits - SECTOR_SHIFT);
+	//printk("ext4_da_release_space0: %lld, %lld\n", reserved, -reserved);
+#endif
 
 	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
 
@@ -1417,7 +1505,7 @@ static void ext4_da_release_space(struct inode *inode, int to_free)
 static void ext4_da_page_release_reservation(struct page *page,
 					     unsigned long offset)
 {
-	int to_release = 0;
+	int to_release = 0, contiguous_blks = 0;
 	struct buffer_head *head, *bh;
 	unsigned int curr_off = 0;
 	struct inode *inode = page->mapping->host;
@@ -1432,14 +1520,23 @@ static void ext4_da_page_release_reservation(struct page *page,
 
 		if ((offset <= curr_off) && (buffer_delay(bh))) {
 			to_release++;
+			contiguous_blks++;
 			clear_buffer_delay(bh);
+		} else if (contiguous_blks) {
+			lblk = page->index <<
+				(PAGE_CACHE_SHIFT - inode->i_blkbits);
+			lblk += (curr_off >> inode->i_blkbits) -
+				contiguous_blks;
+			ext4_es_remove_extent(inode, lblk, contiguous_blks);
+			contiguous_blks = 0;
 		}
 		curr_off = next_off;
 	} while ((bh = bh->b_this_page) != head);
 
-	if (to_release) {
+	if (contiguous_blks) {
 		lblk = page->index << (PAGE_CACHE_SHIFT - inode->i_blkbits);
-		ext4_es_remove_extent(inode, lblk, to_release);
+		lblk += (curr_off >> inode->i_blkbits) - contiguous_blks;
+		ext4_es_remove_extent(inode, lblk, contiguous_blks);
 	}
 
 	/* If we have released all the blocks belonging to a cluster, then we
@@ -2638,6 +2735,7 @@ static int ext4_nonda_switch(struct super_block *sb)
 		percpu_counter_read_positive(&sbi->s_freeclusters_counter);
 	dirty_clusters =
 		percpu_counter_read_positive(&sbi->s_dirtyclusters_counter);
+
 	/*
 	 * Start pushing delalloc when 1/2 of free blocks are dirty.
 	 */
@@ -2646,6 +2744,11 @@ static int ext4_nonda_switch(struct super_block *sb)
 
 	if (2 * free_clusters < 3 * dirty_clusters ||
 	    free_clusters < (dirty_clusters + EXT4_FREECLUSTERS_WATERMARK)) {
+
+#ifdef CONFIG_MACH_QNAPTS
+		pr_debug("ext4_nonda_switch3: %s, %s, %lld, %lld, %d\n", sb->s_id, current->comm, free_clusters, dirty_clusters, EXT4_FREECLUSTERS_WATERMARK);
+#endif
+
 		/*
 		 * free block count is less than 150% of dirty blocks
 		 * or free blocks is less than watermark
@@ -2731,8 +2834,18 @@ retry_journal:
 		 * outside i_size.  Trim these off again. Don't need
 		 * i_size_read because we hold i_mutex.
 		 */
+//Patch by QNAP:fix sendfile quota issue
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef FIX_QUOTA_ISSUE
+#else
 		if (pos + len > inode->i_size)
 			ext4_truncate_failed_write(inode);
+#endif
+#else
+		if (pos + len > inode->i_size)
+			ext4_truncate_failed_write(inode);
+#endif
+//////////////////////////////////////////////////////////////////
 
 		if (ret == -ENOSPC &&
 		    ext4_should_retry_alloc(inode->i_sb, &retries))
@@ -4703,7 +4816,9 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 		ext4_journal_stop(handle);
 	}
 
-	if (attr->ia_valid & ATTR_SIZE) {
+	if (attr->ia_valid & ATTR_SIZE && attr->ia_size != inode->i_size) {
+		handle_t *handle;
+		loff_t oldsize = inode->i_size;
 
 		if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))) {
 			struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
@@ -4711,73 +4826,60 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 			if (attr->ia_size > sbi->s_bitmap_maxbytes)
 				return -EFBIG;
 		}
-	}
-
-	if (S_ISREG(inode->i_mode) &&
-	    attr->ia_valid & ATTR_SIZE &&
-	    (attr->ia_size < inode->i_size)) {
-		handle_t *handle;
-
-		handle = ext4_journal_start(inode, EXT4_HT_INODE, 3);
-		if (IS_ERR(handle)) {
-			error = PTR_ERR(handle);
-			goto err_out;
-		}
-		if (ext4_handle_valid(handle)) {
-			error = ext4_orphan_add(handle, inode);
-			orphan = 1;
-		}
-		EXT4_I(inode)->i_disksize = attr->ia_size;
-		rc = ext4_mark_inode_dirty(handle, inode);
-		if (!error)
-			error = rc;
-		ext4_journal_stop(handle);
-
-		if (ext4_should_order_data(inode)) {
-			error = ext4_begin_ordered_truncate(inode,
+		if (S_ISREG(inode->i_mode) &&
+		    (attr->ia_size < inode->i_size)) {
+			if (ext4_should_order_data(inode)) {
+				error = ext4_begin_ordered_truncate(inode,
 							    attr->ia_size);
-			if (error) {
-				/* Do as much error cleanup as possible */
-				handle = ext4_journal_start(inode,
-							    EXT4_HT_INODE, 3);
-				if (IS_ERR(handle)) {
-					ext4_orphan_del(NULL, inode);
+				if (error)
 					goto err_out;
-				}
-				ext4_orphan_del(handle, inode);
-				orphan = 0;
-				ext4_journal_stop(handle);
+			}
+			handle = ext4_journal_start(inode, EXT4_HT_INODE, 3);
+			if (IS_ERR(handle)) {
+				error = PTR_ERR(handle);
+				goto err_out;
+			}
+			if (ext4_handle_valid(handle)) {
+				error = ext4_orphan_add(handle, inode);
+				orphan = 1;
+			}
+			EXT4_I(inode)->i_disksize = attr->ia_size;
+			rc = ext4_mark_inode_dirty(handle, inode);
+			if (!error)
+				error = rc;
+			ext4_journal_stop(handle);
+			if (error) {
+				ext4_orphan_del(NULL, inode);
 				goto err_out;
 			}
 		}
-	}
 
-	if (attr->ia_valid & ATTR_SIZE) {
-		if (attr->ia_size != inode->i_size) {
-			loff_t oldsize = inode->i_size;
-
-			i_size_write(inode, attr->ia_size);
-			/*
-			 * Blocks are going to be removed from the inode. Wait
-			 * for dio in flight.  Temporarily disable
-			 * dioread_nolock to prevent livelock.
-			 */
-			if (orphan) {
-				if (!ext4_should_journal_data(inode)) {
-					ext4_inode_block_unlocked_dio(inode);
-					inode_dio_wait(inode);
-					ext4_inode_resume_unlocked_dio(inode);
-				} else
-					ext4_wait_for_tail_page_commit(inode);
-			}
-			/*
-			 * Truncate pagecache after we've waited for commit
-			 * in data=journal mode to make pages freeable.
-			 */
-			truncate_pagecache(inode, oldsize, inode->i_size);
+		i_size_write(inode, attr->ia_size);
+		/*
+		 * Blocks are going to be removed from the inode. Wait
+		 * for dio in flight.  Temporarily disable
+		 * dioread_nolock to prevent livelock.
+		 */
+		if (orphan) {
+			if (!ext4_should_journal_data(inode)) {
+				ext4_inode_block_unlocked_dio(inode);
+				inode_dio_wait(inode);
+				ext4_inode_resume_unlocked_dio(inode);
+			} else
+				ext4_wait_for_tail_page_commit(inode);
 		}
-		ext4_truncate(inode);
+		/*
+		 * Truncate pagecache after we've waited for commit
+		 * in data=journal mode to make pages freeable.
+		 */
+		truncate_pagecache(inode, oldsize, inode->i_size);
 	}
+	/*
+	 * We want to call ext4_truncate() even if attr->ia_size ==
+	 * inode->i_size for cases like truncation of fallocated space
+	 */
+	if (attr->ia_valid & ATTR_SIZE)
+		ext4_truncate(inode);
 
 	if (!rc) {
 		setattr_copy(inode, attr);
@@ -4791,8 +4893,17 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 	if (orphan && inode->i_nlink)
 		ext4_orphan_del(NULL, inode);
 
-	if (!rc && (ia_valid & ATTR_MODE))
-		rc = ext4_acl_chmod(inode);
+#ifdef CONFIG_EXT4_FS_RICHACL
+        if (!rc && (ia_valid & ATTR_MODE)){
+                if (EXT4_IS_RICHACL(inode))
+			rc = ext4_richacl_chmod(inode);
+                else
+			rc = ext4_acl_chmod(inode);
+        }
+#else
+        if (!rc && (ia_valid & ATTR_MODE))
+                rc = ext4_acl_chmod(inode);
+#endif
 
 err_out:
 	ext4_std_error(inode->i_sb, error);
@@ -4805,7 +4916,7 @@ int ext4_getattr(struct vfsmount *mnt, struct dentry *dentry,
 		 struct kstat *stat)
 {
 	struct inode *inode;
-	unsigned long delalloc_blocks;
+	unsigned long long delalloc_blocks;
 
 	inode = dentry->d_inode;
 	generic_fillattr(inode, stat);
@@ -4823,7 +4934,7 @@ int ext4_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	delalloc_blocks = EXT4_C2B(EXT4_SB(inode->i_sb),
 				EXT4_I(inode)->i_reserved_data_blocks);
 
-	stat->blocks += (delalloc_blocks << inode->i_sb->s_blocksize_bits)>>9;
+	stat->blocks += delalloc_blocks << (inode->i_sb->s_blocksize_bits-9);
 	return 0;
 }
 

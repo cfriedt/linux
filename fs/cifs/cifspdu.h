@@ -120,7 +120,11 @@
 /*
  * Starting value for maximum SMB size negotiation
  */
+#ifdef CONFIG_MACH_QNAPTS
+#define CIFS_MAX_MSGSIZE (15*4096)
+#else
 #define CIFS_MAX_MSGSIZE (4*4096)
+#endif
 
 /*
  * Size of encrypted user password in bytes

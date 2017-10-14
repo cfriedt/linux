@@ -16,6 +16,7 @@
 #include <linux/dm-ioctl.h>
 #include <linux/hdreg.h>
 #include <linux/compat.h>
+#include <linux/blkdev.h>
 
 #include <asm/uaccess.h>
 
@@ -37,10 +38,10 @@ struct hash_cell {
 };
 
 struct vers_iter {
-    size_t param_size;
-    struct dm_target_versions *vers, *old_vers;
-    char *end;
-    uint32_t flags;
+	size_t param_size;
+	struct dm_target_versions *vers, *old_vers;
+	char *end;
+	uint32_t flags;
 };
 
 
@@ -92,7 +93,7 @@ static unsigned int hash_str(const char *str)
 	unsigned int h = 0;
 
 	while (*str)
-		h = (h + (unsigned int) *str++) * hash_mult;
+		h = (h + (unsigned int) * str++) * hash_mult;
 
 	return h & MASK_BUCKETS;
 }
@@ -106,10 +107,10 @@ static struct hash_cell *__get_name_cell(const char *str)
 	unsigned int h = hash_str(str);
 
 	list_for_each_entry (hc, _name_buckets + h, name_list)
-		if (!strcmp(hc->name, str)) {
-			dm_get(hc->md);
-			return hc;
-		}
+	if (!strcmp(hc->name, str)) {
+		dm_get(hc->md);
+		return hc;
+	}
 
 	return NULL;
 }
@@ -120,10 +121,10 @@ static struct hash_cell *__get_uuid_cell(const char *str)
 	unsigned int h = hash_str(str);
 
 	list_for_each_entry (hc, _uuid_buckets + h, uuid_list)
-		if (!strcmp(hc->uuid, str)) {
-			dm_get(hc->md);
-			return hc;
-		}
+	if (!strcmp(hc->uuid, str)) {
+		dm_get(hc->md);
+		return hc;
+	}
 
 	return NULL;
 }
@@ -150,7 +151,7 @@ static struct hash_cell *__get_dev_cell(uint64_t dev)
  * Inserting, removing and renaming a device.
  *---------------------------------------------------------------*/
 static struct hash_cell *alloc_cell(const char *name, const char *uuid,
-				    struct mapped_device *md)
+                                    struct mapped_device *md)
 {
 	struct hash_cell *hc;
 
@@ -236,7 +237,7 @@ static int dm_hash_insert(const char *name, const char *uuid, struct mapped_devi
 
 	return 0;
 
- bad:
+bad:
 	up_write(&_hash_lock);
 	free_cell(cell);
 	return -EBUSY;
@@ -349,7 +350,7 @@ static char *__change_cell_name(struct hash_cell *hc, char *new_name)
 }
 
 static struct mapped_device *dm_hash_rename(struct dm_ioctl *param,
-					    const char *new)
+        const char *new)
 {
 	char *new_data, *old_name = NULL;
 	struct hash_cell *hc;
@@ -464,7 +465,7 @@ static inline void *align_ptr(void *ptr)
  * struct dm_ioctl.
  */
 static void *get_result_buffer(struct dm_ioctl *param, size_t param_size,
-			       size_t *len)
+                               size_t *len)
 {
 	param->data_start = align_ptr(param + 1) - (void *) param;
 
@@ -517,7 +518,7 @@ static int list_devices(struct dm_ioctl *param, size_t param_size)
 		list_for_each_entry (hc, _name_buckets + i, name_list) {
 			if (old_nl)
 				old_nl->next = (uint32_t) ((void *) nl -
-							   (void *) old_nl);
+				                           (void *) old_nl);
 			disk = dm_disk(hc->md);
 			nl->dev = huge_encode_dev(disk_devt(disk));
 			nl->next = 0;
@@ -528,43 +529,43 @@ static int list_devices(struct dm_ioctl *param, size_t param_size)
 		}
 	}
 
- out:
+out:
 	up_write(&_hash_lock);
 	return 0;
 }
 
 static void list_version_get_needed(struct target_type *tt, void *needed_param)
 {
-    size_t *needed = needed_param;
+	size_t *needed = needed_param;
 
-    *needed += sizeof(struct dm_target_versions);
-    *needed += strlen(tt->name);
-    *needed += ALIGN_MASK;
+	*needed += sizeof(struct dm_target_versions);
+	*needed += strlen(tt->name);
+	*needed += ALIGN_MASK;
 }
 
 static void list_version_get_info(struct target_type *tt, void *param)
 {
-    struct vers_iter *info = param;
+	struct vers_iter *info = param;
 
-    /* Check space - it might have changed since the first iteration */
-    if ((char *)info->vers + sizeof(tt->version) + strlen(tt->name) + 1 >
-	info->end) {
+	/* Check space - it might have changed since the first iteration */
+	if ((char *)info->vers + sizeof(tt->version) + strlen(tt->name) + 1 >
+	    info->end) {
 
-	info->flags = DM_BUFFER_FULL_FLAG;
-	return;
-    }
+		info->flags = DM_BUFFER_FULL_FLAG;
+		return;
+	}
 
-    if (info->old_vers)
-	info->old_vers->next = (uint32_t) ((void *)info->vers -
-					   (void *)info->old_vers);
-    info->vers->version[0] = tt->version[0];
-    info->vers->version[1] = tt->version[1];
-    info->vers->version[2] = tt->version[2];
-    info->vers->next = 0;
-    strcpy(info->vers->name, tt->name);
+	if (info->old_vers)
+		info->old_vers->next = (uint32_t) ((void *)info->vers -
+		                                   (void *)info->old_vers);
+	info->vers->version[0] = tt->version[0];
+	info->vers->version[1] = tt->version[1];
+	info->vers->version[2] = tt->version[2];
+	info->vers->next = 0;
+	strcpy(info->vers->name, tt->name);
 
-    info->old_vers = info->vers;
-    info->vers = align_ptr(((void *) ++info->vers) + strlen(tt->name) + 1);
+	info->old_vers = info->vers;
+	info->vers = align_ptr(((void *) ++info->vers) + strlen(tt->name) + 1);
 }
 
 static int list_versions(struct dm_ioctl *param, size_t param_size)
@@ -593,7 +594,7 @@ static int list_versions(struct dm_ioctl *param, size_t param_size)
 	iter_info.old_vers = NULL;
 	iter_info.vers = vers;
 	iter_info.flags = 0;
-	iter_info.end = (char *)vers+len;
+	iter_info.end = (char *)vers + len;
 
 	/*
 	 * Now loop through filling out the names & versions.
@@ -601,7 +602,7 @@ static int list_versions(struct dm_ioctl *param, size_t param_size)
 	dm_target_iterate(list_version_get_info, &iter_info);
 	param->flags |= iter_info.flags;
 
- out:
+out:
 	return 0;
 }
 
@@ -643,10 +644,10 @@ out:
 }
 
 static struct dm_table *dm_get_live_or_inactive_table(struct mapped_device *md,
-						      struct dm_ioctl *param)
+        struct dm_ioctl *param)
 {
 	return (param->flags & DM_QUERY_INACTIVE_TABLE_FLAG) ?
-		dm_get_inactive_table(md) : dm_get_live_table(md);
+	       dm_get_inactive_table(md) : dm_get_live_table(md);
 }
 
 /*
@@ -659,7 +660,7 @@ static void __dev_status(struct mapped_device *md, struct dm_ioctl *param)
 	struct dm_table *table;
 
 	param->flags &= ~(DM_SUSPEND_FLAG | DM_READONLY_FLAG |
-			  DM_ACTIVE_PRESENT_FLAG);
+	                  DM_ACTIVE_PRESENT_FLAG);
 
 	if (dm_suspended_md(md))
 		param->flags |= DM_SUSPEND_FLAG;
@@ -893,7 +894,7 @@ static int dev_set_geometry(struct dm_ioctl *param, size_t param_size)
 	}
 
 	x = sscanf(geostr, "%lu %lu %lu %lu%c", indata,
-		   indata + 1, indata + 2, indata + 3, &dummy);
+	           indata + 1, indata + 2, indata + 3, &dummy);
 
 	if (x != 4) {
 		DMWARN("Unable to interpret geometry settings.");
@@ -997,6 +998,9 @@ static int do_resume(struct dm_ioctl *param)
 			set_disk_ro(dm_disk(md), 1);
 	}
 
+	/* QNAP dirty hook to FS */
+	fs_locate_thin(md);
+
 	if (dm_suspended_md(md)) {
 		r = dm_resume(md);
 		if (!r && !dm_kobject_uevent(md, KOBJ_CHANGE, param->event_nr))
@@ -1047,7 +1051,7 @@ static int dev_status(struct dm_ioctl *param, size_t param_size)
  * Build up the status struct for each target
  */
 static void retrieve_status(struct dm_table *table,
-			    struct dm_ioctl *param, size_t param_size)
+                            struct dm_ioctl *param, size_t param_size)
 {
 	unsigned int i, num_targets;
 	struct dm_target_spec *spec;
@@ -1081,7 +1085,7 @@ static void retrieve_status(struct dm_table *table,
 		spec->sector_start = ti->begin;
 		spec->length = ti->len;
 		strncpy(spec->target_type, ti->type->name,
-			sizeof(spec->target_type));
+		        sizeof(spec->target_type));
 
 		outptr += sizeof(struct dm_target_spec);
 		remaining = len - (outptr - outbuf);
@@ -1168,7 +1172,7 @@ static inline fmode_t get_mode(struct dm_ioctl *param)
 }
 
 static int next_target(struct dm_target_spec *last, uint32_t next, void *end,
-		       struct dm_target_spec **spec, char **target_params)
+                       struct dm_target_spec **spec, char **target_params)
 {
 	*spec = (struct dm_target_spec *) ((unsigned char *) last + next);
 	*target_params = (char *) (*spec + 1);
@@ -1180,7 +1184,7 @@ static int next_target(struct dm_target_spec *last, uint32_t next, void *end,
 }
 
 static int populate_table(struct dm_table *table,
-			  struct dm_ioctl *param, size_t param_size)
+                          struct dm_ioctl *param, size_t param_size)
 {
 	int r;
 	unsigned int i = 0;
@@ -1203,9 +1207,9 @@ static int populate_table(struct dm_table *table,
 		}
 
 		r = dm_table_add_target(table, spec->target_type,
-					(sector_t) spec->sector_start,
-					(sector_t) spec->length,
-					target_params);
+		                        (sector_t) spec->sector_start,
+		                        (sector_t) spec->length,
+		                        target_params);
 		if (r) {
 			DMWARN("error adding target to table");
 			return r;
@@ -1330,7 +1334,7 @@ static int table_clear(struct dm_ioctl *param, size_t param_size)
  * Retrieves a list of devices used by a particular dm device.
  */
 static void retrieve_deps(struct dm_table *table,
-			  struct dm_ioctl *param, size_t param_size)
+                          struct dm_ioctl *param, size_t param_size)
 {
 	unsigned int count = 0;
 	struct list_head *tmp;
@@ -1344,7 +1348,7 @@ static void retrieve_deps(struct dm_table *table,
 	 * Count the devices.
 	 */
 	list_for_each (tmp, dm_table_get_devices(table))
-		count++;
+	count++;
 
 	/*
 	 * Check we have enough space.
@@ -1361,7 +1365,7 @@ static void retrieve_deps(struct dm_table *table,
 	deps->count = count;
 	count = 0;
 	list_for_each_entry (dd, dm_table_get_devices(table), list)
-		deps->dev[count++] = huge_encode_dev(dd->dm_dev.bdev->bd_dev);
+	deps->dev[count++] = huge_encode_dev(dd->dm_dev.bdev->bd_dev);
 
 	param->data_size = param->data_start + needed;
 }
@@ -1425,7 +1429,7 @@ static bool buffer_test_overflow(char *result, unsigned maxlen)
  * Returns 2 if message should be delivered to the target.
  */
 static int message_for_md(struct mapped_device *md, unsigned argc, char **argv,
-			  char *result, unsigned maxlen)
+                          char *result, unsigned maxlen)
 {
 	return 2;
 }
@@ -1490,11 +1494,11 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
 		r = -EINVAL;
 	}
 
- out_table:
+out_table:
 	dm_table_put(table);
- out_argv:
+out_argv:
 	kfree(argv);
- out:
+out:
 	if (r >= 0)
 		__dev_status(md, param);
 
@@ -1510,6 +1514,53 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
 	dm_put(md);
 	return r;
 }
+
+/*
+ * name: myvg-thin0
+ * result: dm_target
+ * return -1: fail, 0: success
+ */
+int thin_get_dmtarget(char *name, struct dm_target **result)
+{
+	int r = -1;
+	struct hash_cell *hc = NULL;
+	struct mapped_device *md;
+	struct dm_table *table;
+	struct dm_target *ti;
+
+	down_read(&_hash_lock);
+	hc = __get_name_cell(name);
+	if (!hc) {
+		DMWARN("%s __get_name_cell hc fail", __func__);
+		goto bad_hc;
+	}
+
+	md = hc->md;
+	table = dm_get_live_table(md);
+	if (!table) {
+		DMWARN("%s dm_get_live_table table fail", __func__);
+		goto bad_table;
+	}
+
+	ti = dm_table_find_target(table, 0);
+	if (!dm_target_is_valid(ti)) {
+		DMWARN("%s dm_target_is_valid fail", __func__);
+		goto bad_target;
+	}
+
+	r = 0;
+	*result = ti;
+
+bad_target:
+	dm_table_put(table);
+bad_table:
+	dm_put(hc->md);
+bad_hc:
+	up_read(&_hash_lock);
+
+	return r;
+}
+EXPORT_SYMBOL_GPL(thin_get_dmtarget);
 
 /*
  * The ioctl parameter block consists of two parts, a dm_ioctl struct
@@ -1609,8 +1660,8 @@ static void free_params(struct dm_ioctl *param, size_t param_size, int param_fla
 }
 
 static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kernel,
-		       int ioctl_flags,
-		       struct dm_ioctl **param, int *param_flags)
+                       int ioctl_flags,
+                       struct dm_ioctl **param, int *param_flags)
 {
 	struct dm_ioctl *dmi;
 	int secure_data;
@@ -1644,7 +1695,10 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kern
 	}
 
 	if (!dmi) {
+		unsigned noio_flag;
+		noio_flag = memalloc_noio_save();
 		dmi = __vmalloc(param_kernel->data_size, GFP_NOIO | __GFP_REPEAT | __GFP_HIGH, PAGE_KERNEL);
+		memalloc_noio_restore(noio_flag);
 		if (dmi)
 			*param_flags |= DM_PARAMS_VMALLOC;
 	}
@@ -1877,3 +1931,4 @@ out:
 
 	return r;
 }
+EXPORT_SYMBOL_GPL(dm_copy_name_and_uuid);

@@ -417,6 +417,7 @@ dm_block_t dm_bm_nr_blocks(struct dm_block_manager *bm)
 {
 	return dm_bufio_get_device_size(bm->bufio);
 }
+EXPORT_SYMBOL_GPL(dm_bm_nr_blocks);
 
 static int dm_bm_validate_buffer(struct dm_block_manager *bm,
 				 struct dm_buffer *buf,

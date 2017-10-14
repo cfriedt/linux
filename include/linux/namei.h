@@ -43,7 +43,10 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 #define LOOKUP_PARENT		0x0010
 #define LOOKUP_REVAL		0x0020
 #define LOOKUP_RCU		0x0040
-
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+#define LOOKUP_CASE_INSENSITIVE 128
+#endif
 /*
  * Intent data
  */
@@ -74,6 +77,15 @@ extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
 			   const char *, unsigned int, struct path *);
 
 extern struct dentry *lookup_one_len(const char *, struct dentry *, int);
+#ifdef CONFIG_MACH_QNAPTS
+extern struct dentry *lookup_one_len_without_acl(const char *, struct dentry *, int);
+#endif
+// QNAP patch: #3782 NFSv4 supports Windows ACL via RichACL -- added by CindyJen@2014.03
+#ifdef CONFIG_FS_RICHACL
+extern struct dentry *lookup_one_len_nfsv4_racl(const char *, struct dentry *, int);
+#endif
+
+// End -- added by CindyJen@2014.03
 
 extern int follow_down_one(struct path *);
 extern int follow_down(struct path *);

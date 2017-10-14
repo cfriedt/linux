@@ -68,6 +68,16 @@
 #include "scsi_priv.h"
 #include "scsi_logging.h"
 
+#if defined(CONFIG_MACH_QNAPTS) && defined(NAS_VIRTUAL)
+#include <linux/proc_fs.h>
+#define ISCSI_DEV_START_INDEX 598
+#define MAX_ISCSI_DISK 26
+#define Is_iSCSI_Index(index) ((index >= ISCSI_DEV_START_INDEX && index <= (ISCSI_DEV_START_INDEX+MAX_ISCSI_DISK-1))? 1 : 0)
+#define Get_iSCSI_Index(c1, c2) (26*(c1-'a'+1)+c2-'a')
+static int iscsi_dev_arr[MAX_ISCSI_DISK];
+static struct device * iscsi_dev_ptr[MAX_ISCSI_DISK];
+#endif
+////////////////////////////////
 MODULE_AUTHOR("Eric Youngdale");
 MODULE_DESCRIPTION("SCSI disk (sd) driver");
 MODULE_LICENSE("GPL");
@@ -114,6 +124,317 @@ static void sd_read_capacity(struct scsi_disk *sdkp, unsigned char *buffer);
 static void scsi_disk_release(struct device *cdev);
 static void sd_print_sense_hdr(struct scsi_disk *, struct scsi_sense_hdr *);
 static void sd_print_result(struct scsi_disk *, int);
+//Patch by QNAP: usb and sata device mapping
+
+#if defined(CONFIG_MACH_QNAPTS) && defined(NAS_VIRTUAL)
+#define QNAP_DISK_NODE "scsi/qnap_disk_node"
+#define MAX_DISK_NODE_LEN       16
+static char qnap_disk_node[MAX_DISK_NODE_LEN];
+static struct proc_dir_entry *qnap_disk_node_proc_entry;
+
+#ifdef NAS_VIRTUAL_EX
+#define QNAP_IQN_NODE "scsi/qnap_iqn_node"
+#define MAX_IQN_NODE_LEN       260
+#define QNAP_SN_VPD_NODE "scsi/qnap_sn_vpd_node"
+
+static char *iscsi_iqn_arr[MAX_ISCSI_DISK];
+static unsigned char *iscsi_sn_vpd_arr[MAX_ISCSI_DISK];
+
+static char qnap_iqn_node[MAX_IQN_NODE_LEN];
+static struct proc_dir_entry *qnap_iqn_node_proc_entry;
+
+// Jay Wei,20150205, Task #11550. Make LUN records in /pro/scsi/qnap_iqn_node consistent with reality.
+static int lun_status[MAX_ISCSI_DISK];
+
+//	static ssize_t qnap_iqn_node_write( struct file *filp, const char __user *buff, unsigned long len, void *data )
+static ssize_t qnap_iqn_node_write( struct file *filp, const char __user *buff, size_t len, loff_t *off )
+{
+	int copy_len = 0;
+    //	printk("qnap_iqn_node_write(%p, %lu, %p)\n", buff, len, data);
+    memset(qnap_iqn_node, 0, sizeof(qnap_iqn_node));
+    if (copy_from_user(qnap_iqn_node, buff, MAX_IQN_NODE_LEN-1)) {
+        return -EFAULT;
+    }
+    qnap_iqn_node[MAX_IQN_NODE_LEN-1] = 0;
+    if (*qnap_iqn_node) {
+        char *ptr = strchr(qnap_iqn_node, '\n');
+        if (ptr) *ptr = 0;
+        copy_len = strlen(qnap_iqn_node);
+        printk("qnap_iqn_node_write copy_len=%d, get %s\n", copy_len, qnap_iqn_node);
+    }
+    return (copy_len > len)?copy_len:len;
+}
+//	static int qnap_iqn_node_read( char *page, char **start, off_t off, int count, int *eof, void *data )
+static int qnap_iqn_node_read( struct file *page, char __user *start, size_t size, loff_t *off )
+{
+    int i, total_count = 0, read_count;
+    char readBuf[128*MAX_ISCSI_DISK];
+    char *ptr;
+    //	*eof = 1;
+
+    memset(readBuf, 0, 128*MAX_ISCSI_DISK);
+    for (i = 0; i < MAX_ISCSI_DISK; i ++) {     // Jay Wei,20150205, Task #11550
+        if (iscsi_dev_arr[i] && iscsi_iqn_arr[i] && lun_status[i]) {
+
+        	read_count = sprintf(readBuf+total_count, "%4d %s #%s\n", i, iscsi_iqn_arr[i], (iscsi_sn_vpd_arr[i])?iscsi_sn_vpd_arr[i]+4:"");
+            //	int read_count = snprintf(page+total_count, count, "%4d %s #%s\n", i, iscsi_iqn_arr[i], (iscsi_sn_vpd_arr[i])?iscsi_sn_vpd_arr[i]+4:"");
+            total_count += read_count;
+        }
+    }
+    //	if (total_count < size) {
+
+    read_count = sprintf(readBuf+total_count, "END\n");
+    total_count += read_count;
+    //	}
+
+    ptr = readBuf+(*off);
+    for (i = 0; i < total_count; i++){
+
+    	if (ptr[0] == 0)
+    		break;
+    	put_user(*(ptr++), start++);
+    }
+
+    (*off) += i;
+
+    return i;
+}
+
+// Jay Wei,20150205, Task #11550. Make LUN records in /pro/scsi/qnap_iqn_node consistent with reality.
+/**
+ * Check if this LUN SN is in iscsi_sn_vpd_arr array.
+ * @sdp: device to get a reference to
+ * @index: LUN device index
+ * @Return: 
+ *         -1, error
+ *          0, new LUN (happen when sd_probe() not run)
+ *          1, existed LUN which is enable now;
+ *          2, LUN is disable
+ */
+static int QNAP_check_iscsi_sn(struct scsi_device *sdp, u32 index)
+{
+    int vpd_len = 64,ret = 0;
+    unsigned char *buffer = kmalloc(vpd_len, GFP_KERNEL);
+    if (buffer) {
+        if (!scsi_get_vpd_page(sdp, 0x80, buffer, vpd_len)) { // Get LUN SN
+            // compare
+            vpd_len = 64;
+            if (iscsi_dev_arr[index] == 1) {
+                if(strncmp(buffer+4,iscsi_sn_vpd_arr[index]+4,36) == 0) { // LUN is in array and enable now.                                                                   
+                    ret =  1;
+                }
+                else { // It's a new LUN                   
+                    if (iscsi_sn_vpd_arr[index])
+                        kfree(iscsi_sn_vpd_arr[index]);
+                    iscsi_sn_vpd_arr[index] = buffer;
+                    vpd_len = iscsi_sn_vpd_arr[index][3] + 4;
+                    iscsi_sn_vpd_arr[index][vpd_len] = '\0';
+                    // Don't kfree(buffer) here                       
+                    return 0;
+                }
+            }                
+        }
+        else { // No VPD. This LUN is disable.      
+            ret = 2;
+        }
+    }
+    else {
+        printk("QNAP_check_iscsi_sn: kmalloc failed!\n");
+	    return -1;
+    }           
+    kfree(buffer);    
+    return ret;     
+}
+
+
+static int QNAP_get_iscsi_free_slot(const char *iqn)
+{
+	int i;
+	if (!iqn || !*iqn)
+		return -1;
+	for (i = 0; i < MAX_ISCSI_DISK; i ++) {
+		if (iscsi_dev_arr[i] == 0) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+#endif //NAS_VIRTUAL_EX
+//	static ssize_t qnap_disk_node_write( struct file *filp, const char __user *buff, unsigned long len, void *data )
+static ssize_t qnap_disk_node_write( struct file *filp, const char __user *buff, size_t len, loff_t *off )
+{
+  if (len > MAX_DISK_NODE_LEN) {
+    printk(KERN_INFO "qnap_disk_node: only can write %d bytes!\n", MAX_DISK_NODE_LEN);
+    return -ENOSPC;
+  }
+  if (copy_from_user(qnap_disk_node, buff, len )) {
+    return -EFAULT;
+  }
+  return len;
+}
+
+static int QnapDiskNodeOpen = 0;
+static int qnap_disk_node_open(struct inode *inode, struct file *file){
+
+	if (QnapDiskNodeOpen > 0) return -EBUSY;
+	QnapDiskNodeOpen++;
+	return 0;
+}
+
+//	static int qnap_disk_node_read( char *page, char **start, off_t off, int count, int *eof, void *data )
+static ssize_t qnap_disk_node_read( struct file *page, char __user *start, size_t size, loff_t *off )
+{
+    int len = 0;
+    char *ptr;
+
+    ptr = qnap_disk_node+(*off);
+
+    while (len < size && ptr[0] != 0){
+
+    	put_user(*(ptr++), start++);
+    	len++;
+    }
+
+    (*off) += len;
+
+    return len;
+
+	//	*eof = 1;
+    //	return snprintf(page, count, "%s\n", qnap_disk_node);
+}
+
+static int qnap_disk_node_release(struct inode *inode, struct file *file){
+
+	QnapDiskNodeOpen--;
+	return 0;
+}
+void create_qnap_disk_node_proc(void)
+{
+	static const struct file_operations disk_node_fops = {
+	 .owner = THIS_MODULE,
+	 .open = qnap_disk_node_open,
+	 .read  = qnap_disk_node_read,
+	 .write  = qnap_disk_node_write,
+	 .release = qnap_disk_node_release,
+	};
+
+	static const struct file_operations iqn_node_fops = {
+	 .owner = THIS_MODULE,
+	 .read  = qnap_iqn_node_read,
+	 .write  = qnap_iqn_node_write,
+	};
+
+	qnap_disk_node_proc_entry = proc_create( QNAP_DISK_NODE, 0644, NULL, &disk_node_fops);
+    if (!qnap_disk_node_proc_entry) return ;
+    //	qnap_disk_node_proc_entry->read_proc = qnap_disk_node_read;
+    //	qnap_disk_node_proc_entry->write_proc = qnap_disk_node_write;
+#ifdef NAS_VIRTUAL_EX
+    qnap_iqn_node_proc_entry = proc_create( QNAP_IQN_NODE, 0644, NULL, &iqn_node_fops);
+    if (!qnap_iqn_node_proc_entry) return ;
+    //	qnap_iqn_node_proc_entry->read_proc = qnap_iqn_node_read;
+    //	qnap_iqn_node_proc_entry->write_proc = qnap_iqn_node_write;
+#endif
+}
+void remove_qnap_disk_node_proc(void)
+{
+    remove_proc_entry(QNAP_DISK_NODE, NULL);
+#ifdef NAS_VIRTUAL_EX
+    remove_proc_entry(QNAP_IQN_NODE, NULL);
+#endif
+}
+
+static int is_iscsi_disk(struct scsi_device *sdp)
+{
+    struct scsi_host_template *iscsi_hostt = sdp->host->hostt;
+//    printk("Check proc_name[%s].\n", iscsi_hostt->proc_name);
+    if (!strcmp(iscsi_hostt->proc_name, "iscsi_tcp"))
+        return 1;
+    else
+        return 0;
+}
+static int QNAP_get_iscsi_index(struct scsi_device *sdp, u32 *index)
+{
+    int error = -EBUSY;
+#ifdef NAS_VIRTUAL_EX
+    int idx;
+    if ((idx = QNAP_get_iscsi_free_slot(qnap_iqn_node)) >= 0) {
+        *index = Get_iSCSI_Index('w', ('a'+idx));	//sdwX
+        printk("qnap_iqn_node=%s.\n", qnap_iqn_node);
+    }
+    else {
+#endif
+        if (strlen(qnap_disk_node) >= 4 && strncmp(qnap_disk_node, "sd", 2) == 0)
+            *index = Get_iSCSI_Index(qnap_disk_node[2], qnap_disk_node[3]);
+        else
+        	*index = 0;
+#ifdef NAS_VIRTUAL_EX
+    }
+#endif
+    if (!Is_iSCSI_Index(*index)) {
+        return -ENODEV;
+    }
+    printk("Get sd index %d.\n", *index);
+
+#ifdef NAS_VIRTUAL_EX
+    if (Is_iSCSI_Index(*index)) { //sdwa ~ sdwz
+        int ip = *index - ISCSI_DEV_START_INDEX;
+        printk("index of iscsi_dev_arr is %d\n", ip);
+        if (!iscsi_dev_arr[ip]) {
+        	int vpd_len = 64;
+			unsigned char *buffer = kmalloc(vpd_len, GFP_KERNEL);
+			if (buffer) {
+				if (!scsi_get_vpd_page(sdp, 0x80, buffer, vpd_len)) {
+					iscsi_dev_arr[ip] = 1;
+					if (iscsi_iqn_arr[ip])
+		                kfree(iscsi_iqn_arr[ip]);
+		            iscsi_iqn_arr[ip] = kstrdup(qnap_iqn_node, GFP_KERNEL);
+		            if (iscsi_sn_vpd_arr[ip])
+		                kfree(iscsi_sn_vpd_arr[ip]);
+		            iscsi_sn_vpd_arr[ip] = buffer;
+		            vpd_len = iscsi_sn_vpd_arr[ip][3] + 4;
+					iscsi_sn_vpd_arr[ip][vpd_len] = '\0';
+					//iscsi_dev_ptr[ip] = dev;
+					error = 0;
+				}
+				else
+					kfree(buffer);
+			}
+            else
+                printk("QNAP_get_iscsi_index: kmalloc failed!\n");
+        }
+    }
+#else
+    if ((*index >= ISCSI_DEV_START_INDEX) && (*index < (ISCSI_DEV_START_INDEX+26))) { //sdwa ~ sdwz
+        int ip = *index - ISCSI_DEV_START_INDEX;
+        if (!iscsi_dev_arr[ip]) {
+            iscsi_dev_arr[ip] = 1;
+            error = 0;
+        }
+    }
+#endif
+    return error;
+}
+
+void QNAP_clear_iscsi_index(struct scsi_device *sdp, u32 index)
+{
+	index -= ISCSI_DEV_START_INDEX;
+	iscsi_dev_arr[index]=0;
+#ifdef NAS_VIRTUAL_EX
+	printk("iSCSI LUN %d released\n", index);
+	if (iscsi_iqn_arr[index]) {
+		kfree(iscsi_iqn_arr[index]);
+		iscsi_iqn_arr[index]=NULL;
+	}
+	if (iscsi_sn_vpd_arr[index]) {
+		kfree(iscsi_sn_vpd_arr[index]);
+		iscsi_sn_vpd_arr[index]=NULL;
+	}
+#endif
+}
+
+#endif
+///////////////////////////////////////
 
 static DEFINE_SPINLOCK(sd_index_lock);
 static DEFINE_IDA(sd_index_ida);
@@ -142,7 +463,7 @@ sd_store_cache_type(struct device *dev, struct device_attribute *attr,
 	char *buffer_data;
 	struct scsi_mode_data data;
 	struct scsi_sense_hdr sshdr;
-	const char *temp = "temporary ";
+	static const char temp[] = "temporary ";
 	int len;
 
 	if (sdp->type != TYPE_DISK)
@@ -442,8 +763,10 @@ sd_store_write_same_blocks(struct device *dev, struct device_attribute *attr,
 
 	if (max == 0)
 		sdp->no_write_same = 1;
-	else if (max <= SD_MAX_WS16_BLOCKS)
+	else if (max <= SD_MAX_WS16_BLOCKS) {
+		sdp->no_write_same = 0;
 		sdkp->max_ws_blocks = max;
+	}
 
 	sd_config_write_same(sdkp);
 
@@ -740,7 +1063,6 @@ static void sd_config_write_same(struct scsi_disk *sdkp)
 {
 	struct request_queue *q = sdkp->disk->queue;
 	unsigned int logical_block_size = sdkp->device->sector_size;
-	unsigned int blocks = 0;
 
 	if (sdkp->device->no_write_same) {
 		sdkp->max_ws_blocks = 0;
@@ -752,18 +1074,20 @@ static void sd_config_write_same(struct scsi_disk *sdkp)
 	 * blocks per I/O unless the device explicitly advertises a
 	 * bigger limit.
 	 */
-	if (sdkp->max_ws_blocks == 0)
-		sdkp->max_ws_blocks = SD_MAX_WS10_BLOCKS;
-
-	if (sdkp->ws16 || sdkp->max_ws_blocks > SD_MAX_WS10_BLOCKS)
-		blocks = min_not_zero(sdkp->max_ws_blocks,
-				      (u32)SD_MAX_WS16_BLOCKS);
-	else
-		blocks = min_not_zero(sdkp->max_ws_blocks,
-				      (u32)SD_MAX_WS10_BLOCKS);
+	if (sdkp->max_ws_blocks > SD_MAX_WS10_BLOCKS)
+		sdkp->max_ws_blocks = min_not_zero(sdkp->max_ws_blocks,
+						   (u32)SD_MAX_WS16_BLOCKS);
+	else if (sdkp->ws16 || sdkp->ws10 || sdkp->device->no_report_opcodes)
+		sdkp->max_ws_blocks = min_not_zero(sdkp->max_ws_blocks,
+						   (u32)SD_MAX_WS10_BLOCKS);
+	else {
+		sdkp->device->no_write_same = 1;
+		sdkp->max_ws_blocks = 0;
+	}
 
 out:
-	blk_queue_max_write_same_sectors(q, blocks * (logical_block_size >> 9));
+	blk_queue_max_write_same_sectors(q, sdkp->max_ws_blocks *
+					 (logical_block_size >> 9));
 }
 
 /**
@@ -825,9 +1149,16 @@ static int scsi_setup_flush_cmnd(struct scsi_device *sdp, struct request *rq)
 
 static void sd_unprep_fn(struct request_queue *q, struct request *rq)
 {
+	struct scsi_cmnd *SCpnt = rq->special;
+
 	if (rq->cmd_flags & REQ_DISCARD) {
 		free_page((unsigned long)rq->buffer);
 		rq->buffer = NULL;
+	}
+	if (SCpnt->cmnd != rq->cmd) {
+		mempool_free(SCpnt->cmnd, sd_cdb_pool);
+		SCpnt->cmnd = NULL;
+		SCpnt->cmd_len = 0;
 	}
 }
 
@@ -981,7 +1312,11 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 		SCpnt->cmnd[0] = READ_6;
 		SCpnt->sc_data_direction = DMA_FROM_DEVICE;
 	} else {
+#ifdef CONFIG_MACH_QNAPTS
+		scmd_printk(KERN_ERR, SCpnt, "Unknown command %llx\n", (unsigned long long)rq->cmd_flags);
+#else
 		scmd_printk(KERN_ERR, SCpnt, "Unknown command %x\n", rq->cmd_flags);
+#endif
 		goto out;
 	}
 
@@ -1174,7 +1509,13 @@ static int sd_open(struct block_device *bdev, fmode_t mode)
 
 	if ((atomic_inc_return(&sdkp->openers) == 1) && sdev->removable) {
 		if (scsi_block_when_processing_errors(sdev))
+//Patch by QNAP: Fix removable disk can't eject when press eject button.
+#if defined(CONFIG_MACH_QNAPTS)
+            ;
+#else            
 			scsi_set_medium_removal(sdev, SCSI_REMOVAL_PREVENT);
+#endif
+////////////////////////////////////////////////////////////
 	}
 
 	return 0;
@@ -1446,12 +1787,38 @@ static int sd_sync_cache(struct scsi_disk *sdkp)
 
 static void sd_rescan(struct device *dev)
 {
-	struct scsi_disk *sdkp = scsi_disk_get_from_dev(dev);
+    struct scsi_disk *sdkp = scsi_disk_get_from_dev(dev);
+    
+#ifdef NAS_VIRTUAL_EX
+// Jay Wei,20150205, Task #11550. Make LUN records in /pro/scsi/qnap_iqn_node consistent with reality.
+    int ret = 0;
+    unsigned int index = (sdkp->index)-ISCSI_DEV_START_INDEX;
+    struct scsi_device *sdp = to_scsi_device(dev);
+    bool it_is_iscsi_disk = is_iscsi_disk(sdp);
+#endif
 
 	if (sdkp) {
 		revalidate_disk(sdkp->disk);
 		scsi_disk_put(sdkp);
-	}
+#ifdef NAS_VIRTUAL_EX
+// Jay Wei,20150205, Task #11550. Make LUN records in /pro/scsi/qnap_iqn_node consistent with reality.
+        if(sdp && it_is_iscsi_disk){  // limit it only for iscsi LUN
+            ret = QNAP_check_iscsi_sn(sdp,index);    
+            if(ret == 1)        // enable
+                lun_status[index] = 1;                        
+            else if(ret == 2)   // disable
+                lun_status[index] = 0;
+            else if(ret == 0)   // new add LUN
+                lun_status[index] = 1;  
+            else if(ret == -1) {// error   
+                lun_status[index] = 0;
+                printk("sd_rescan: QNAP_check_iscsi_sn() error!\n");
+            }
+          
+	    }
+#endif        
+    }
+    
 }
 
 
@@ -1706,21 +2073,6 @@ static int sd_done(struct scsi_cmnd *SCpnt)
  out:
 	if (rq_data_dir(SCpnt->request) == READ && scsi_prot_sg_count(SCpnt))
 		sd_dif_complete(SCpnt, good_bytes);
-
-	if (scsi_host_dif_capable(sdkp->device->host, sdkp->protection_type)
-	    == SD_DIF_TYPE2_PROTECTION && SCpnt->cmnd != SCpnt->request->cmd) {
-
-		/* We have to print a failed command here as the
-		 * extended CDB gets freed before scsi_io_completion()
-		 * is called.
-		 */
-		if (result)
-			scsi_print_command(SCpnt);
-
-		mempool_free(SCpnt->cmnd, sd_cdb_pool);
-		SCpnt->cmnd = NULL;
-		SCpnt->cmd_len = 0;
-	}
 
 	return good_bytes;
 }
@@ -2016,7 +2368,21 @@ static int read_capacity_16(struct scsi_disk *sdkp, struct scsi_device *sdp,
 		sd_config_discard(sdkp, SD_LBP_WS16);
 	}
 
+#ifdef CONFIG_MACH_QNAPTS
+	/* redmine 11885
+	 * we need to do this to avoid the race condition about multiple
+	 * process will run sd_revalidate_disk() at the same time
+	 */
+	spin_lock(&sdkp->set_capacity_lock);
 	sdkp->capacity = lba + 1;
+
+	/* do this, we may get new capacity (lun expansion) even if we have old one */
+	if (sdkp->tmp_capacity != sdkp->capacity)
+		sdkp->tmp_capacity = sdkp->capacity;
+	spin_unlock(&sdkp->set_capacity_lock);
+#else
+	sdkp->capacity = lba + 1;
+#endif
 	return sector_size;
 }
 
@@ -2083,7 +2449,21 @@ static int read_capacity_10(struct scsi_disk *sdkp, struct scsi_device *sdp,
 		return -EOVERFLOW;
 	}
 
+#ifdef CONFIG_MACH_QNAPTS
+	/* redmine 11885
+	 * we need to do this to avoid the race condition about multiple
+	 * process will run sd_revalidate_disk() at the same time
+	 */
+	spin_lock(&sdkp->set_capacity_lock);
 	sdkp->capacity = lba + 1;
+
+	/* do this, we may get new capacity (lun expansion) even if we have old one */
+	if (sdkp->tmp_capacity != sdkp->capacity)
+		sdkp->tmp_capacity = sdkp->capacity;
+	spin_unlock(&sdkp->set_capacity_lock);
+#else
+	sdkp->capacity = lba + 1;
+#endif
 	sdkp->physical_block_size = sector_size;
 	return sector_size;
 }
@@ -2136,7 +2516,21 @@ sd_read_capacity(struct scsi_disk *sdkp, unsigned char *buffer)
 			if (sector_size < 0) {
 				sd_printk(KERN_NOTICE, sdkp,
 					"Using 0xffffffff as device size\n");
+
+#ifdef CONFIG_MACH_QNAPTS
+				/* redmine 11885
+				 * we need to do this to avoid the race condition
+				 * about multiple process will run
+				 * sd_revalidate_disk() at the same time
+				 */
+				spin_lock(&sdkp->set_capacity_lock);
 				sdkp->capacity = 1 + (sector_t) 0xffffffff;
+				if (sdkp->tmp_capacity != sdkp->capacity)
+					sdkp->tmp_capacity = sdkp->capacity;
+				spin_unlock(&sdkp->set_capacity_lock);				
+#else
+				sdkp->capacity = 1 + (sector_t) 0xffffffff;
+#endif
 				sector_size = old_sector_size;
 				goto got_data;
 			}
@@ -2217,6 +2611,9 @@ got_data:
 	sdp->use_16_for_rw = (sdkp->capacity > 0xffffffff);
 
 	/* Rescale capacity to 512-byte units */
+
+	/* redmine 11885, we move this to the end of sd_revalidate_disk() */
+#ifndef CONFIG_MACH_QNAPTS
 	if (sector_size == 4096)
 		sdkp->capacity <<= 3;
 	else if (sector_size == 2048)
@@ -2225,7 +2622,7 @@ got_data:
 		sdkp->capacity <<= 1;
 	else if (sector_size == 256)
 		sdkp->capacity >>= 1;
-
+#endif
 	blk_queue_physical_block_size(sdp->request_queue,
 				      sdkp->physical_block_size);
 	sdkp->device->sector_size = sector_size;
@@ -2414,14 +2811,9 @@ sd_read_cache_type(struct scsi_disk *sdkp, unsigned char *buffer)
 			}
 		}
 
-		if (modepage == 0x3F) {
-			sd_printk(KERN_ERR, sdkp, "No Caching mode page "
-				  "present\n");
-			goto defaults;
-		} else if ((buffer[offset] & 0x3f) != modepage) {
-			sd_printk(KERN_ERR, sdkp, "Got wrong page\n");
-			goto defaults;
-		}
+		sd_printk(KERN_ERR, sdkp, "No Caching mode page found\n");
+		goto defaults;
+
 	Page_found:
 		if (modepage == 8) {
 			sdkp->WCE = ((buffer[offset + 2] & 0x04) != 0);
@@ -2635,9 +3027,24 @@ static void sd_read_block_provisioning(struct scsi_disk *sdkp)
 
 static void sd_read_write_same(struct scsi_disk *sdkp, unsigned char *buffer)
 {
-	if (scsi_report_opcode(sdkp->device, buffer, SD_BUF_SIZE,
-			       WRITE_SAME_16))
+	struct scsi_device *sdev = sdkp->device;
+
+	if (scsi_report_opcode(sdev, buffer, SD_BUF_SIZE, INQUIRY) < 0) {
+		sdev->no_report_opcodes = 1;
+
+		/* Disable WRITE SAME if REPORT SUPPORTED OPERATION
+		 * CODES is unsupported and the device has an ATA
+		 * Information VPD page (SAT).
+		 */
+		if (!scsi_get_vpd_page(sdev, 0x89, buffer, SD_BUF_SIZE))
+			sdev->no_write_same = 1;
+	}
+
+	if (scsi_report_opcode(sdev, buffer, SD_BUF_SIZE, WRITE_SAME_16) == 1)
 		sdkp->ws16 = 1;
+
+	if (scsi_report_opcode(sdev, buffer, SD_BUF_SIZE, WRITE_SAME) == 1)
+		sdkp->ws10 = 1;
 }
 
 static int sd_try_extended_inquiry(struct scsi_device *sdp)
@@ -2716,7 +3123,43 @@ static int sd_revalidate_disk(struct gendisk *disk)
 
 	blk_queue_flush(sdkp->disk->queue, flush);
 
+	/* redmine 11885 */
+#ifdef CONFIG_MACH_QNAPTS
+	spin_lock(&sdkp->set_capacity_lock);
+
+	/* if the tmp_capacity != capacity, it may mean the capacity value
+	 * had been reset by another process which executed the 
+	 * sd_revalidate_disk() -> sd_read_capacity() at the same time
+	 */
+	if ((sdkp->tmp_capacity != sdkp->capacity)
+	&& (sdkp->capacity != 0)
+	) 
+	{
+#if 0
+		sd_printk(KERN_NOTICE, sdkp, 
+			"detected capacity != tmp_capacity, "
+			  "capacity:0x%llx, tmp_capacity:0x%llx\n",
+			  (unsigned long long)sdkp->capacity,
+			  (unsigned long long)sdkp->tmp_capacity);
+#endif
+		sdkp->capacity = sdkp->tmp_capacity;
+	}
+
+	/* Rescale capacity to 512-byte units */
+	if (sdkp->device->sector_size == 4096)
+		sdkp->capacity <<= 3;
+	else if (sdkp->device->sector_size == 2048)
+		sdkp->capacity <<= 2;
+	else if (sdkp->device->sector_size == 1024)
+		sdkp->capacity <<= 1;
+	else if (sdkp->device->sector_size == 256)
+		sdkp->capacity >>= 1;
+
 	set_capacity(disk, sdkp->capacity);
+	spin_unlock(&sdkp->set_capacity_lock);
+#else
+	set_capacity(disk, sdkp->capacity);
+#endif
 	sd_config_write_same(sdkp);
 	kfree(buffer);
 
@@ -2838,6 +3281,7 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 		gd->events |= DISK_EVENT_MEDIA_CHANGE;
 	}
 
+	blk_pm_runtime_init(sdp->request_queue, dev);
 	add_disk(gd);
 	if (sdkp->capacity)
 		sd_dif_config_host(sdkp);
@@ -2846,7 +3290,6 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 
 	sd_printk(KERN_NOTICE, sdkp, "Attached SCSI %sdisk\n",
 		  sdp->removable ? "removable " : "");
-	blk_pm_runtime_init(sdp->request_queue, dev);
 	scsi_autopm_put_device(sdp);
 	put_device(&sdkp->dev);
 }
@@ -2877,6 +3320,13 @@ static int sd_probe(struct device *dev)
 	int index;
 	int error;
 
+#if defined(CONFIG_MACH_QNAPTS)
+#ifdef NAS_VIRTUAL_EX
+// Jay Wei,20150205, Task #11550. Make LUN records in /pro/scsi/qnap_iqn_node consistent with reality.
+int its_iscsi_device = 0;
+#endif
+#endif
+
 	error = -ENODEV;
 	if (sdp->type != TYPE_DISK && sdp->type != TYPE_MOD && sdp->type != TYPE_RBC)
 		goto out;
@@ -2892,7 +3342,21 @@ static int sd_probe(struct device *dev)
 	gd = alloc_disk(SD_MINORS);
 	if (!gd)
 		goto out_free;
+//Patch by QNAP: usb and sata device mapping
+#if defined(CONFIG_MACH_QNAPTS)
 
+#ifdef NAS_VIRTUAL
+    if(is_iscsi_disk(sdp)){
+#ifdef NAS_VIRTUAL_EX    
+        its_iscsi_device = 1; // Jay Wei,20150205, Task #11550.
+#endif        
+		spin_lock(&sd_index_lock);
+        error = QNAP_get_iscsi_index(sdp, &index);
+		spin_unlock(&sd_index_lock);
+    }
+    else
+#endif
+#endif // CONFIG_MACH_QNAPTS
 	do {
 		if (!ida_pre_get(&sd_index_ida, GFP_KERNEL))
 			goto out_put;
@@ -2920,6 +3384,12 @@ static int sd_probe(struct device *dev)
 	atomic_set(&sdkp->openers, 0);
 	atomic_set(&sdkp->device->ioerr_cnt, 0);
 
+	/* redmine 11885 */
+#ifdef CONFIG_MACH_QNAPTS
+	spin_lock_init(&sdkp->set_capacity_lock);
+	sdkp->tmp_capacity = 0;
+#endif
+
 	if (!sdp->request_queue->rq_timeout) {
 		if (sdp->type != TYPE_MOD)
 			blk_queue_rq_timeout(sdp->request_queue, SD_TIMEOUT);
@@ -2941,7 +3411,14 @@ static int sd_probe(struct device *dev)
 
 	get_device(&sdkp->dev);	/* prevent release before async_schedule */
 	async_schedule_domain(sd_probe_async, sdkp, &scsi_sd_probe_domain);
-
+#if defined(CONFIG_MACH_QNAPTS)
+#ifdef NAS_VIRTUAL_EX
+// Jay Wei,20150205, Task #11550.
+    if(its_iscsi_device){
+        lun_status[index-ISCSI_DEV_START_INDEX] = 1;   
+    }
+#endif 
+#endif 
 	return 0;
 
  out_free_index:
@@ -3004,7 +3481,19 @@ static void scsi_disk_release(struct device *dev)
 	struct gendisk *disk = sdkp->disk;
 	
 	spin_lock(&sd_index_lock);
+//Patch by QNAP: usb and sata device mapping
+#ifdef CONFIG_MACH_QNAPTS
+#ifdef NAS_VIRTUAL
+    if(Is_iSCSI_Index(sdkp->index)){
+        QNAP_clear_iscsi_index(sdkp->device, sdkp->index);
+    }
+    else
+#endif
+    ida_remove(&sd_index_ida, sdkp->index);
+#else
 	ida_remove(&sd_index_ida, sdkp->index);
+#endif
+	/////////////////////////////////////////
 	spin_unlock(&sd_index_lock);
 
 	disk->private_data = NULL;
@@ -3151,6 +3640,20 @@ static int __init init_sd(void)
 	err = scsi_register_driver(&sd_template.gendrv);
 	if (err)
 		goto err_out_driver;
+
+#ifdef NAS_VIRTUAL
+#ifdef NAS_VIRTUAL_EX
+	memset(iscsi_dev_arr, 0, sizeof(iscsi_dev_arr));
+	memset(iscsi_iqn_arr, 0, sizeof(iscsi_iqn_arr));
+	memset(iscsi_sn_vpd_arr, 0, sizeof(iscsi_sn_vpd_arr));
+	memset(qnap_disk_node, 0, sizeof(qnap_disk_node));
+	memset(qnap_iqn_node, 0, sizeof(qnap_iqn_node));
+// Jay Wei,20150205, Task #11550. Make LUN records in /pro/scsi/qnap_iqn_node consistent with reality.
+    memset(lun_status, 0, sizeof(lun_status));
+#endif
+	create_qnap_disk_node_proc();
+#endif
+
 
 	return 0;
 

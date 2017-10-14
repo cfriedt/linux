@@ -1515,7 +1515,10 @@ again:
 			 * allocate greater than order-1 page units with
 			 * __GFP_NOFAIL.
 			 */
+//Patch by QNAP: mark this warning message
+#if !defined(CONFIG_MACH_QNAPTS)
 			WARN_ON_ONCE(order > 1);
+#endif            
 		}
 		spin_lock_irqsave(&zone->lock, flags);
 		page = __rmqueue(zone, order, migratetype);
@@ -6142,6 +6145,10 @@ __offline_isolated_pages(unsigned long start_pfn, unsigned long end_pfn)
 		list_del(&page->lru);
 		rmv_page_order(page);
 		zone->free_area[order].nr_free--;
+#ifdef CONFIG_HIGHMEM
+		if (PageHighMem(page))
+			totalhigh_pages -= 1 << order;
+#endif
 		for (i = 0; i < (1 << order); i++)
 			SetPageReserved((page+i));
 		pfn += (1 << order);
@@ -6245,9 +6252,9 @@ static void dump_page_flags(unsigned long flags)
 void dump_page(struct page *page)
 {
 	printk(KERN_ALERT
-	       "page:%p count:%d mapcount:%d mapping:%p index:%#lx\n",
+	       "page:%p count:%d mapcount:%d mapping:%p index:%#llx\n",
 		page, atomic_read(&page->_count), page_mapcount(page),
-		page->mapping, page->index);
+		page->mapping, (unsigned long long)page->index);
 	dump_page_flags(page->flags);
 	mem_cgroup_print_bad_page(page);
 }

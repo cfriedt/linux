@@ -36,6 +36,9 @@
 
 /*
  * $Log: t128.h,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:35  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  */
 
 #ifndef T128_H

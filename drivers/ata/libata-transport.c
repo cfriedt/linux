@@ -337,8 +337,17 @@ static DEVICE_ATTR(field, S_IRUGO, show_ata_link_##field, NULL)
 
 ata_link_linkspeed_attr(hw_sata_spd_limit);
 ata_link_linkspeed_attr(sata_spd_limit);
-ata_link_linkspeed_attr(sata_spd);
-
+//Patch by QNAP:fix can't get 6G link speed
+//ata_link_linkspeed_attr(sata_spd);
+static ssize_t
+show_ata_link_sata_spd(struct device *dev,
+		      struct device_attribute *attr, char *buf)
+{
+	struct ata_link *link = transport_class_to_link(dev);
+	return sprintf(buf,"%s\n", sata_spd_string(link->sata_spd));
+}
+static DEVICE_ATTR(sata_spd, S_IRUGO, show_ata_link_sata_spd, NULL);
+/////////////////////////////////////////////////////////////
 
 static DECLARE_TRANSPORT_CLASS(ata_link_class,
 		"ata_link", NULL, NULL, NULL);

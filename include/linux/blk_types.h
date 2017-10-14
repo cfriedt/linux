@@ -114,11 +114,19 @@ struct bio {
 #define BIO_SNAP_STABLE	12	/* bio data must be snapshotted during write */
 
 /*
+ * Reserve 16th ~ 23th bits for QNAP define block info
+ */
+#define BIO_QFLAG_BITS      (8)
+#define BIO_QFLAG_OFFSET    (16)
+#define BIO_QFLAG_MASK      (((1UL << BIO_QFLAG_BITS) - 1) << BIO_QFLAG_OFFSET)
+#define BIO_THIN_UNMAPPED     16  /* bio test only flag */ 
+
+/*
  * Flags starting here get preserved by bio_reset() - this includes
  * BIO_POOL_IDX()
  */
-#define BIO_RESET_BITS	13
-#define BIO_OWNS_VEC	13	/* bio_free() should free bvec */
+#define BIO_RESET_BITS	24
+#define BIO_OWNS_VEC	24	/* bio_free() should free bvec */
 
 #define bio_flagged(bio, flag)	((bio)->bi_flags & (1 << (flag)))
 
@@ -132,6 +140,9 @@ struct bio {
 #define BIO_POOL_IDX(bio)	((bio)->bi_flags >> BIO_POOL_OFFSET)
 
 #endif /* CONFIG_BLOCK */
+
+#define QNAP_ALLOC_ZEROED_OFFSET       (BIO_POOL_OFFSET - 1)
+#define QNAP_ALLOC_ZEROED_MASK     (1UL << QNAP_ALLOC_ZEROED_OFFSET)
 
 /*
  * Request flags.  For use in the cmd_flags field of struct request, and in
@@ -154,7 +165,11 @@ enum rq_flag_bits {
 	__REQ_NOIDLE,		/* don't anticipate more IO after this one */
 	__REQ_FUA,		/* forced unit access */
 	__REQ_FLUSH,		/* request for cache flush */
-
+#ifdef CONFIG_MACH_QNAPTS
+	__REQ_QNAP_MAP, 	/* notify dm-thin to allocate space for fallocate syscall */
+	__REQ_QNAP_MAP_ZERO,/* notify dm-thin to perform special discard which map block and mark zero*/
+	__REQ_QNAP_DIRECT,  /* direct io bit for SSDCache */
+#endif
 	/* bio only flags */
 	__REQ_RAHEAD,		/* read ahead, can fail anytime */
 	__REQ_THROTTLED,	/* This bio has already been subjected to
@@ -177,10 +192,26 @@ enum rq_flag_bits {
 	__REQ_IO_STAT,		/* account I/O stat */
 	__REQ_MIXED_MERGE,	/* merge of different types, fail separately */
 	__REQ_KERNEL, 		/* direct IO to kernel pages */
-	__REQ_PM,		/* runtime pm request */
+	__REQ_PM,			/* runtime pm request */
 	__REQ_NR_BITS,		/* stops here */
 };
 
+#ifdef CONFIG_MACH_QNAPTS
+#define REQ_QNAP_MAP_ZERO       (1ULL << __REQ_QNAP_MAP_ZERO)
+#define REQ_QNAP_MAP            (1ULL << __REQ_QNAP_MAP)
+#define REQ_QNAP_DIRECT         (1ULL << __REQ_QNAP_DIRECT)
+#define REQ_WRITE               (1ULL << __REQ_WRITE)
+#define REQ_FAILFAST_DEV        (1ULL << __REQ_FAILFAST_DEV)
+#define REQ_FAILFAST_TRANSPORT  (1ULL << __REQ_FAILFAST_TRANSPORT)
+#define REQ_FAILFAST_DRIVER     (1ULL << __REQ_FAILFAST_DRIVER)
+#define REQ_SYNC                (1ULL << __REQ_SYNC)
+#define REQ_META                (1ULL << __REQ_META)
+#define REQ_PRIO                (1ULL << __REQ_PRIO)
+#define REQ_DISCARD             (1ULL << __REQ_DISCARD)
+#define REQ_WRITE_SAME          (1ULL << __REQ_WRITE_SAME)
+#define REQ_NOIDLE              (1ULL << __REQ_NOIDLE)
+#else
+#define REQ_QNAP_DIRECT         (1 << __REQ_QNAP_DIRECT)
 #define REQ_WRITE		(1 << __REQ_WRITE)
 #define REQ_FAILFAST_DEV	(1 << __REQ_FAILFAST_DEV)
 #define REQ_FAILFAST_TRANSPORT	(1 << __REQ_FAILFAST_TRANSPORT)
@@ -191,6 +222,7 @@ enum rq_flag_bits {
 #define REQ_DISCARD		(1 << __REQ_DISCARD)
 #define REQ_WRITE_SAME		(1 << __REQ_WRITE_SAME)
 #define REQ_NOIDLE		(1 << __REQ_NOIDLE)
+#endif
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
@@ -203,12 +235,40 @@ enum rq_flag_bits {
 #define BIO_NO_ADVANCE_ITER_MASK	(REQ_DISCARD|REQ_WRITE_SAME)
 
 /* This mask is used for both bio and request merge checking */
+//Patch by QNAP: Fix SSD DISCARD command, bug #35484
+#if defined(CONFIG_MACH_QNAPTS)
+#define REQ_NOMERGE_FLAGS \
+        (REQ_NOMERGE | REQ_STARTED | REQ_SOFTBARRIER | REQ_FLUSH | REQ_FUA | REQ_DISCARD)
+#else
 #define REQ_NOMERGE_FLAGS \
 	(REQ_NOMERGE | REQ_STARTED | REQ_SOFTBARRIER | REQ_FLUSH | REQ_FUA)
-
+#endif
+#ifdef CONFIG_MACH_QNAPTS
+#define REQ_RAHEAD              (1ULL << __REQ_RAHEAD)
+#define REQ_THROTTLED           (1ULL << __REQ_THROTTLED)
+#define REQ_SORTED              (1ULL << __REQ_SORTED)
+#define REQ_SOFTBARRIER         (1ULL << __REQ_SOFTBARRIER)
+#define REQ_FUA                 (1ULL << __REQ_FUA)
+#define REQ_NOMERGE             (1ULL << __REQ_NOMERGE)
+#define REQ_STARTED             (1ULL << __REQ_STARTED)
+#define REQ_DONTPREP            (1ULL << __REQ_DONTPREP)
+#define REQ_QUEUED              (1ULL << __REQ_QUEUED)
+#define REQ_ELVPRIV             (1ULL << __REQ_ELVPRIV)
+#define REQ_FAILED              (1ULL << __REQ_FAILED)
+#define REQ_QUIET               (1ULL << __REQ_QUIET)
+#define REQ_PREEMPT             (1ULL << __REQ_PREEMPT)
+#define REQ_ALLOCED             (1ULL << __REQ_ALLOCED)
+#define REQ_COPY_USER           (1ULL << __REQ_COPY_USER)
+#define REQ_FLUSH               (1ULL << __REQ_FLUSH)
+#define REQ_FLUSH_SEQ           (1ULL << __REQ_FLUSH_SEQ)
+#define REQ_IO_STAT             (1ULL << __REQ_IO_STAT)
+#define REQ_MIXED_MERGE         (1ULL << __REQ_MIXED_MERGE)
+#define REQ_SECURE              (1ULL << __REQ_SECURE)
+#define REQ_KERNEL              (1ULL << __REQ_KERNEL)
+#define REQ_PM                  (1ULL << __REQ_PM)
+#else
 #define REQ_RAHEAD		(1 << __REQ_RAHEAD)
 #define REQ_THROTTLED		(1 << __REQ_THROTTLED)
-
 #define REQ_SORTED		(1 << __REQ_SORTED)
 #define REQ_SOFTBARRIER		(1 << __REQ_SOFTBARRIER)
 #define REQ_FUA			(1 << __REQ_FUA)
@@ -229,5 +289,5 @@ enum rq_flag_bits {
 #define REQ_SECURE		(1 << __REQ_SECURE)
 #define REQ_KERNEL		(1 << __REQ_KERNEL)
 #define REQ_PM			(1 << __REQ_PM)
-
+#endif
 #endif /* __LINUX_BLK_TYPES_H */

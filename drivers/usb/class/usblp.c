@@ -1323,7 +1323,9 @@ static int usblp_set_protocol(struct usblp *usblp, int protocol)
 static int usblp_cache_device_id_string(struct usblp *usblp)
 {
 	int err, length;
-
+#if defined(CONFIG_MACH_QNAPTS)
+	char *pch, sn[128];
+#endif
 	err = usblp_get_id(usblp, 0, usblp->device_id_string, USBLP_DEVICE_ID_SIZE - 1);
 	if (err < 0) {
 		dev_dbg(&usblp->intf->dev,
@@ -1343,6 +1345,27 @@ static int usblp_cache_device_id_string(struct usblp *usblp)
 		length = USBLP_DEVICE_ID_SIZE - 1;
 	usblp->device_id_string[length] = '\0';
 
+        //Patch by QNAP: append serial number if it doesn't exist
+#if defined(CONFIG_MACH_QNAPTS)
+        //1 Check serial number exist by strstr.
+        if(usblp->dev && usblp->dev->serial && (strlen(usblp->dev->serial) <= (sizeof(sn) - 5)))
+                if((pch = strstr(&usblp->device_id_string[2], "SERIALNUMBER:")) == NULL)
+                        if((pch = strstr(&usblp->device_id_string[2], "SERN:")) == NULL)
+                                if((pch = strstr(&usblp->device_id_string[2], "SN:")) == NULL){
+        //2 Append serial number string "SN:xxx;"
+                                        sprintf(sn, "SN:%s;", usblp->dev->serial);
+                                        strncpy(&usblp->device_id_string[length], sn, strlen(sn));
+        //3 Write string length include serial number
+                                        length += strlen(sn);
+                                        ((__be16 *) usblp->device_id_string)[0] = cpu_to_be16(length);
+					if (length < 2)
+						length = 2;
+					else if (length >= USBLP_DEVICE_ID_SIZE)
+						length = USBLP_DEVICE_ID_SIZE - 1;
+					usblp->device_id_string[length] = '\0';
+				}
+#endif
+        //Patch by QNAP end
 	dev_dbg(&usblp->intf->dev, "usblp%d Device ID string [len=%d]=\"%s\"\n",
 		usblp->minor, length, &usblp->device_id_string[2]);
 

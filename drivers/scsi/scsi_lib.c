@@ -32,6 +32,15 @@
 #include "scsi_priv.h"
 #include "scsi_logging.h"
 
+//Patch by QNAP: only for HAL application
+// x48 debug
+//#define CONFIG_MACH_QNAPTS
+//#define QNAP_HAL
+#if defined(CONFIG_MACH_QNAPTS)
+#include <qnap/hal_event.h>
+extern int send_hal_netlink(NETLINK_EVT *event);
+#endif
+/////////////////////////////////////////
 
 #define SG_MEMPOOL_NR		ARRAY_SIZE(scsi_sg_pools)
 #define SG_MEMPOOL_SIZE		2
@@ -772,7 +781,13 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 	enum {ACTION_FAIL, ACTION_REPREP, ACTION_RETRY,
 	      ACTION_DELAYED_RETRY} action;
 	char *description = NULL;
-
+    
+//Patch by QNAP: only for HAL application
+#if defined(CONFIG_MACH_QNAPTS)
+    struct scsi_device *sdev = cmd->device;
+    NETLINK_EVT hal_event;
+    struct __netlink_pd_cb *netlink_pd;
+#endif
 	if (result) {
 		sense_valid = scsi_command_normalize_sense(cmd, &sshdr);
 		if (sense_valid)
@@ -986,10 +1001,40 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 				scsi_print_sense("", cmd);
 			scsi_print_command(cmd);
 		}
+//Patch by QNAP: only for HAL application
+#if defined(CONFIG_MACH_QNAPTS)
+        hal_event.type = HAL_EVENT_GENERAL_DISK;
+        hal_event.arg.action = SET_PD_ERROR;
+        netlink_pd = &hal_event.arg.param.netlink_pd;
+        netlink_pd->scsi_bus[0] = sdev->host->host_no;
+        netlink_pd->scsi_bus[1] = sdev->channel;
+        netlink_pd->scsi_bus[2] = sdev->id;
+        netlink_pd->scsi_bus[3] = sdev->lun;
+        memcpy(netlink_pd->error_scsi_cmd,cmd->cmnd,16);
+        if (sense_valid)
+        {
+            netlink_pd->error_sense_key[0] = sshdr.sense_key;
+            netlink_pd->error_sense_key[1] = sshdr.asc;
+            netlink_pd->error_sense_key[2] = sshdr.ascq;
+        }
+        else
+        {
+            netlink_pd->error_sense_key[0] = 0;
+            netlink_pd->error_sense_key[1] = 0;
+            netlink_pd->error_sense_key[2] = 0;
+        }            
+#endif        
 		if (blk_end_request_err(req, error))
 			scsi_requeue_command(q, cmd);
 		else
+        {
+//Patch by QNAP: only for HAL application
+#if defined(CONFIG_MACH_QNAPTS)
+//			printk("=== check: scsi_io_completion - hal_evt.type = %d, hal_evt.act = %d\n",hal_event.type,hal_event.arg.action); // x48 debug
+            send_hal_netlink(&hal_event);
+#endif        
 			scsi_next_command(cmd);
+        }
 		break;
 	case ACTION_REPREP:
 		/* Unprep the request and put it back at the head of the queue.
@@ -1666,7 +1711,7 @@ u64 scsi_calculate_bounce_limit(struct Scsi_Host *shost)
 	if (!PCI_DMA_BUS_IS_PHYS)
 		return BLK_BOUNCE_ANY;
 
-	host_dev = scsi_get_device(shost);
+	host_dev = shost->dma_dev;
 	if (host_dev && host_dev->dma_mask)
 		bounce_limit = *host_dev->dma_mask;
 

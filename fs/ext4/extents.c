@@ -43,7 +43,7 @@
 #include "ext4_jbd2.h"
 #include "ext4_extents.h"
 #include "xattr.h"
-
+#include <linux/blkdev.h>
 #include <trace/events/ext4.h>
 
 /*
@@ -4386,9 +4386,20 @@ void ext4_ext_truncate(handle_t *handle, struct inode *inode)
 
 	last_block = (inode->i_size + sb->s_blocksize - 1)
 			>> EXT4_BLOCK_SIZE_BITS(sb);
+retry:
 	err = ext4_es_remove_extent(inode, last_block,
 				    EXT_MAX_BLOCKS - last_block);
+	if (err == -ENOMEM) {
+		cond_resched();
+		congestion_wait(BLK_RW_ASYNC, HZ/50);
+		goto retry;
+	}
+	if (err) {
+		ext4_std_error(inode->i_sb, err);
+		return;
+	}
 	err = ext4_ext_remove_space(inode, last_block, EXT_MAX_BLOCKS - 1);
+	ext4_std_error(inode->i_sb, err);
 }
 
 static void ext4_falloc_update_inode(struct inode *inode,
@@ -4421,6 +4432,8 @@ static void ext4_falloc_update_inode(struct inode *inode,
 
 }
 
+#define SECTOR_SHIFT 9
+
 /*
  * preallocate space for a file. This implements ext4's fallocate file
  * operation, which gets called from sys_fallocate system call.
@@ -4440,6 +4453,7 @@ long ext4_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	int flags;
 	struct ext4_map_blocks map;
 	unsigned int credits, blkbits = inode->i_blkbits;
+	struct request_queue *q = NULL;
 
 	/* Return error if mode is not supported */
 	if (mode & ~(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
@@ -4478,7 +4492,9 @@ long ext4_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 		trace_ext4_fallocate_exit(inode, offset, max_blocks, ret);
 		return ret;
 	}
+
 	flags = EXT4_GET_BLOCKS_CREATE_UNINIT_EXT;
+
 	if (mode & FALLOC_FL_KEEP_SIZE)
 		flags |= EXT4_GET_BLOCKS_KEEP_SIZE;
 	/*
@@ -4521,7 +4537,17 @@ retry:
 		ext4_falloc_update_inode(inode, mode, new_size,
 					 (map.m_flags & EXT4_MAP_NEW));
 		ext4_mark_inode_dirty(handle, inode);
-		if ((file->f_flags & O_SYNC) && ret >= max_blocks)
+
+		q = bdev_get_queue(inode->i_sb->s_bdev);
+        if ((map.m_flags & EXT4_MAP_NEW) && q && q->thindata && !blk_queue_thick(q)){ /* Only thin device should care about this */
+			if (blkdev_issue_preallocate(inode->i_sb->s_bdev,
+										 map.m_pblk << (inode->i_sb->s_blocksize_bits - SECTOR_SHIFT),
+										 (sector_t)ret<< (inode->i_sb->s_blocksize_bits - SECTOR_SHIFT),
+										 GFP_KERNEL, 0) < 0)
+				ret = -ENOSPC;
+		}
+
+        if ((file->f_flags & O_SYNC) && ret >= max_blocks)
 			ext4_handle_sync(handle);
 		ret2 = ext4_journal_stop(handle);
 		if (ret2)
@@ -4535,6 +4561,7 @@ retry:
 	mutex_unlock(&inode->i_mutex);
 	trace_ext4_fallocate_exit(inode, offset, max_blocks,
 				ret > 0 ? ret2 : ret);
+
 	return ret > 0 ? ret2 : ret;
 }
 
@@ -4659,7 +4686,7 @@ static int ext4_xattr_fiemap(struct inode *inode,
 		error = ext4_get_inode_loc(inode, &iloc);
 		if (error)
 			return error;
-		physical = iloc.bh->b_blocknr << blockbits;
+		physical = (__u64)iloc.bh->b_blocknr << blockbits;
 		offset = EXT4_GOOD_OLD_INODE_SIZE +
 				EXT4_I(inode)->i_extra_isize;
 		physical += offset;
@@ -4667,7 +4694,7 @@ static int ext4_xattr_fiemap(struct inode *inode,
 		flags |= FIEMAP_EXTENT_DATA_INLINE;
 		brelse(iloc.bh);
 	} else { /* external block */
-		physical = EXT4_I(inode)->i_file_acl << blockbits;
+		physical = (__u64)EXT4_I(inode)->i_file_acl << blockbits;
 		length = inode->i_sb->s_blocksize;
 	}
 

@@ -2879,14 +2879,8 @@ EXPORT_SYMBOL_GPL(shmem_truncate_range);
 
 /* common code */
 
-static char *shmem_dname(struct dentry *dentry, char *buffer, int buflen)
-{
-	return dynamic_dname(dentry, buffer, buflen, "/%s (deleted)",
-				dentry->d_name.name);
-}
-
 static struct dentry_operations anon_ops = {
-	.d_dname = shmem_dname
+	.d_dname = simple_dname
 };
 
 /**
@@ -2915,6 +2909,10 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 	res = ERR_PTR(-ENOMEM);
 	this.name = name;
 	this.len = strlen(name);
+//Patch by QNAP:Search filename use case insensitive method
+#ifdef QNAP_SEARCH_FILENAME_CASE_INSENSITIVE
+    this.case_folding = 0;
+#endif    
 	this.hash = 0; /* will go */
 	sb = shm_mnt->mnt_sb;
 	path.dentry = d_alloc_pseudo(sb, &this);

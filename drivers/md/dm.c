@@ -29,8 +29,8 @@
  * ratelimit state to be used in DMXXX_LIMIT().
  */
 DEFINE_RATELIMIT_STATE(dm_ratelimit_state,
-		       DEFAULT_RATELIMIT_INTERVAL,
-		       DEFAULT_RATELIMIT_BURST);
+                       DEFAULT_RATELIMIT_INTERVAL,
+                       DEFAULT_RATELIMIT_BURST);
 EXPORT_SYMBOL(dm_ratelimit_state);
 #endif
 
@@ -203,14 +203,81 @@ struct dm_md_mempools {
 static struct kmem_cache *_io_cache;
 static struct kmem_cache *_rq_tio_cache;
 
+struct clone_wrapper {
+	struct list_head list;
+	THIN_BLOCKCLONE_DESC *clone_desc;
+	CLONE_CALLBACK callback;
+};
+
+struct clone_struct {
+	spinlock_t clone_lock;
+	mempool_t *clone_wrapper_pool;
+	struct list_head clone_list;
+	struct work_struct cloner;
+	struct workqueue_struct *clone_wq;
+};
+
+static struct kmem_cache *_clone_wrapper_cache;
+static struct clone_struct *clone_context;
+
+static void _do_invalidate(struct work_struct *ws);
+
+static void _block_clone_exit(void)
+{
+	mempool_destroy(clone_context->clone_wrapper_pool);
+	kmem_cache_destroy(_clone_wrapper_cache);
+	destroy_workqueue(clone_context->clone_wq);
+	kfree(clone_context);
+}
+
+static int _block_clone_init(void)
+{
+	int r = -ENOMEM;
+
+	clone_context = kzalloc(sizeof(struct clone_struct), GFP_KERNEL);
+	if (!clone_context)
+		return r;
+
+	INIT_LIST_HEAD(&clone_context->clone_list);
+	spin_lock_init(&clone_context->clone_lock);
+
+	_clone_wrapper_cache = KMEM_CACHE(clone_wrapper, 0);
+	if (!_clone_wrapper_cache)
+		goto free_context;
+
+	clone_context->clone_wrapper_pool = mempool_create_slab_pool(4096, _clone_wrapper_cache);
+	if (!clone_context->clone_wrapper_pool)
+		goto free_wrapper_cache;
+
+	INIT_WORK(&clone_context->cloner, _do_invalidate);
+
+	clone_context->clone_wq = alloc_ordered_workqueue("dm-block-clone", WQ_MEM_RECLAIM);
+	if (!clone_context->clone_wq)
+		goto free_wrapper_pool;
+
+	return 0;
+
+free_wrapper_pool:
+	mempool_destroy(clone_context->clone_wrapper_pool);
+free_wrapper_cache:
+	kmem_cache_destroy(_clone_wrapper_cache);
+free_context:
+	kfree(clone_context);
+	return r;
+}
+
 static int __init local_init(void)
 {
 	int r = -ENOMEM;
 
+	r = _block_clone_init();
+	if (r)
+		return r;
+
 	/* allocate a slab for the dm_ios */
 	_io_cache = KMEM_CACHE(dm_io, 0);
 	if (!_io_cache)
-		return r;
+		goto out_free_block_clone;
 
 	_rq_tio_cache = KMEM_CACHE(dm_rq_target_io, 0);
 	if (!_rq_tio_cache)
@@ -236,12 +303,15 @@ out_free_rq_tio_cache:
 	kmem_cache_destroy(_rq_tio_cache);
 out_free_io_cache:
 	kmem_cache_destroy(_io_cache);
+out_free_block_clone:
+	_block_clone_exit();
 
 	return r;
 }
 
 static void local_exit(void)
 {
+	_block_clone_exit();
 	kmem_cache_destroy(_rq_tio_cache);
 	kmem_cache_destroy(_io_cache);
 	unregister_blkdev(_major, _name);
@@ -286,7 +356,7 @@ static int __init dm_init(void)
 
 	return 0;
 
-      bad:
+bad:
 	while (i--)
 		_exits[i]();
 
@@ -383,13 +453,15 @@ static int dm_blk_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 }
 
 static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
-			unsigned int cmd, unsigned long arg)
+                        unsigned int cmd, unsigned long arg)
 {
 	struct mapped_device *md = bdev->bd_disk->private_data;
-	struct dm_table *map = dm_get_live_table(md);
+	struct dm_table *map;
 	struct dm_target *tgt;
 	int r = -ENOTTY;
 
+retry:
+	map = dm_get_live_table(md);
 	if (!map || !dm_table_get_size(map))
 		goto out;
 
@@ -410,6 +482,11 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 out:
 	dm_table_put(map);
 
+	if (r == -ENOTCONN) {
+		msleep(10);
+		goto retry;
+	}
+
 	return r;
 }
 
@@ -429,7 +506,7 @@ static void free_tio(struct mapped_device *md, struct dm_target_io *tio)
 }
 
 static struct dm_rq_target_io *alloc_rq_tio(struct mapped_device *md,
-					    gfp_t gfp_mask)
+        gfp_t gfp_mask)
 {
 	return mempool_alloc(md->io_pool, gfp_mask);
 }
@@ -457,7 +534,7 @@ static void start_io_acct(struct dm_io *io)
 	part_round_stats(cpu, &dm_disk(md)->part0);
 	part_stat_unlock();
 	atomic_set(&dm_disk(md)->part0.in_flight[rw],
-		atomic_inc_return(&md->pending[rw]));
+	           atomic_inc_return(&md->pending[rw]));
 }
 
 static void end_io_acct(struct dm_io *io)
@@ -479,7 +556,7 @@ static void end_io_acct(struct dm_io *io)
 	 */
 	pending = atomic_dec_return(&md->pending[rw]);
 	atomic_set(&dm_disk(md)->part0.in_flight[rw], pending);
-	pending += atomic_read(&md->pending[rw^0x1]);
+	pending += atomic_read(&md->pending[rw ^ 0x1]);
 
 	/* nudge anyone waiting on suspend queue */
 	if (!pending)
@@ -642,6 +719,9 @@ static void clone_endio(struct bio *bio, int error)
 			BUG();
 		}
 	}
+
+	if (bio->bi_flags & BIO_QFLAG_MASK)
+		io->bio->bi_flags |= (bio->bi_flags & BIO_QFLAG_MASK);
 
 	free_tio(md, tio);
 	dec_pending(io, error);
@@ -992,7 +1072,7 @@ static void __map_bio(struct dm_target_io *tio)
 		/* the bio has been remapped so dispatch it */
 
 		trace_block_bio_remap(bdev_get_queue(clone->bi_bdev), clone,
-				      tio->io->bio->bi_bdev->bd_dev, sector);
+		                      tio->io->bio->bi_bdev->bd_dev, sector);
 
 		generic_make_request(clone);
 	} else if (r < 0 || r == DM_MAPIO_REQUEUE) {
@@ -1030,8 +1110,8 @@ static void bio_setup_bv(struct bio *bio, unsigned short idx, unsigned short bv_
 }
 
 static void clone_bio_integrity(struct bio *bio, struct bio *clone,
-				unsigned short idx, unsigned len, unsigned offset,
-				unsigned trim)
+                                unsigned short idx, unsigned len, unsigned offset,
+                                unsigned trim)
 {
 	if (!bio_integrity(bio))
 		return;
@@ -1046,8 +1126,8 @@ static void clone_bio_integrity(struct bio *bio, struct bio *clone,
  * Creates a little bio that just does part of a bvec.
  */
 static void clone_split_bio(struct dm_target_io *tio, struct bio *bio,
-			    sector_t sector, unsigned short idx,
-			    unsigned offset, unsigned len)
+                            sector_t sector, unsigned short idx,
+                            unsigned offset, unsigned len)
 {
 	struct bio *clone = &tio->clone;
 	struct bio_vec *bv = bio->bi_io_vec + idx;
@@ -1070,8 +1150,8 @@ static void clone_split_bio(struct dm_target_io *tio, struct bio *bio,
  * Creates a bio that consists of range of complete bvecs.
  */
 static void clone_bio(struct dm_target_io *tio, struct bio *bio,
-		      sector_t sector, unsigned short idx,
-		      unsigned short bv_count, unsigned len)
+                      sector_t sector, unsigned short idx,
+                      unsigned short bv_count, unsigned len)
 {
 	struct bio *clone = &tio->clone;
 	unsigned trim = 0;
@@ -1086,8 +1166,8 @@ static void clone_bio(struct dm_target_io *tio, struct bio *bio,
 }
 
 static struct dm_target_io *alloc_tio(struct clone_info *ci,
-				      struct dm_target *ti, int nr_iovecs,
-				      unsigned target_bio_nr)
+                                      struct dm_target *ti, int nr_iovecs,
+                                      unsigned target_bio_nr)
 {
 	struct dm_target_io *tio;
 	struct bio *clone;
@@ -1104,8 +1184,8 @@ static struct dm_target_io *alloc_tio(struct clone_info *ci,
 }
 
 static void __clone_and_map_simple_bio(struct clone_info *ci,
-				       struct dm_target *ti,
-				       unsigned target_bio_nr, sector_t len)
+                                       struct dm_target *ti,
+                                       unsigned target_bio_nr, sector_t len)
 {
 	struct dm_target_io *tio = alloc_tio(ci, ti, ci->bio->bi_max_vecs, target_bio_nr);
 	struct bio *clone = &tio->clone;
@@ -1115,7 +1195,7 @@ static void __clone_and_map_simple_bio(struct clone_info *ci,
 	 * ci->bio->bi_max_vecs is BIO_INLINE_VECS anyway, for both flush
 	 * and discard, so no need for concern about wasted bvec allocations.
 	 */
-	 __bio_clone(clone, ci->bio);
+	__bio_clone(clone, ci->bio);
 	if (len)
 		bio_setup_sector(clone, ci->sector, len);
 
@@ -1123,7 +1203,7 @@ static void __clone_and_map_simple_bio(struct clone_info *ci,
 }
 
 static void __send_duplicate_bios(struct clone_info *ci, struct dm_target *ti,
-				  unsigned num_bios, sector_t len)
+                                  unsigned num_bios, sector_t len)
 {
 	unsigned target_bio_nr;
 
@@ -1144,10 +1224,10 @@ static int __send_empty_flush(struct clone_info *ci)
 }
 
 static void __clone_and_map_data_bio(struct clone_info *ci, struct dm_target *ti,
-				     sector_t sector, int nr_iovecs,
-				     unsigned short idx, unsigned short bv_count,
-				     unsigned offset, unsigned len,
-				     unsigned split_bvec)
+                                     sector_t sector, int nr_iovecs,
+                                     unsigned short idx, unsigned short bv_count,
+                                     unsigned offset, unsigned len,
+                                     unsigned split_bvec)
 {
 	struct bio *bio = ci->bio;
 	struct dm_target_io *tio;
@@ -1182,6 +1262,11 @@ static unsigned get_num_write_same_bios(struct dm_target *ti)
 	return ti->num_write_same_bios;
 }
 
+static unsigned get_num_space_map_bios(struct dm_target *ti)
+{
+	return 1;
+}
+
 typedef bool (*is_split_required_fn)(struct dm_target *ti);
 
 static bool is_split_required_for_discard(struct dm_target *ti)
@@ -1189,9 +1274,14 @@ static bool is_split_required_for_discard(struct dm_target *ti)
 	return ti->split_discard_bios;
 }
 
+static bool is_split_required_for_map(struct dm_target *ti)
+{
+	return true;
+}
+
 static int __send_changing_extent_only(struct clone_info *ci,
-				       get_num_bios_fn get_num_bios,
-				       is_split_required_fn is_split_required)
+                                       get_num_bios_fn get_num_bios,
+                                       is_split_required_fn is_split_required)
 {
 	struct dm_target *ti;
 	sector_t len;
@@ -1228,12 +1318,17 @@ static int __send_changing_extent_only(struct clone_info *ci,
 static int __send_discard(struct clone_info *ci)
 {
 	return __send_changing_extent_only(ci, get_num_discard_bios,
-					   is_split_required_for_discard);
+	                                   is_split_required_for_discard);
 }
 
 static int __send_write_same(struct clone_info *ci)
 {
 	return __send_changing_extent_only(ci, get_num_write_same_bios, NULL);
+}
+
+static int __send_space_map(struct clone_info *ci)
+{
+	return __send_changing_extent_only(ci, get_num_space_map_bios, is_split_required_for_map);
 }
 
 /*
@@ -1258,7 +1353,7 @@ static sector_t __len_within_target(struct clone_info *ci, sector_t max, int *id
 }
 
 static int __split_bvec_across_targets(struct clone_info *ci,
-				       struct dm_target *ti, sector_t max)
+                                       struct dm_target *ti, sector_t max)
 {
 	struct bio *bio = ci->bio;
 	struct bio_vec *bv = bio->bi_io_vec + ci->idx;
@@ -1278,7 +1373,7 @@ static int __split_bvec_across_targets(struct clone_info *ci,
 		len = min(remaining, max);
 
 		__clone_and_map_data_bio(ci, ti, ci->sector, 1, ci->idx, 0,
-					 bv->bv_offset + offset, len, 1);
+		                         bv->bv_offset + offset, len, 1);
 
 		ci->sector += len;
 		ci->sector_count -= len;
@@ -1304,6 +1399,9 @@ static int __split_and_process_non_flush(struct clone_info *ci)
 		return __send_discard(ci);
 	else if (unlikely(bio->bi_rw & REQ_WRITE_SAME))
 		return __send_write_same(ci);
+	else if (unlikely(bio->bi_rw & (REQ_QNAP_MAP | REQ_QNAP_MAP_ZERO)))
+		return __send_space_map(ci);
+
 
 	ti = dm_table_find_target(ci->map, ci->sector);
 	if (!dm_target_is_valid(ti))
@@ -1317,8 +1415,8 @@ static int __split_and_process_non_flush(struct clone_info *ci)
 	 */
 	if (ci->sector_count <= max) {
 		__clone_and_map_data_bio(ci, ti, ci->sector, bio->bi_max_vecs,
-					 ci->idx, bio->bi_vcnt - ci->idx, 0,
-					 ci->sector_count, 0);
+		                         ci->idx, bio->bi_vcnt - ci->idx, 0,
+		                         ci->sector_count, 0);
 		ci->sector_count = 0;
 		return 0;
 	}
@@ -1331,7 +1429,7 @@ static int __split_and_process_non_flush(struct clone_info *ci)
 		len = __len_within_target(ci, max, &idx);
 
 		__clone_and_map_data_bio(ci, ti, ci->sector, bio->bi_max_vecs,
-					 ci->idx, idx - ci->idx, 0, len, 0);
+		                         ci->idx, idx - ci->idx, 0, len, 0);
 
 		ci->sector += len;
 		ci->sector_count -= len;
@@ -1393,8 +1491,8 @@ static void __split_and_process_bio(struct mapped_device *md, struct bio *bio)
  *---------------------------------------------------------------*/
 
 static int dm_merge_bvec(struct request_queue *q,
-			 struct bvec_merge_data *bvm,
-			 struct bio_vec *biovec)
+                         struct bvec_merge_data *bvm,
+                         struct bio_vec *biovec)
 {
 	struct mapped_device *md = q->queuedata;
 	struct dm_table *map = dm_get_live_table(md);
@@ -1413,7 +1511,7 @@ static int dm_merge_bvec(struct request_queue *q,
 	 * Find maximum amount of I/O that won't need splitting
 	 */
 	max_sectors = min(max_io_len(bvm->bi_sector, ti),
-			  (sector_t) BIO_MAX_SECTORS);
+	                  (sector_t) BIO_MAX_SECTORS);
 	max_size = (max_sectors << SECTOR_SHIFT) - bvm->bi_size;
 	if (max_size < 0)
 		max_size = 0;
@@ -1461,11 +1559,15 @@ static void _dm_request(struct request_queue *q, struct bio *bio)
 
 	down_read(&md->io_lock);
 
+	if (bio->bi_rw & (REQ_QNAP_MAP | REQ_QNAP_MAP_ZERO))
+		goto no_stats_update;
+
 	cpu = part_stat_lock();
 	part_stat_inc(cpu, &dm_disk(md)->part0, ios[rw]);
 	part_stat_add(cpu, &dm_disk(md)->part0, sectors[rw], bio_sectors(bio));
 	part_stat_unlock();
 
+no_stats_update:
 	/* if we're suspended, we have to queue this io for later */
 	if (unlikely(test_bit(DMF_BLOCK_IO_FOR_SUSPEND, &md->flags))) {
 		up_read(&md->io_lock);
@@ -1512,11 +1614,11 @@ void dm_dispatch_request(struct request *rq)
 EXPORT_SYMBOL_GPL(dm_dispatch_request);
 
 static int dm_rq_bio_constructor(struct bio *bio, struct bio *bio_orig,
-				 void *data)
+                                 void *data)
 {
 	struct dm_rq_target_io *tio = data;
 	struct dm_rq_clone_bio_info *info =
-		container_of(bio, struct dm_rq_clone_bio_info, clone);
+	    container_of(bio, struct dm_rq_clone_bio_info, clone);
 
 	info->orig = bio_orig;
 	info->tio = tio;
@@ -1527,12 +1629,12 @@ static int dm_rq_bio_constructor(struct bio *bio, struct bio *bio_orig,
 }
 
 static int setup_clone(struct request *clone, struct request *rq,
-		       struct dm_rq_target_io *tio)
+                       struct dm_rq_target_io *tio)
 {
 	int r;
 
 	r = blk_rq_prep_clone(clone, rq, tio->md->bs, GFP_ATOMIC,
-			      dm_rq_bio_constructor, tio);
+	                      dm_rq_bio_constructor, tio);
 	if (r)
 		return r;
 
@@ -1547,7 +1649,7 @@ static int setup_clone(struct request *clone, struct request *rq,
 }
 
 static struct request *clone_rq(struct request *rq, struct mapped_device *md,
-				gfp_t gfp_mask)
+                                gfp_t gfp_mask)
 {
 	struct request *clone;
 	struct dm_rq_target_io *tio;
@@ -1601,7 +1703,7 @@ static int dm_prep_fn(struct request_queue *q, struct request *rq)
  * !0 : the request has been requeued
  */
 static int map_request(struct dm_target *ti, struct request *clone,
-		       struct mapped_device *md)
+                       struct mapped_device *md)
 {
 	int r, requeued = 0;
 	struct dm_rq_target_io *tio = clone->end_io_data;
@@ -1615,7 +1717,7 @@ static int map_request(struct dm_target *ti, struct request *clone,
 	case DM_MAPIO_REMAPPED:
 		/* The target has remapped the I/O so dispatch it */
 		trace_block_rq_remap(clone->q, clone, disk_devt(dm_disk(md)),
-				     blk_rq_pos(tio->orig));
+		                     blk_rq_pos(tio->orig));
 		dm_dispatch_request(clone);
 		break;
 	case DM_MAPIO_REQUEUE:
@@ -1908,7 +2010,7 @@ static struct mapped_device *alloc_dev(int minor)
 	format_dev_t(md->name, MKDEV(_major, minor));
 
 	md->wq = alloc_workqueue("kdmflush",
-				 WQ_NON_REENTRANT | WQ_MEM_RECLAIM, 0);
+	                         WQ_NON_REENTRANT | WQ_MEM_RECLAIM, 0);
 	if (!md->wq)
 		goto bad_thread;
 
@@ -2064,8 +2166,8 @@ int dm_queue_merge_is_compulsory(struct request_queue *q)
 }
 
 static int dm_device_merge_is_compulsory(struct dm_target *ti,
-					 struct dm_dev *dev, sector_t start,
-					 sector_t len, void *data)
+        struct dm_dev *dev, sector_t start,
+        sector_t len, void *data)
 {
 	struct block_device *bdev = dev->bdev;
 	struct request_queue *q = bdev_get_queue(bdev);
@@ -2097,7 +2199,7 @@ static int dm_table_merge_is_optional(struct dm_table *table)
  * Returns old map, which caller must destroy.
  */
 static struct dm_table *__bind(struct mapped_device *md, struct dm_table *t,
-			       struct queue_limits *limits)
+                               struct queue_limits *limits)
 {
 	struct dm_table *old_map;
 	struct request_queue *q = md->queue;
@@ -2212,6 +2314,17 @@ struct target_type *dm_get_immutable_target_type(struct mapped_device *md)
 }
 
 /*
+ * The queue_limits are only valid as long as you have a reference
+ * count on 'md'.
+ */
+struct queue_limits *dm_get_queue_limits(struct mapped_device *md)
+{
+	BUG_ON(!atomic_read(&md->holders));
+	return &md->queue->limits;
+}
+EXPORT_SYMBOL_GPL(dm_get_queue_limits);
+
+/*
  * Fully initialize a request-based queue (->elevator, ->request_fn, etc).
  */
 static int dm_init_request_based_queue(struct mapped_device *md)
@@ -2263,9 +2376,9 @@ static struct mapped_device *dm_find_md(dev_t dev)
 
 	md = idr_find(&_minor_idr, minor);
 	if (md && (md == MINOR_ALLOCED ||
-		   (MINOR(disk_devt(dm_disk(md))) != minor) ||
-		   dm_deleting_md(md) ||
-		   test_bit(DMF_FREEING, &md->flags))) {
+	           (MINOR(disk_devt(dm_disk(md))) != minor) ||
+	           dm_deleting_md(md) ||
+	           test_bit(DMF_FREEING, &md->flags))) {
 		md = NULL;
 		goto out;
 	}
@@ -2395,7 +2508,7 @@ static int dm_wait_for_completion(struct mapped_device *md, int interruptible)
 static void dm_wq_work(struct work_struct *work)
 {
 	struct mapped_device *md = container_of(work, struct mapped_device,
-						work);
+	                                        work);
 	struct bio *c;
 
 	down_read(&md->io_lock);
@@ -2666,7 +2779,7 @@ out:
  * Event notification.
  *---------------------------------------------------------------*/
 int dm_kobject_uevent(struct mapped_device *md, enum kobject_action action,
-		       unsigned cookie)
+                      unsigned cookie)
 {
 	char udev_cookie[DM_COOKIE_LENGTH];
 	char *envp[] = { udev_cookie, NULL };
@@ -2675,9 +2788,9 @@ int dm_kobject_uevent(struct mapped_device *md, enum kobject_action action,
 		return kobject_uevent(&disk_to_dev(md->disk)->kobj, action);
 	else {
 		snprintf(udev_cookie, DM_COOKIE_LENGTH, "%s=%u",
-			 DM_COOKIE_ENV_VAR_NAME, cookie);
+		         DM_COOKIE_ENV_VAR_NAME, cookie);
 		return kobject_uevent_env(&disk_to_dev(md->disk)->kobj,
-					  action, envp);
+		                          action, envp);
 	}
 }
 
@@ -2694,7 +2807,7 @@ uint32_t dm_get_event_nr(struct mapped_device *md)
 int dm_wait_event(struct mapped_device *md, int event_nr)
 {
 	return wait_event_interruptible(md->eventq,
-			(event_nr != atomic_read(&md->event_nr)));
+	                                (event_nr != atomic_read(&md->event_nr)));
 }
 
 void dm_uevent_add(struct mapped_device *md, struct list_head *elist)
@@ -2719,6 +2832,7 @@ struct kobject *dm_kobject(struct mapped_device *md)
 {
 	return &md->kobj;
 }
+EXPORT_SYMBOL_GPL(dm_kobject);
 
 /*
  * struct mapped_device should not be exported outside of dm.c
@@ -2756,6 +2870,210 @@ int dm_noflush_suspending(struct dm_target *ti)
 	return __noflush_suspending(dm_table_get_md(ti->table));
 }
 EXPORT_SYMBOL_GPL(dm_noflush_suspending);
+
+static int _get_target_from_blockdev(struct block_device *bdev, sector_t saddr, struct dm_target **ti)
+{
+	struct dm_table *map;
+	struct mapped_device *md;
+
+	md = dm_get_md(bdev->bd_dev);
+	if (!md) {
+		DMDEBUG("Cannot find mapped device");
+		return -EINVAL;
+	}
+
+	map = dm_get_live_table(md);
+	*ti = dm_table_find_target(map, saddr);
+	dm_table_put(map);
+
+	dm_put(md);
+	return 0;
+}
+
+static int _find_next_target(struct block_device *dev, sector_t start, sector_t len, void *remap_desc, void **thin)
+{
+	struct dm_target *next_ti;
+
+	if (_get_target_from_blockdev(dev, start, &next_ti))
+		return -EINVAL;
+
+	if (next_ti->type->locate_thin)
+		return next_ti->type->locate_thin(next_ti, _find_next_target, start, len, remap_desc, thin);
+
+	return 1;
+}
+
+static int _get_clone_remap_desc(THIN_BLOCKCLONE_DESC *clone_desc, THIN_REMAP_DESC *srd, THIN_REMAP_DESC *drd)
+{
+	struct dm_target *src_ti, *dst_ti;
+
+	if (_get_target_from_blockdev(clone_desc->src_dev, clone_desc->src_block_addr, &src_ti))
+		return 1;
+
+	if (_get_target_from_blockdev(clone_desc->dest_dev, clone_desc->dest_block_addr, &dst_ti))
+		return 1;
+
+	if (!src_ti->type->locate_thin || !dst_ti->type->locate_thin)
+		return 1;
+
+	if (src_ti->type->locate_thin(src_ti, _find_next_target, clone_desc->src_block_addr, clone_desc->transfer_blocks, srd, NULL))
+		return 1;
+
+	if (dst_ti->type->locate_thin(dst_ti, _find_next_target, clone_desc->dest_block_addr, clone_desc->transfer_blocks, drd, NULL))
+		return 1;
+
+	return 0;
+}
+
+static int _invalidate_target(struct block_device *dev, sector_t start, sector_t len, struct clone_wrapper *cw);
+
+static int _invalidate_next(void *data, struct block_device *next_dev, sector_t start)
+{
+	struct clone_wrapper *cw = data;
+	THIN_BLOCKCLONE_DESC *clone_desc = cw->clone_desc;
+
+	/*
+	 * Finish invalidate
+	 */
+	if (!next_dev)
+		return 0;
+
+	return _invalidate_target(next_dev, start, clone_desc->transfer_blocks, cw);
+}
+
+static int _invalidate_target(struct block_device *dev, sector_t start, sector_t len, struct clone_wrapper *cw)
+{
+	struct dm_target *ti;
+
+	DMDEBUG("%s: invalidate target start", __func__);
+
+	if (_get_target_from_blockdev(dev, start, &ti))
+		return -EINVAL;
+
+	if (!ti->type->invalidate)
+		return -EINVAL;
+
+	return ti->type->invalidate(ti, start, len, _invalidate_next, cw);
+}
+
+static int _clone_target(THIN_BLOCKCLONE_DESC *clone_desc)
+{
+	int r;
+	struct dm_target *ti;
+	THIN_REMAP_DESC srd, drd;
+
+	if (_get_clone_remap_desc(clone_desc, &srd, &drd)) {
+		r = -EINVAL;
+		goto err_out;
+	}
+
+	ti = srd.ti;
+	if (!ti->type->fast_block_clone) {
+		r = -EINVAL;
+		goto err_out;
+	}
+
+	r = ti->type->fast_block_clone(ti, &srd, &drd, clone_desc->transfer_blocks);
+
+err_out:
+	DMDEBUG("%s: return finish it all, error code = %d", __func__, r);
+
+	invalidate_bdev(clone_desc->dest_dev);
+	return r;
+}
+
+static void _do_invalidate(struct work_struct *ws)
+{
+	int r = 0;
+	unsigned long flags;
+	struct list_head temp_clone_list;
+	struct clone_wrapper *cw, *tmp;
+	CLONE_CALLBACK callback;
+	THIN_BLOCKCLONE_DESC *clone_desc;
+	struct clone_struct *clone_ct = container_of(ws, struct clone_struct, cloner);
+
+	DMDEBUG("%s: do invalidate start", __func__);
+
+	INIT_LIST_HEAD(&temp_clone_list);
+	spin_lock_irqsave(&clone_ct->clone_lock, flags);
+	list_splice_init(&clone_ct->clone_list, &temp_clone_list);
+	spin_unlock_irqrestore(&clone_ct->clone_lock, flags);
+
+	list_for_each_entry_safe(cw, tmp, &temp_clone_list, list) {
+		callback = cw->callback;
+		clone_desc = cw->clone_desc;
+
+		r = _invalidate_target(clone_desc->src_dev, clone_desc->src_block_addr, clone_desc->transfer_blocks, cw);
+		if (r)
+			goto next_clone;
+
+		r = _invalidate_target(clone_desc->dest_dev, clone_desc->dest_block_addr, clone_desc->transfer_blocks, cw);
+		if (r)
+			goto next_clone;
+
+		r = _clone_target(clone_desc);
+next_clone:
+		if (callback)
+			callback(r, clone_desc);
+
+		list_del(&cw->list);
+		mempool_free(cw, clone_ct->clone_wrapper_pool);
+	}
+}
+
+int thin_do_block_cloning(THIN_BLOCKCLONE_DESC *clone_desc, CLONE_CALLBACK callback)
+{
+	struct clone_wrapper *cw;
+	unsigned long flags;
+
+	DMDEBUG("%s: receives clone_desc(0x%p) callback(0x%p)", __func__, clone_desc, callback);
+
+	cw = mempool_alloc(clone_context->clone_wrapper_pool, GFP_ATOMIC);
+	if (!cw)
+		return -ENOMEM;
+
+	INIT_LIST_HEAD(&cw->list);
+	cw->callback = callback;
+	cw->clone_desc = clone_desc;
+	spin_lock_irqsave(&clone_context->clone_lock, flags);
+	list_add(&cw->list, &clone_context->clone_list);
+	spin_unlock_irqrestore(&clone_context->clone_lock, flags);
+
+	queue_work(clone_context->clone_wq, &clone_context->cloner);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(thin_do_block_cloning);
+
+int thin_support_block_cloning(THIN_BLOCKCLONE_DESC *clone_desc, unsigned long *block_size)
+{
+	THIN_REMAP_DESC srd, drd;
+
+	srd.crypt = drd.crypt = 0;
+	if (_get_clone_remap_desc(clone_desc, &srd, &drd))
+		return 1;
+
+	*block_size = srd.block_size >> 10; // Transform to KB
+
+	if (clone_desc->transfer_blocks % (srd.block_size >> SECTOR_SHIFT))
+		return 1;
+
+	if (srd.pool == drd.pool) {
+		if (srd.crypt && srd.dev_id == drd.dev_id)
+			return 0;
+		else if (!srd.crypt && !drd.crypt)
+			return 0;
+	}
+
+	return 1;
+}
+EXPORT_SYMBOL_GPL(thin_support_block_cloning);
+
+int fs_locate_thin(struct mapped_device *md)
+{
+	return _find_next_target(md->bdev, 0, 1, NULL, &(md->queue->thindata));
+}
+EXPORT_SYMBOL_GPL(fs_locate_thin);
 
 struct dm_md_mempools *dm_alloc_md_mempools(unsigned type, unsigned integrity, unsigned per_bio_data_size)
 {

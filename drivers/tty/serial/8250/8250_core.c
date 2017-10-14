@@ -3171,6 +3171,34 @@ static struct platform_device *serial8250_isa_devs;
  */
 static DEFINE_MUTEX(serial_mutex);
 
+//Patch by QNAP:Board initialization
+#ifdef CONFIG_MACH_QNAPTS
+int serial8250_write_char(int port, char val)
+{
+    struct uart_8250_port *up = &serial8250_ports[port];
+    serial_out(up, UART_TX, val);
+    return 0;
+}
+EXPORT_SYMBOL(serial8250_write_char);
+#endif
+
+#if defined(CONFIG_MACH_QNAPTS) && defined(CONFIG_ARCH_ALPINE)
+void kernel_booting_buzzer()
+{
+	struct uart_8250_port *up = &serial8250_ports[1];
+	struct uart_port *p = &up->port;
+	u32 baudDivisor;
+	baudDivisor = p->uartclk / (16 * 115200);
+	serial_port_out(p, UART_LCR, UART_LCR_DLAB);  /* set DLAB bit */
+	serial_dl_write(up, baudDivisor);  /* set baudrate divisor */
+	serial_port_out(p, UART_LCR, 0x3); /* clear DLAB; set 8 bits, no parity */
+	serial_out(up, UART_TX, 0x50); /* 0x50 is mcu 0.5 sec buzzer cmd */
+}
+EXPORT_SYMBOL(kernel_booting_buzzer);
+#endif
+//////////////////////////
+
+
 static struct uart_8250_port *serial8250_find_match_or_unused(struct uart_port *port)
 {
 	int i;

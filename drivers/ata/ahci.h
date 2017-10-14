@@ -232,6 +232,11 @@ enum {
 						        port start (wait until
 						        error-handling stage) */
 	AHCI_HFLAG_MULTI_MSI		= (1 << 16), /* multiple PCI MSIs */
+	AHCI_HFLAG_MSIX			= (1 << 17), /* MSIX */
+
+//Patch by QNAP:Marvell MV_9235 workaround
+	AHCI_HFLAG_YES_MV9235_FIX		= (1 << 31), /* port0|port2 , port1|port3 */
+////////////////////////////////
 
 	/* ap->flags bits */
 
@@ -306,6 +311,7 @@ struct ahci_port_priv {
 	int			fbs_last_dev;	/* save FBS.DEV of last FIS */
 	/* enclosure management info per PM slot */
 	struct ahci_em_priv	em_priv[EM_MAX_SLOTS];
+	char			msix_name[16];
 };
 
 struct ahci_host_priv {
@@ -321,6 +327,11 @@ struct ahci_host_priv {
 	u32			em_buf_sz;	/* EM buffer size in byte */
 	u32			em_msg_type;	/* EM message type */
 	struct clk		*clk;		/* Only for platforms supporting clk */
+
+	struct msix_entry *msix_entries;
+	unsigned int msix_vecs;
+	unsigned int		int_moderation;
+	int			led_gpio[AHCI_MAX_PORTS];
 };
 
 extern int ahci_ignore_sss;
@@ -362,6 +373,8 @@ void ahci_set_em_messages(struct ahci_host_priv *hpriv,
 			  struct ata_port_info *pi);
 int ahci_reset_em(struct ata_host *host);
 irqreturn_t ahci_interrupt(int irq, void *dev_instance);
+void ahci_hw_port_interrupt(struct ata_port *ap);
+void ahci_port_intr(struct ata_port *ap);
 irqreturn_t ahci_hw_interrupt(int irq, void *dev_instance);
 irqreturn_t ahci_thread_fn(int irq, void *dev_instance);
 void ahci_print_info(struct ata_host *host, const char *scc_s);

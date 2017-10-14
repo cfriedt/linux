@@ -553,11 +553,10 @@ cifs_relock_file(struct cifsFileInfo *cfile)
 	struct cifs_tcon *tcon = tlink_tcon(cfile->tlink);
 	int rc = 0;
 
-	/* we are going to update can_cache_brlcks here - need a write access */
-	down_write(&cinode->lock_sem);
+	down_read(&cinode->lock_sem);
 	if (cinode->can_cache_brlcks) {
-		/* can cache locks - no need to push them */
-		up_write(&cinode->lock_sem);
+		/* can cache locks - no need to relock */
+		up_read(&cinode->lock_sem);
 		return rc;
 	}
 
@@ -568,7 +567,7 @@ cifs_relock_file(struct cifsFileInfo *cfile)
 	else
 		rc = tcon->ses->server->ops->push_mand_locks(cfile);
 
-	up_write(&cinode->lock_sem);
+	up_read(&cinode->lock_sem);
 	return rc;
 }
 
@@ -1885,7 +1884,7 @@ retry:
 		pgoff_t next = 0, tofind;
 		struct page **pages;
 
-		tofind = min((cifs_sb->wsize / PAGE_CACHE_SIZE) - 1,
+		tofind = min((pgoff_t)((cifs_sb->wsize / PAGE_CACHE_SIZE) - 1),
 				end - index) + 1;
 
 		wdata = cifs_writedata_alloc((unsigned int)tofind,
@@ -2935,6 +2934,14 @@ cifs_strict_readv(struct kiocb *iocb, const struct iovec *iov,
 	 */
 	if (!cinode->clientCanCacheRead)
 		return cifs_user_readv(iocb, iov, nr_segs, pos);
+#ifdef CONFIG_MACH_QNAPTS
+	/* Bug#87650, strict cache read performance too slow. Page cache never
+	 * used in sequence reading.So we skip page cache if there are 6
+	 * consecutive reads.
+	 * */
+	if (cfile->co >= 6)
+		return cifs_user_readv(iocb, iov, nr_segs, pos);
+#endif
 
 	if (cap_unix(tcon->ses) &&
 	    (CIFS_UNIX_FCNTL_CAP & le64_to_cpu(tcon->fsUnixInfo.Capability)) &&
@@ -2986,6 +2993,22 @@ cifs_read(struct file *file, char *read_data, size_t read_size, loff_t *offset)
 	open_file = file->private_data;
 	tcon = tlink_tcon(open_file->tlink);
 	server = tcon->ses->server;
+
+#ifdef CONFIG_MACH_QNAPTS
+	/* Bug#87650, strict cache read performance too slow. Page cache never
+	 * used in sequence reading.So we skip page cache if there are 6
+	 * consecutive reads.
+	 * */
+	open_file->preoffset = open_file->curoffset;
+	open_file->curoffset = *offset;
+
+	if (open_file->preoffset + read_size == open_file->curoffset &&
+	    open_file->co < 6) {
+		open_file->co++;
+	} else {
+		open_file->co = 0;
+	}
+#endif
 
 	if (!server->ops->sync_read) {
 		free_xid(xid);
@@ -3143,7 +3166,7 @@ cifs_readpages_read_into_pages(struct TCP_Server_Info *server,
 	/* determine the eof that the server (probably) has */
 	eof = CIFS_I(rdata->mapping->host)->server_eof;
 	eof_index = eof ? (eof - 1) >> PAGE_CACHE_SHIFT : 0;
-	cifs_dbg(FYI, "eof=%llu eof_index=%lu\n", eof, eof_index);
+	cifs_dbg(FYI, "eof=%llu eof_index=%llu\n", eof, (unsigned long long)eof_index);
 
 	rdata->tailsz = PAGE_CACHE_SIZE;
 	for (i = 0; i < nr_pages; i++) {

@@ -15,6 +15,7 @@
 #include <linux/list.h>
 #include <linux/blkdev.h>
 #include <linux/hdreg.h>
+#include <linux/fast_clone.h>
 
 /*
  * Suspend feature flags
@@ -51,14 +52,14 @@ struct dm_md_mempools;
  *---------------------------------------------------------------*/
 void dm_table_destroy(struct dm_table *t);
 void dm_table_event_callback(struct dm_table *t,
-			     void (*fn)(void *), void *context);
+                             void (*fn)(void *), void *context);
 struct dm_target *dm_table_get_target(struct dm_table *t, unsigned int index);
 struct dm_target *dm_table_find_target(struct dm_table *t, sector_t sector);
 bool dm_table_has_no_data_devices(struct dm_table *table);
 int dm_calculate_queue_limits(struct dm_table *table,
-			      struct queue_limits *limits);
+                              struct queue_limits *limits);
 void dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
-			       struct queue_limits *limits);
+                               struct queue_limits *limits);
 struct list_head *dm_table_get_devices(struct dm_table *t);
 void dm_table_presuspend_targets(struct dm_table *t);
 void dm_table_postsuspend_targets(struct dm_table *t);
@@ -69,6 +70,8 @@ unsigned dm_table_get_type(struct dm_table *t);
 struct target_type *dm_table_get_immutable_target_type(struct dm_table *t);
 bool dm_table_request_based(struct dm_table *t);
 bool dm_table_supports_discards(struct dm_table *t);
+bool dm_table_enable_encryption(struct dm_table *t);
+bool dm_table_locate_thick(struct dm_table *t);
 int dm_table_alloc_md_mempools(struct dm_table *t);
 void dm_table_free_md_mempools(struct dm_table *t);
 struct dm_md_mempools *dm_table_get_md_mempools(struct dm_table *t);
@@ -101,7 +104,7 @@ void dm_target_exit(void);
 struct target_type *dm_get_target_type(const char *name);
 void dm_put_target_type(struct target_type *tt);
 int dm_target_iterate(void (*iter_func)(struct target_type *tt,
-					void *param), void *param);
+                                        void *param), void *param);
 
 int dm_split_args(int *argc, char ***argvp, char *input);
 
@@ -148,7 +151,7 @@ int dm_open_count(struct mapped_device *md);
 int dm_lock_for_deletion(struct mapped_device *md);
 
 int dm_kobject_uevent(struct mapped_device *md, enum kobject_action action,
-		      unsigned cookie);
+                      unsigned cookie);
 
 int dm_io_init(void);
 void dm_io_exit(void);
@@ -161,5 +164,6 @@ void dm_kcopyd_exit(void);
  */
 struct dm_md_mempools *dm_alloc_md_mempools(unsigned type, unsigned integrity, unsigned per_bio_data_size);
 void dm_free_md_mempools(struct dm_md_mempools *pools);
+int fs_locate_thin(struct mapped_device *md);
 
 #endif

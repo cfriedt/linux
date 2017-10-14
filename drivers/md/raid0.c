@@ -416,6 +416,12 @@ static sector_t raid0_size(struct mddev *mddev, sector_t sectors, int raid_disks
 	WARN_ONCE(sectors || raid_disks,
 		  "%s does not support generic reshape\n", __func__);
 
+#if defined(CONFIG_MACH_QNAPTS)
+    /* QNAP supports that raid0 can adjust capacity */
+    if((array_sectors = mddev->dev_sectors * mddev->raid_disks)!=0)
+        return array_sectors;
+#endif
+
 	rdev_for_each(rdev, mddev)
 		array_sectors += (rdev->sectors &
 				  ~(sector_t)(mddev->chunk_sectors-1));

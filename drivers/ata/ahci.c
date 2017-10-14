@@ -43,10 +43,14 @@
 #include <linux/device.h>
 #include <linux/dmi.h>
 #include <linux/gfp.h>
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_cmnd.h>
 #include <linux/libata.h>
 #include "ahci.h"
+#include "al_hal_iofic.h"
+#include "al_hal_iofic_regs.h"
 
 #define DRV_NAME	"ahci"
 #define DRV_VERSION	"3.0"
@@ -72,6 +76,11 @@ enum board_ids {
 	board_ahci_sb600,
 	board_ahci_sb700,	/* for SB700 and SB800 */
 	board_ahci_vt8251,
+	board_ahci_alpine,
+#ifdef CONFIG_MACH_QNAPTS
+	board_asmedia,
+    board_mv9215,
+#endif
 
 	/* aliases */
 	board_ahci_mcp_linux	= board_ahci_mcp65,
@@ -102,6 +111,14 @@ static struct ata_port_operations ahci_vt8251_ops = {
 static struct ata_port_operations ahci_p5wdh_ops = {
 	.inherits		= &ahci_ops,
 	.hardreset		= ahci_p5wdh_hardreset,
+};
+
+ssize_t al_ahci_transmit_led_message(struct ata_port *ap, u32 state,
+					    ssize_t size);
+
+static struct ata_port_operations ahci_al_ops = {
+	.inherits		= &ahci_ops,
+	.transmit_led_message   = al_ahci_transmit_led_message,
 };
 
 static const struct ata_port_info ahci_port_info[] = {
@@ -187,6 +204,31 @@ static const struct ata_port_info ahci_port_info[] = {
 		.udma_mask	= ATA_UDMA6,
 		.port_ops	= &ahci_vt8251_ops,
 	},
+	[board_ahci_alpine] = {
+		AHCI_HFLAGS	(AHCI_HFLAG_NO_PMP | AHCI_HFLAG_MSIX),
+		.flags		= AHCI_FLAG_COMMON,
+		.pio_mask	= ATA_PIO4,
+		.udma_mask	= ATA_UDMA6,
+		.port_ops	= &ahci_al_ops,
+	},
+#ifdef CONFIG_MACH_QNAPTS
+    // Enable NCQ
+	[board_asmedia] =
+	{
+		AHCI_HFLAGS	(AHCI_HFLAG_32BIT_ONLY),
+		.flags		= AHCI_FLAG_COMMON,
+		.pio_mask	= ATA_PIO4,
+		.udma_mask	= ATA_UDMA6,
+		.port_ops	= &ahci_ops,
+	},
+	[board_mv9215] =
+	{
+		.flags		= AHCI_FLAG_COMMON,
+		.pio_mask	= ATA_PIO4,
+		.udma_mask	= ATA_UDMA6,
+		.port_ops	= &ahci_ops,
+	},
+#endif
 };
 
 static const struct pci_device_id ahci_pci_tbl[] = {
@@ -291,6 +333,7 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, 0x8d64), board_ahci }, /* Wellsburg RAID */
 	{ PCI_VDEVICE(INTEL, 0x8d66), board_ahci }, /* Wellsburg RAID */
 	{ PCI_VDEVICE(INTEL, 0x8d6e), board_ahci }, /* Wellsburg RAID */
+	{ PCI_VDEVICE(INTEL, 0x23a3), board_ahci }, /* Coleto Creek AHCI */
 
 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */
 	{ PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
@@ -308,8 +351,12 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ PCI_VDEVICE(ATI, 0x4394), board_ahci_sb700 }, /* ATI SB700/800 */
 	{ PCI_VDEVICE(ATI, 0x4395), board_ahci_sb700 }, /* ATI SB700/800 */
 
+	/* Annapurna Labs */
+	{ PCI_VDEVICE(ANNAPURNA_LABS, 0x0031), board_ahci_alpine }, /* 0031 */
+
 	/* AMD */
 	{ PCI_VDEVICE(AMD, 0x7800), board_ahci }, /* AMD Hudson-2 */
+	{ PCI_VDEVICE(AMD, 0x7900), board_ahci }, /* AMD CZ */
 	/* AMD is using RAID class only for ahci controllers */
 	{ PCI_VENDOR_ID_AMD, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
 	  PCI_CLASS_STORAGE_RAID << 8, 0xffffff, board_ahci },
@@ -429,6 +476,8 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	  .driver_data = board_ahci_yes_fbs },			/* 88se9172 on some Gigabyte */
 	{ PCI_DEVICE(PCI_VENDOR_ID_MARVELL_EXT, 0x91a3),
 	  .driver_data = board_ahci_yes_fbs },
+	{ PCI_DEVICE(0x1b4b, 0x9235),
+	  .driver_data = board_ahci_yes_fbs },			/* 88se9235 */
 
 	/* Promise */
 	{ PCI_VDEVICE(PROMISE, 0x3f20), board_ahci },	/* PDC42819 */
@@ -436,8 +485,17 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	/* Asmedia */
 	{ PCI_VDEVICE(ASMEDIA, 0x0601), board_ahci },	/* ASM1060 */
 	{ PCI_VDEVICE(ASMEDIA, 0x0602), board_ahci },	/* ASM1060 */
+#ifdef CONFIG_MACH_QNAPTS
+	{ PCI_VDEVICE(ASMEDIA, 0x0612), board_asmedia },	/* ASM1061 */
+#else
 	{ PCI_VDEVICE(ASMEDIA, 0x0611), board_ahci },	/* ASM1061 */
+#endif
 	{ PCI_VDEVICE(ASMEDIA, 0x0612), board_ahci },	/* ASM1062 */
+
+#ifdef CONFIG_MACH_QNAPTS
+    /* Marvell */
+	{ PCI_DEVICE(0x1b4b, 0x9215), .driver_data = board_mv9215 },	/* 88se9215 */
+#endif
 
 	/* Enmotus */
 	{ PCI_DEVICE(0x1c44, 0x8000), board_ahci },
@@ -468,6 +526,442 @@ static int marvell_enable = 1;
 #endif
 module_param(marvell_enable, int, 0644);
 MODULE_PARM_DESC(marvell_enable, "Marvell SATA via AHCI (1 = enabled)");
+
+
+#ifdef CONFIG_MACH_QNAPTS /* the fix for Intel 530 SI issue on TS-X31+(AL) */
+
+#define AL_SB_SERDES_BASE	(0xfc000000 + 0x018c0000)
+#define AL_MAP_SIZE		4096UL
+#define AL_SRDS_NUM_GROUPS	4		
+
+#define al_reg_read8(l)		(*(volatile uint8_t*)(l))
+#define al_reg_read16(l)	(*(volatile uint16_t*)(l))
+#define al_reg_read32(l)	(*(volatile uint32_t*)(l))
+
+#define al_reg_write8(l, v)	do { *(volatile uint8_t*)(l) = v; } while (0)
+#define al_reg_write16(l, v)	do { *(volatile uint16_t*)(l) = v; } while (0)
+#define al_reg_write32(l, v)	do { *(volatile uint32_t*)(l) = v; } while (0)
+
+#define MASK(msb, lsb)			\
+	(((1 << (1 + (msb) - (lsb))) - 1) << (lsb))
+	
+#define FIELD_SET(data, msb, lsb, val)	\
+	(((data) & ~MASK(msb, lsb)) | (((val) << (lsb)) & MASK(msb, lsb)))
+
+#define SRDS_CORE_REG_ADDR(page, type, offset)\
+	(((page) << 13) | ((type) << 12) | (offset))          
+
+#define AL_REG_FIELD_SET(reg, mask, shift, val)			\
+	(reg) =							\
+		(((reg) & (~(mask))) |				\
+		((((unsigned)(val)) << (shift)) & (mask)))
+
+
+struct serdes_intc {
+	uint32_t rsrvd[0x100 / sizeof(uint32_t)];
+};
+
+struct serdes_gen {
+	uint32_t version;               /* SERDES registers Version */
+	uint32_t rsrvd1[0x0c / sizeof(uint32_t)];
+	uint32_t reg_addr;              /* SERDES register file address */
+	uint32_t reg_data;              /* SERDES register file data */ 
+	uint32_t rsrvd2[0x08 / sizeof(uint32_t)];
+	uint32_t ictl_multi_bist;       /* SERDES control */
+	uint32_t ictl_pcs;              /* SERDES control */
+	uint32_t ictl_pma;              /* SERDES control */
+	uint32_t rsrvd3;
+	uint32_t ipd_multi_synth;       /* SERDES control */
+	uint32_t irst;                  /* SERDES control */
+	uint32_t octl_multi_synthready; /* SERDES control */
+	uint32_t octl_multi_synthstatus; /* SERDES control */
+	uint32_t clk_out;               /* SERDES control */
+	uint32_t rsrvd[47];
+};
+struct serdes_lane {
+	uint32_t rsrvd1[0x10 / sizeof(uint32_t)];
+	uint32_t octl_pma;              /* SERDES status */
+	uint32_t ictl_multi_andme;      /* SERDES control */
+	uint32_t ictl_multi_lb;         /* SERDES control */
+	uint32_t ictl_multi_rxbist;     /* SERDES control */
+	uint32_t ictl_multi_txbist;     /* SERDES control */
+	uint32_t ictl_multi;            /* SERDES control */
+	uint32_t ictl_multi_rxeq;       /* SERDES control */
+	uint32_t ictl_multi_rxeq_l_low; /* SERDES control */
+	uint32_t ictl_multi_rxeq_l_high; /* SERDES control */
+	uint32_t ictl_multi_rxeyediag;  /* SERDES control */
+	uint32_t ictl_multi_txdeemph;   /* SERDES control */
+	uint32_t ictl_multi_txmargin;   /* SERDES control */
+	uint32_t ictl_multi_txswing;    /* SERDES control */
+	uint32_t idat_multi;            /* SERDES control */
+	uint32_t ipd_multi;             /* SERDES control */
+	uint32_t octl_multi_rxbist;     /* SERDES control */
+	uint32_t octl_multi;            /* SERDES control */
+	uint32_t octl_multi_rxeyediag;  /* SERDES control */
+	uint32_t odat_multi_rxbist;     /* SERDES control */
+	uint32_t odat_multi_rxeq;       /* SERDES control */
+	uint32_t multi_rx_dvalid;       /* SERDES control */
+	uint32_t reserved;              /* SERDES control */
+	uint32_t rsrvd[6];
+};
+
+struct al_serdes_regs {
+	struct serdes_intc intc;
+	struct serdes_gen gen;
+	struct serdes_lane lane[4];
+};
+
+
+struct al_serdes_adv_rx_params {
+	al_bool				override;
+
+	uint8_t				dcgain;
+
+	uint8_t				dfe_3db_freq;
+
+	uint8_t				dfe_gain;
+
+	uint8_t				dfe_first_tap_ctrl;
+	uint8_t				dfe_secound_tap_ctrl;
+	uint8_t				dfe_third_tap_ctrl;
+
+	uint8_t				dfe_fourth_tap_ctrl;
+	uint8_t				low_freq_agc_gain;
+	uint8_t				precal_code_sel;
+	uint8_t				high_freq_agc_boost;
+};
+
+
+
+
+static struct {	
+	void __iomem *regmem;
+	struct al_serdes_regs *serdes[AL_SRDS_NUM_GROUPS];
+} al_globals;
+
+static char al_res_name[16] = {"qnap_al_res"};
+
+
+static void al_serdes_grp_reg_write(
+	struct al_serdes_regs	*regs_base,
+	uint32_t		page,
+	uint32_t		type,
+	uint16_t		offset,
+	uint8_t			data)
+{
+	al_reg_write32(
+		&regs_base->gen.reg_addr,
+		SRDS_CORE_REG_ADDR(page, type, offset));
+
+	al_reg_write32(&regs_base->gen.reg_data, data);
+}                                           
+
+static uint8_t al_serdes_grp_reg_read(
+	struct al_serdes_regs		*regs_base,
+	uint32_t			page,
+	uint32_t			type,
+	uint16_t			offset)
+{
+	al_reg_write32(
+		&regs_base->gen.reg_addr,
+		SRDS_CORE_REG_ADDR(page, type, offset));
+
+	return al_reg_read32(&regs_base->gen.reg_data);
+	
+}
+
+static void al_serdes_grp_reg_masked_write(
+	struct al_serdes_regs		*regs_base,
+	uint32_t 			page,
+	uint32_t 			type,
+	uint16_t			offset,
+	uint8_t				mask,
+	uint8_t				data)
+{
+	uint8_t val;
+	uint32_t	start_page = page;
+	uint32_t	end_page   = page;
+	uint32_t	iter_page;
+
+	if (page == 7 ) {
+		start_page = 0;
+		end_page   = 3;
+	}
+
+	for(iter_page = start_page; iter_page <= end_page; ++iter_page) {
+		val = al_serdes_grp_reg_read(regs_base, iter_page, type, offset);
+		val &= ~mask;
+		val |= data;
+		al_serdes_grp_reg_write(regs_base, iter_page, type, offset, val);
+	}
+}
+
+
+
+#define AL_SRDS_REG_TYPE_PMA 						0
+#define AL_SRDS_REG_TYPE_PCS						1
+
+
+/* Rx params */
+#define SERDES_IREG_RX_CALEQ_1_REG_NUM					24
+#define SERDES_IREG_RX_CALEQ_1_DCGAIN_MASK				0x7
+#define SERDES_IREG_RX_CALEQ_1_DCGAIN_SHIFT				0
+
+
+/* Override RX_CALCEQ through the internal registers (Active low) */
+#define SERDES_IREG_FLD_RX_DRV_OVERRIDE_EN_REG_NUM			86
+#define SERDES_IREG_FLD_RX_DRV_OVERRIDE_EN				(1 << 3)
+
+/* Rx params */
+#define SERDES_IREG_RX_CALEQ_1_REG_NUM					24
+#define SERDES_IREG_RX_CALEQ_1_DCGAIN_MASK				0x7
+#define SERDES_IREG_RX_CALEQ_1_DCGAIN_SHIFT				0
+
+/* DFE post-shaping tap 3dB frequency */
+#define SERDES_IREG_RX_CALEQ_1_DFEPSTAP3DB_MASK				0x38
+#define SERDES_IREG_RX_CALEQ_1_DFEPSTAP3DB_SHIFT			3
+
+#define SERDES_IREG_RX_CALEQ_2_REG_NUM					25
+/* DFE post-shaping tap gain */
+#define SERDES_IREG_RX_CALEQ_2_DFEPSTAPGAIN_MASK			0x7
+#define SERDES_IREG_RX_CALEQ_2_DFEPSTAPGAIN_SHIFT			0
+/* DFE first tap gain control */
+#define SERDES_IREG_RX_CALEQ_2_DFETAP1GAIN_MASK				0x78
+#define SERDES_IREG_RX_CALEQ_2_DFETAP1GAIN_SHIFT			3
+
+/* Rx params */
+#define SERDES_IREG_RX_CALEQ_1_REG_NUM					24
+#define SERDES_IREG_RX_CALEQ_1_DCGAIN_MASK				0x7
+#define SERDES_IREG_RX_CALEQ_1_DCGAIN_SHIFT				0
+
+#define SERDES_IREG_RX_CALEQ_3_REG_NUM					26
+#define SERDES_IREG_RX_CALEQ_3_DFETAP2GAIN_MASK				0xf
+#define SERDES_IREG_RX_CALEQ_3_DFETAP2GAIN_SHIFT			0
+#define SERDES_IREG_RX_CALEQ_3_DFETAP3GAIN_MASK				0xf0
+#define SERDES_IREG_RX_CALEQ_3_DFETAP3GAIN_SHIFT			4
+
+
+#define SERDES_IREG_RX_CALEQ_4_REG_NUM					27
+#define SERDES_IREG_RX_CALEQ_4_DFETAP4GAIN_MASK				0xf
+#define SERDES_IREG_RX_CALEQ_4_DFETAP4GAIN_SHIFT			0
+#define SERDES_IREG_RX_CALEQ_4_LOFREQAGCGAIN_MASK			0x70
+#define SERDES_IREG_RX_CALEQ_4_LOFREQAGCGAIN_SHIFT			4
+
+#define SERDES_IREG_RX_CALEQ_5_REG_NUM					28
+#define SERDES_IREG_RX_CALEQ_5_PRECAL_CODE_SEL_MASK			0x7
+#define SERDES_IREG_RX_CALEQ_5_PRECAL_CODE_SEL_SHIFT			0
+#define SERDES_IREG_RX_CALEQ_5_HIFREQAGCCAP_MASK			0xf8
+#define SERDES_IREG_RX_CALEQ_5_HIFREQAGCCAP_SHIFT			3
+
+
+ 
+
+void al_serdes_rx_params_set(uint32_t	      grp,
+				      uint32_t	      lane,
+				      struct al_serdes_adv_rx_params  *params)
+{
+	uint8_t reg = 0;          
+	struct al_serdes_regs	      *regs_base;
+	regs_base = al_globals.serdes[grp];
+
+	al_serdes_grp_reg_masked_write(regs_base,
+			lane,
+			AL_SRDS_REG_TYPE_PMA,
+			SERDES_IREG_FLD_RX_DRV_OVERRIDE_EN_REG_NUM,
+			SERDES_IREG_FLD_RX_DRV_OVERRIDE_EN,
+			0);
+
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_1_DCGAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_1_DCGAIN_SHIFT,
+			 params->dcgain);
+
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_1_DFEPSTAP3DB_MASK,
+			 SERDES_IREG_RX_CALEQ_1_DFEPSTAP3DB_SHIFT,
+			 params->dfe_3db_freq);
+
+	al_serdes_grp_reg_write(regs_base,
+				lane,
+				AL_SRDS_REG_TYPE_PMA,
+				SERDES_IREG_RX_CALEQ_1_REG_NUM,
+				reg);
+
+	reg = 0;
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_2_DFEPSTAPGAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_2_DFEPSTAPGAIN_SHIFT,
+			 params->dfe_gain);
+
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_2_DFETAP1GAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_2_DFETAP1GAIN_SHIFT,
+			 params->dfe_first_tap_ctrl);
+
+	al_serdes_grp_reg_write(regs_base,
+				lane,
+				AL_SRDS_REG_TYPE_PMA,
+				SERDES_IREG_RX_CALEQ_2_REG_NUM,
+				reg);
+
+	reg = 0;
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_3_DFETAP2GAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_3_DFETAP2GAIN_SHIFT,
+			 params->dfe_secound_tap_ctrl);
+
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_3_DFETAP3GAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_3_DFETAP3GAIN_SHIFT,
+			 params->dfe_third_tap_ctrl);
+
+	al_serdes_grp_reg_write(regs_base,
+				lane,
+				AL_SRDS_REG_TYPE_PMA,
+				SERDES_IREG_RX_CALEQ_3_REG_NUM,
+				reg);
+
+	reg = 0;
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_4_DFETAP4GAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_4_DFETAP4GAIN_SHIFT,
+			 params->dfe_fourth_tap_ctrl);
+
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_4_LOFREQAGCGAIN_MASK,
+			 SERDES_IREG_RX_CALEQ_4_LOFREQAGCGAIN_SHIFT,
+			 params->low_freq_agc_gain);
+
+	al_serdes_grp_reg_write(regs_base,
+				lane,
+				AL_SRDS_REG_TYPE_PMA,
+				SERDES_IREG_RX_CALEQ_4_REG_NUM,
+				reg);
+
+	reg = 0;
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_5_PRECAL_CODE_SEL_MASK,
+			 SERDES_IREG_RX_CALEQ_5_PRECAL_CODE_SEL_SHIFT,
+			 params->precal_code_sel);
+
+	AL_REG_FIELD_SET(reg,
+			 SERDES_IREG_RX_CALEQ_5_HIFREQAGCCAP_MASK,
+			 SERDES_IREG_RX_CALEQ_5_HIFREQAGCCAP_SHIFT,
+			 params->high_freq_agc_boost);
+
+	al_serdes_grp_reg_write(regs_base,
+				lane,
+				AL_SRDS_REG_TYPE_PMA,
+				SERDES_IREG_RX_CALEQ_5_REG_NUM,
+				reg);
+}
+
+
+static void al_serdes_wr(uint32_t grp, uint32_t page, uint32_t type, 
+				uint16_t offset, uint8_t msb, uint8_t lsb, 
+				uint8_t val)
+{
+        uint8_t  data;
+        
+	data = al_serdes_grp_reg_read(al_globals.serdes[grp], page, type, offset);	
+	
+	data = FIELD_SET(data, msb, lsb, val);
+	
+	al_serdes_grp_reg_write( al_globals.serdes[grp], page, type, offset, data);
+#if 0
+	printk(KERN_DEBUG "SERDES %d, %d, %d, reg[%d][%d:%d] <= 0x%02x\n",
+		grp, page, type, offset, msb, lsb, val);
+#endif				
+	return;
+}
+
+
+
+static inline int al_serdes_init(void)
+{	
+	void __iomem *regmem;
+	int i;
+
+	if(!request_mem_region(AL_SB_SERDES_BASE, AL_MAP_SIZE, &al_res_name[0])) {
+		printk( "al_serdes: init. failed!\n\n");
+	    goto serdes_init_err;
+	}					
+	regmem = ioremap_nocache(AL_SB_SERDES_BASE, AL_MAP_SIZE); 
+	if (regmem == NULL) { 
+	     printk( "al_serdes: init. failed!\n\n");
+	    goto serdes_init_err;                  
+	}
+
+	al_globals.regmem = regmem;
+	for (i = 0; i < AL_SRDS_NUM_GROUPS; i++) {
+		al_globals.serdes[i] =
+			&((struct al_serdes_regs *)regmem)[i];
+	}
+	
+	return 0; 
+	
+serdes_init_err:
+	return -1;	
+}
+
+static inline int al_serdes_fini(void)
+{	
+	void __iomem *regmem;
+	
+	regmem = al_globals.regmem;				
+	iounmap(regmem);
+	release_mem_region(AL_SB_SERDES_BASE, AL_MAP_SIZE); 
+	
+	return 0; 
+}
+
+
+
+static int al_set_tsx31plus_optimal_auto_rxparam(void)
+{
+	struct al_serdes_adv_rx_params  params;
+	int res;
+	
+	params.dcgain = 0;
+	params.dfe_3db_freq = 7;
+	params.dfe_gain     =   0;
+	params.dfe_first_tap_ctrl =   0;
+	params.dfe_secound_tap_ctrl =  8;
+	params.dfe_third_tap_ctrl   =  0;
+	params.dfe_fourth_tap_ctrl  =  8;
+	params.low_freq_agc_gain    =  7;
+	params.high_freq_agc_boost  = 0;
+	
+	printk(KERN_DEBUG "QNAP: set al auto-turned rx optiomal param\n");
+	res = al_serdes_init();
+	if (res == 0) {	      	
+		al_serdes_rx_params_set( 2, 7, &params);
+		al_serdes_fini();
+		return 0;
+	} else {
+		printk(KERN_DEBUG "QNAP:set al auto-turned rx optiomal param failed\n");
+	}
+	return -1;
+}
+
+static int intel530_fix(void)
+{
+	int res;
+	
+	printk(KERN_DEBUG "QNAP: set the fix of Intel 530 SSD issue\n");
+	res = al_serdes_init();
+	if (res == 0) {
+		al_serdes_wr(2, 4, 0,0xd,4, 4, 1);
+		al_serdes_wr(2, 4, 0,0xf,4, 3, 3);
+		al_serdes_fini();
+		return 0;
+	} else {
+		printk(KERN_DEBUG "QNAP: the fix of Intel 530 SSD issue failed\n");	
+	}
+	return -1;
+}
+#endif  /* CONFIG_MACH_QNAPTS */
+
 
 
 static void ahci_pci_save_initial_config(struct pci_dev *pdev,
@@ -1089,10 +1583,160 @@ static inline void ahci_gtf_filter_workaround(struct ata_host *host)
 {}
 #endif
 
+#define al_ahci_iofic_base(base)	((base) + 0x2000)
+
+static ssize_t al_ahci_show_msix_moder(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ata_host *host = dev_get_drvdata(dev);
+	struct ahci_host_priv *hpriv = host->private_data;
+	ssize_t rc = 0;
+
+	rc = sprintf(buf, "%d\n", hpriv->int_moderation);
+
+	return rc;
+}
+
+static ssize_t al_ahci_store_msix_moder(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t len)
+{
+	struct ata_host *host = dev_get_drvdata(dev);
+	struct ahci_host_priv *hpriv = host->private_data;
+	unsigned long interval;
+	int err;
+	int i;
+
+	err = kstrtoul(buf, 10, &interval);
+	if (err < 0)
+		return err;
+
+
+	for (i = 0; i < ahci_nr_ports(hpriv->cap); i++)
+		al_iofic_msix_moder_interval_config(
+				al_ahci_iofic_base(hpriv->mmio),
+				1 /*GROUP_B*/,
+				i,
+				interval);
+
+	hpriv->int_moderation = interval;
+
+	return len;
+}
+
+
+static struct device_attribute dev_attr_moder = {
+	.attr = {.name = "msix_moder", .mode = (S_IRUGO | S_IWUSR)},
+	.show = al_ahci_show_msix_moder,
+	.store = al_ahci_store_msix_moder,
+};
+
+int al_ahci_sysfs_init(
+	struct device *dev)
+{
+	if (device_create_file(dev, &dev_attr_moder))
+		dev_err(dev, "failed to create msix interrupt moderation sysfs entry");
+
+	return 0;
+}
+
+/******************************************************************************
+ *****************************************************************************/
+void al_ahci_sysfs_terminate(
+	struct device *dev)
+{
+	device_remove_file(dev, &dev_attr_moder);
+}
+
+
+irqreturn_t ahci_hw_port_interrupt_handler(int irq, void *dev_instance)
+{
+	struct ata_port *ap_this = dev_instance;
+	struct ata_host *host = ap_this->host;
+	struct ahci_host_priv *hpriv = host->private_data;
+	void __iomem *iofic_base = al_ahci_iofic_base(hpriv->mmio);
+	VPRINTK("ENTER\n");
+
+	spin_lock(ap_this->lock);
+	ahci_port_intr(ap_this);
+
+	spin_unlock(ap_this->lock);
+
+	spin_lock(&host->lock);
+	/* clean host cause */
+	writel(1 << ap_this->port_no, hpriv->mmio + HOST_IRQ_STAT);
+
+	/* unmask the interrupt in the iofic (auto-masked) */
+	al_iofic_unmask(iofic_base, 1, 1 << ap_this->port_no);
+	spin_unlock(&host->lock);
+
+	VPRINTK("EXIT\n");
+
+	return IRQ_HANDLED;
+}
+
+int al_ahci_init_msix(struct pci_dev *pdev, struct ahci_host_priv *hpriv)
+{
+	unsigned int msix_vecs = ahci_nr_ports(readl(hpriv->mmio + HOST_CAP));
+	int i;
+	int rc;
+	void __iomem *iofic_base = al_ahci_iofic_base(hpriv->mmio);
+
+	hpriv->msix_entries = NULL;
+
+	dev_info(&pdev->dev, "use MSIX for ahci controller. vectors: %u\n",
+			msix_vecs);
+	hpriv->msix_entries = kcalloc(msix_vecs, sizeof(struct msix_entry), GFP_KERNEL);
+
+	if (!hpriv->msix_entries) {
+		dev_err(&pdev->dev, "failed to allocate msix_entries, vectors %d\n",
+				msix_vecs);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < msix_vecs; i++) {
+		hpriv->msix_entries[i].entry = 3 + i;
+		hpriv->msix_entries[i].vector = 0;
+	}
+
+	rc = pci_enable_msix(pdev, hpriv->msix_entries, msix_vecs);
+
+	if (rc) {
+		dev_info(&pdev->dev,"failed to enable MSIX, vectors %d rc %d\n",
+				msix_vecs, rc);
+		kfree(hpriv->msix_entries);
+		hpriv->msix_entries = NULL;
+		/* maybe we shoudl fall back to intx*/
+		return -EPERM;
+	}
+
+	/* we use only group B */
+	al_iofic_config(iofic_base, 1 /*GROUP_B*/,
+			INT_CONTROL_GRP_SET_ON_POSEDGE |
+			INT_CONTROL_GRP_AUTO_CLEAR |
+			INT_CONTROL_GRP_AUTO_MASK |
+			INT_CONTROL_GRP_CLEAR_ON_READ);
+
+	al_iofic_moder_res_config(iofic_base, 1, 15);
+
+        al_iofic_unmask(iofic_base, 1, (1 << msix_vecs) - 1);
+
+	hpriv->msix_vecs = msix_vecs;
+
+	al_ahci_sysfs_init(&pdev->dev);
+
+	return 0;
+}
+
 int ahci_init_interrupts(struct pci_dev *pdev, struct ahci_host_priv *hpriv)
 {
 	int rc;
 	unsigned int maxvec;
+
+	if (hpriv->flags & AHCI_HFLAG_MSIX) {
+		if (!al_ahci_init_msix(pdev, hpriv))
+			return hpriv->msix_vecs;
+	}
 
 	if (!(hpriv->flags & AHCI_HFLAG_NO_MSI)) {
 		rc = pci_enable_msi_block_auto(pdev, &maxvec);
@@ -1134,6 +1778,8 @@ int ahci_init_interrupts(struct pci_dev *pdev, struct ahci_host_priv *hpriv)
 int ahci_host_activate(struct ata_host *host, int irq, unsigned int n_msis)
 {
 	int i, rc;
+	struct ahci_host_priv *hpriv = host->private_data;
+	int port_irq;
 
 	/* Sharing Last Message among several ports is not supported */
 	if (n_msis < host->n_ports)
@@ -1144,15 +1790,35 @@ int ahci_host_activate(struct ata_host *host, int irq, unsigned int n_msis)
 		return rc;
 
 	for (i = 0; i < host->n_ports; i++) {
-		rc = devm_request_threaded_irq(host->dev,
-			irq + i, ahci_hw_interrupt, ahci_thread_fn, IRQF_SHARED,
-			dev_driver_string(host->dev), host->ports[i]);
+		struct ata_port *ap = host->ports[i];
+		struct ahci_port_priv *pp = ap->private_data;
+
+		if (hpriv->msix_entries) {
+			port_irq = hpriv->msix_entries[i].vector;
+			snprintf(pp->msix_name, sizeof(pp->msix_name), "ahci_%u",
+					ap->port_no);
+			rc = devm_request_irq(host->dev,
+					port_irq, ahci_hw_port_interrupt_handler,
+					0, pp->msix_name, ap);
+		} else {
+			port_irq = irq + i;
+			rc = devm_request_threaded_irq(host->dev,
+					port_irq, ahci_hw_interrupt,
+					ahci_thread_fn, IRQF_SHARED,
+					dev_driver_string(host->dev), host->ports[i]);
+		}
+
 		if (rc)
 			goto out_free_irqs;
 	}
 
-	for (i = 0; i < host->n_ports; i++)
-		ata_port_desc(host->ports[i], "irq %d", irq + i);
+	for (i = 0; i < host->n_ports; i++) {
+		if (hpriv->msix_entries)
+			port_irq = hpriv->msix_entries[i].vector;
+		else
+			port_irq = irq + i;
+		ata_port_desc(host->ports[i], "irq %d", port_irq);
+	}
 
 	rc = ata_host_register(host, &ahci_sht);
 	if (rc)
@@ -1163,9 +1829,13 @@ int ahci_host_activate(struct ata_host *host, int irq, unsigned int n_msis)
 out_free_all_irqs:
 	i = host->n_ports;
 out_free_irqs:
-	for (i--; i >= 0; i--)
-		devm_free_irq(host->dev, irq + i, host->ports[i]);
-
+	for (i--; i >= 0; i--) {
+		if (hpriv->msix_entries)
+			port_irq = hpriv->msix_entries[i].vector;
+		else
+			port_irq = irq + i;
+		devm_free_irq(host->dev, port_irq, host->ports[i]);
+	}
 	return rc;
 }
 
@@ -1177,6 +1847,7 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct device *dev = &pdev->dev;
 	struct ahci_host_priv *hpriv;
 	struct ata_host *host;
+	struct device_node	*np;
 	int n_ports, n_msis, i, rc;
 	int ahci_pci_bar = AHCI_PCI_BAR_STANDARD;
 
@@ -1266,6 +1937,14 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	hpriv->mmio = pcim_iomap_table(pdev)[ahci_pci_bar];
 
+#ifdef CONFIG_MACH_QNAPTS /* Intel 530 issue for TS-X31+ */
+	if (pdev->vendor == 0x1c36 &&
+	    pdev->device == 0x0031) {    
+		intel530_fix();
+		al_set_tsx31plus_optimal_auto_rxparam();
+	}				
+#endif /* CONFIG_MACH_QNAPTS */
+
 	n_msis = ahci_init_interrupts(pdev, hpriv);
 	if (n_msis > 1)
 		hpriv->flags |= AHCI_HFLAG_MULTI_MSI;
@@ -1286,10 +1965,76 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 			pi.flags |= ATA_FLAG_FPDMA_AA;
 	}
 
+//Patch by QNAP:Marvell 9235 workaround
+	if (pdev->vendor == 0x1b4b && pdev->device == 0x9235) {
+//		printk("=== QNAP workaround BF: mv9235, pi.flags = 0x%x, pi.pri = 0x%x\n",pi.flags,pi.private_data);
+		pi.flags &= ~ATA_FLAG_NCQ;
+		pi.private_data = AHCI_HFLAG_NO_NCQ;
+//		printk("=== QNAP workaround AF: mv9235, pi.flags = 0x%x, pi.pri = 0x%x\n",pi.flags,pi.private_data);
+		printk("=== QNAP workaround: mv9235 NCQ Disable\n");
+	}
+////////////////////////////////////
+
+
 	if (hpriv->cap & HOST_CAP_PMP)
 		pi.flags |= ATA_FLAG_PMP;
 
 	ahci_set_em_messages(hpriv, &pi);
+
+	for (i = 0; i < AHCI_MAX_PORTS; i++)
+		hpriv->led_gpio[i] = -1;
+
+	np = of_find_compatible_node(NULL, NULL, "annapurna-labs,al-sata-sw-leds");
+	if (np) {
+		int err;
+		struct device_node *child;
+		u32	domain;
+		u32	pci_bus;
+		u32	pci_dev;
+		u32	port;
+
+		for_each_child_of_node(np, child) {
+			err = of_property_read_u32(child, "pci_domain", &domain);
+			if (err)
+				continue;
+
+			if (domain != pci_domain_nr(pdev->bus))
+				continue;
+
+			err = of_property_read_u32(child, "pci_bus", &pci_bus);
+			if (err)
+				continue;
+
+			if (pci_bus != pdev->bus->number)
+				continue;
+
+			err = of_property_read_u32(child, "pci_dev", &pci_dev);
+			if (err)
+				continue;
+
+			if (pci_dev != PCI_SLOT(pdev->devfn))
+				continue;
+
+			err = of_property_read_u32(child, "port", &port);
+			if (err)
+				continue;
+
+			err = of_get_named_gpio(child, "gpios", 0);
+			if (IS_ERR_VALUE(err))
+				continue;
+
+			hpriv->led_gpio[port] = err;
+			err = gpio_request(hpriv->led_gpio[port], "sata led gpio");
+			if (err) {
+				dev_err(&pdev->dev, "al ahci gpio_request %d failed: %d\n",
+						hpriv->led_gpio[port], err);
+				continue;
+			}
+			gpio_direction_output(hpriv->led_gpio[port], 1);
+			hpriv->em_msg_type = EM_MSG_TYPE_LED;
+			pi.flags |= ATA_FLAG_EM | ATA_FLAG_SW_ACTIVITY;
+		}
+	}
 
 	if (ahci_broken_system_poweroff(pdev)) {
 		pi.flags |= ATA_FLAG_NO_POWEROFF_SPINDOWN;
@@ -1321,6 +2066,12 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return -ENOMEM;
 	host->private_data = hpriv;
 
+//Patch by QNAP:Marvell 9235 workaround
+	if (pdev->vendor == 0x1b4b && pdev->device == 0x9235) {
+		hpriv->flags |= AHCI_HFLAG_YES_MV9235_FIX;
+		dev_info(&pdev->dev, "enable MV_9235_WORKAROUND\n");
+	}
+////////////////////////////////////
 	if (!(hpriv->cap & HOST_CAP_SSS) || ahci_ignore_sss)
 		host->flags |= ATA_HOST_PARALLEL_SCAN;
 	else

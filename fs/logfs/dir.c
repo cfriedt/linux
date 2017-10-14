@@ -372,8 +372,8 @@ static struct dentry *logfs_lookup(struct inode *dir, struct dentry *dentry,
 
 	inode = logfs_iget(dir->i_sb, ino);
 	if (IS_ERR(inode))
-		printk(KERN_ERR"LogFS: Cannot read inode #%llx for dentry (%lx, %lx)n",
-				ino, dir->i_ino, index);
+		printk(KERN_ERR"LogFS: Cannot read inode #%llx for dentry (%lx, %llx)n",
+				ino, dir->i_ino, (unsigned long long)index);
 	return d_splice_alias(inode, dentry);
 }
 

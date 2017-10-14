@@ -22,6 +22,17 @@
 #include "state.h"
 #include "netns.h"
 
+#ifdef CONFIG_MACH_QNAPTS
+// Fix bug:#31339, NFSd: set nfsd_serv to NULL after service destruction
+// Patch file from official linux-3.4.12
+
+// Patch by QNAP
+// NFS VAAI added by CindyJen@2013.04
+#ifdef NFS_VAAI
+#include "vfs.h"
+#endif
+// End added by CindyJen@2013.04
+#endif
 /*
  *	We have a single directory with several nodes in it.
  */
@@ -48,6 +59,7 @@ enum {
 	NFSD_Leasetime,
 	NFSD_Gracetime,
 	NFSD_RecoveryDir,
+	NFSD_V4_Bind_Ip_List,
 #endif
 };
 
@@ -66,6 +78,7 @@ static ssize_t write_maxblksize(struct file *file, char *buf, size_t size);
 static ssize_t write_leasetime(struct file *file, char *buf, size_t size);
 static ssize_t write_gracetime(struct file *file, char *buf, size_t size);
 static ssize_t write_recoverydir(struct file *file, char *buf, size_t size);
+static ssize_t write_v4_bind_ip_list(struct file *file, char *buf, size_t size);
 #endif
 
 static ssize_t (*write_op[])(struct file *, char *, size_t) = {
@@ -81,6 +94,7 @@ static ssize_t (*write_op[])(struct file *, char *, size_t) = {
 	[NFSD_Leasetime] = write_leasetime,
 	[NFSD_Gracetime] = write_gracetime,
 	[NFSD_RecoveryDir] = write_recoverydir,
+	[NFSD_V4_Bind_Ip_List] = write_v4_bind_ip_list,
 #endif
 };
 
@@ -1034,6 +1048,34 @@ static ssize_t write_recoverydir(struct file *file, char *buf, size_t size)
 	return rv;
 }
 
+
+static ssize_t __write_v4_bind_ip_list(struct file *file, char *buf, size_t size)
+{
+        char *mesg = buf;
+
+        if(size > 0 && size < 2048){
+
+                if (qword_get(&buf, mesg, size) < 0)
+                        return -EINVAL;
+                nfs4_reset_v4_bind_ip_list(mesg);
+        }
+
+        return scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%s\n",
+                                                        nfs4_v4_bind_ip_list());
+}
+
+static ssize_t write_v4_bind_ip_list(struct file *file, char *buf, size_t size)
+{
+        ssize_t rv;
+
+        mutex_lock(&nfsd_mutex);
+        rv = __write_v4_bind_ip_list(file, buf, size);
+        mutex_unlock(&nfsd_mutex);
+        return rv;
+}
+
+
+
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -1066,6 +1108,7 @@ static int nfsd_fill_super(struct super_block * sb, void * data, int silent)
 		[NFSD_Leasetime] = {"nfsv4leasetime", &transaction_ops, S_IWUSR|S_IRUSR},
 		[NFSD_Gracetime] = {"nfsv4gracetime", &transaction_ops, S_IWUSR|S_IRUSR},
 		[NFSD_RecoveryDir] = {"nfsv4recoverydir", &transaction_ops, S_IWUSR|S_IRUSR},
+		[NFSD_V4_Bind_Ip_List] = {"v4_bind_ip_list", &transaction_ops, S_IWUSR|S_IRUSR},
 #endif
 		/* last one */ {""}
 	};
@@ -1189,7 +1232,35 @@ static int __init init_nfsd(void)
 	retval = register_filesystem(&nfsd_fs_type);
 	if (retval)
 		goto out_free_all;
+
+#ifdef CONFIG_MACH_QNAPTS
+// Fix bug:#31339, NFSd: set nfsd_serv to NULL after service destruction
+// Patch file from official linux-3.4.12
+
+// Patch by QNAP
+// NFS VAAI added by CindyJen@2013.04
+#ifdef NFS_VAAI
+        retval = nfsd_init_clonefile_slab();
+        if (retval < 0)
+                goto out_free_clonefile_slab;
+#endif
+// End added by CindyJen@2013.04
+#endif
 	return 0;
+
+#ifdef CONFIG_MACH_QNAPTS
+// Fix bug:#31339, NFSd: set nfsd_serv to NULL after service destruction
+// Patch file from official linux-3.4.12
+
+// Patch by QNAP
+// NFS VAAI added by CindyJen@2013.04
+#ifdef NFS_VAAI
+out_free_clonefile_slab:
+	unregister_filesystem(&nfsd_fs_type);
+#endif
+// End added by CindyJen@2013.04
+#endif
+
 out_free_all:
 	remove_proc_entry("fs/nfs/exports", NULL);
 	remove_proc_entry("fs/nfs", NULL);
@@ -1210,6 +1281,17 @@ out_unregister_notifier:
 
 static void __exit exit_nfsd(void)
 {
+#ifdef CONFIG_MACH_QNAPTS
+// Fix bug:#31339, NFSd: set nfsd_serv to NULL after service destruction
+// Patch file from official linux-3.4.12
+
+// Patch by QNAP
+// NFS VAAI added by CindyJen@2013.04
+#ifdef NFS_VAAI
+        nfsd_free_clonefile_slab();
+#endif
+// End added by CindyJen@2013.04
+#endif
 	nfsd_reply_cache_shutdown();
 	remove_proc_entry("fs/nfs/exports", NULL);
 	remove_proc_entry("fs/nfs", NULL);

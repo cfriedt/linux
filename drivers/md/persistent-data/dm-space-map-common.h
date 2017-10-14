@@ -10,6 +10,8 @@
 #include "dm-btree.h"
 
 /*----------------------------------------------------------------*/
+#define QNAP_METADATA_VERSION_V1 1
+#define QNAP_METADATA_VERSION_V2 2
 
 /*
  * Low level disk format
@@ -35,14 +37,15 @@ struct disk_index_entry {
 	__le32 none_free_before;
 } __packed;
 
-
 #define MAX_METADATA_BITMAPS 255
+#define MAX_METADATA_BITMAPS_V2 511
+
 struct disk_metadata_index {
 	__le32 csum;
 	__le32 padding;
 	__le64 blocknr;
 
-	struct disk_index_entry index[MAX_METADATA_BITMAPS];
+	struct disk_index_entry index[MAX_METADATA_BITMAPS_V2];
 } __packed;
 
 struct ll_disk;

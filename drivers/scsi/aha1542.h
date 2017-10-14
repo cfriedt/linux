@@ -1,10 +1,13 @@
 #ifndef _AHA1542_H
 
-/* $Id: aha1542.h,v 1.1 1992/07/24 06:27:38 root Exp root $
+/* $Id: aha1542.h,v 1.1.1.1 2014/03/19 14:02:40 franklee Exp $
  *
  * Header file for the adaptec 1542 driver for Linux
  *
  * $Log: aha1542.h,v $
+ * Revision 1.1.1.1  2014/03/19 14:02:40  franklee
+ * TS-X48 Kernel with Storage Advance Patch
+ *
  * Revision 1.1  1992/07/24  06:27:38  root
  * Initial revision
  *

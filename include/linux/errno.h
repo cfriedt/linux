@@ -29,4 +29,7 @@
 #define EJUKEBOX	528	/* Request initiated, but will not complete before timeout */
 #define EIOCBQUEUED	529	/* iocb queued, will get completion event */
 
+/* Defined for QNAP DM-THIN module */
+#define EVERSION    600
+
 #endif

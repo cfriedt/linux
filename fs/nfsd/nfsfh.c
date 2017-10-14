@@ -36,9 +36,13 @@ static int nfsd_acceptable(void *expv, struct dentry *dentry)
 	tdentry = dget(dentry);
 	while (tdentry != exp->ex_path.dentry && !IS_ROOT(tdentry)) {
 		/* make sure parents give x permission to user */
-		int err;
+		int err = 0;
 		parent = dget_parent(tdentry);
+#ifdef CONFIG_MACH_QNAPTS
+		err = inode_permission_without_acl(parent->d_inode, MAY_EXEC);
+#else
 		err = inode_permission(parent->d_inode, MAY_EXEC);
+#endif
 		if (err < 0) {
 			dput(parent);
 			break;
