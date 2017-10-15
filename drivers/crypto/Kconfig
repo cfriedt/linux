@@ -525,6 +525,8 @@ config CRYPTO_DEV_ATMEL_SHA
 	  To compile this driver as a module, choose M here: the module
 	  will be called atmel-sha.
 
+source drivers/crypto/al/Kconfig
+
 config CRYPTO_DEV_ATMEL_ECC
 	tristate "Support for Microchip / Atmel ECC hw accelerator"
 	depends on ARCH_AT91 || COMPILE_TEST
