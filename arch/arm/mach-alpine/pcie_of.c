@@ -28,6 +28,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/export.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
 
@@ -40,6 +41,17 @@
 #include "al_hal_pcie.h"
 #include "al_hal_iomap.h"
 #include "core.h"
+
+#ifndef range_iter_fill_resource
+#define range_iter_fill_resource(iter, np, res) \
+        do { \
+                (res)->flags = (iter).flags; \
+                (res)->start = (iter).cpu_addr; \
+                (res)->end = (iter).cpu_addr + (iter).size - 1; \
+                (res)->parent = (res)->child = (res)->sibling = NULL; \
+                (res)->name = (np)->full_name; \
+        } while (0)
+#endif
 
 enum al_pci_type {
 	AL_PCI_TYPE_INTERNAL = 0,
@@ -424,9 +436,14 @@ static int al_pcie_setup(int nr, struct pci_sys_data *sys)
 static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 {
 	struct device_node *np = pcie->dev->of_node;
-	struct of_pci_range_iter iter;
+	struct of_pci_range_parser parser;
+	struct of_pci_range iter;
 	int err;
 	static int index;
+
+	if (of_pci_range_parser_init(&parser, np)) {
+		return -EINVAL;
+	}
 
 	if (pcie->type == AL_PCI_TYPE_EXTERNAL) {
 		/* Get registers resources */
@@ -436,18 +453,21 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 				err);
 			return err;
 		}
+
 		dev_dbg(pcie->dev, " regs %pR\n",  &pcie->regs);
-		pcie->regs_base = devm_request_and_ioremap(pcie->dev,
-							   &pcie->regs);
-		if (!pcie->regs_base)
-			return -EADDRNOTAVAIL;
+		pcie->regs_base = of_io_request_and_map( np, 0,
+							pcie->regs.name );
+		if ( IS_ERR( pcie->regs_base ) )
+			return PTR_ERR( pcie->regs_base );
+
 		/* set the base address of the configuration space of the local
 		 * bridge
 		 */
 		pcie->local_bridge_config_space = pcie->regs_base + 0x2000;
 	}
+
 	/* Get the ECAM, I/O and memory ranges from DT */
-	for_each_of_pci_range(&iter, np) {
+	for_each_of_pci_range(&parser, &iter) {
 		unsigned long restype = iter.flags & IORESOURCE_TYPE_BITS;
 		if (restype == 0) {
 			range_iter_fill_resource(iter, np, &pcie->ecam);
@@ -471,9 +491,11 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 
 	/* map ecam space */
 	dev_dbg(pcie->dev, " ecam %pr\n",  &pcie->ecam);
-	pcie->ecam_base = devm_request_and_ioremap(pcie->dev, &pcie->ecam);
-	if (!pcie->ecam_base)
-		return -EADDRNOTAVAIL;
+
+	pcie->ecam_base = of_io_request_and_map(np, 0,
+						pcie->ecam.name);
+	if ( IS_ERR( pcie->ecam_base ) )
+		return PTR_ERR( pcie->ecam_base );
 
 	err = of_pci_parse_bus_range(np, &pcie->busn);
 	if (err < 0) {
@@ -503,29 +525,32 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 /* map the specified device/slot/pin to an IRQ */
 static int al_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
-	struct of_irq oirq;
+	struct of_phandle_args oirq;
 	int ret;
 
-	ret = of_irq_map_pci(dev, &oirq);
+	ret = of_irq_parse_pci( dev, & oirq );
 	if (ret)
 		return ret;
 
-	return irq_create_of_mapping(oirq.controller, oirq.specifier,
-					oirq.size);
+	return irq_create_of_mapping( & oirq );
 }
 
-static struct pci_bus *al_pcie_scan_bus(int nr, struct pci_sys_data *sys)
+static int al_pcie_scan_bus(int nr, struct pci_host_bridge *bridge)
 {
+	struct pci_sys_data *sys = pci_host_bridge_priv(bridge);
 	struct al_pcie_pd *pcie = sys_to_pcie(sys);
+	struct pci_bus *bus;
 
 	if (pcie->type == AL_PCI_TYPE_INTERNAL)
-		return pci_scan_root_bus(pcie->dev, sys->busnr,
+		bus = pci_scan_root_bus(pcie->dev, sys->busnr,
 					 &al_internal_pcie_ops,
 					 sys, &sys->resources);
 	else
-		return pci_scan_root_bus(pcie->dev, sys->busnr,
+		bus = pci_scan_root_bus(pcie->dev, sys->busnr,
 					 &al_pcie_ops,
 					 sys, &sys->resources);
+
+	return NULL == bus ? -EINVAL : 0;
 }
 
 
@@ -551,7 +576,6 @@ static int al_pcie_add_host_bridge(struct al_pcie_pd *pcie)
 	memset(&hw, 0, sizeof(hw));
 
 	hw.nr_controllers = 1;
-	hw.domain = pcie->index;
 	hw.private_data = (void **)&pcie;
 	hw.setup = al_pcie_setup;
 	hw.scan = al_pcie_scan_bus;
@@ -642,14 +666,6 @@ static int al_pcie_probe(struct platform_device *pdev)
 				al_pcie_read_addr_end[pcie->index]);
 	}
 #endif
-
-	/* Configure IOCC for external PCIE */
-	if (pcie->type != AL_PCI_TYPE_INTERNAL) {
-		if (pdev->dev.archdata.hwcc) {
-			printk("Configuring PCIE for IOCC\n");
-			al_pcie_port_snoop_config(&pcie->pcie_port, 1);
-		}
-	}
 
 	err = al_pcie_add_host_bridge(pcie);
 	if (err < 0) {
