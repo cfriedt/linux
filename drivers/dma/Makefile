@@ -24,7 +24,8 @@ obj-$(CONFIG_DMA_BCM2835) += bcm2835-dma.o
 obj-$(CONFIG_DMA_JZ4740) += dma-jz4740.o
 obj-$(CONFIG_DMA_JZ4780) += dma-jz4780.o
 obj-$(CONFIG_DMA_OMAP) += omap-dma.o
-obj-$(CONFIG_AL_DMA) += al/
+# XXX: @CF: 20171017: Does not compile yet
+#obj-$(CONFIG_AL_DMA) += al/
 obj-$(CONFIG_DMA_SA11X0) += sa11x0-dma.o
 obj-$(CONFIG_DMA_SUN4I) += sun4i-dma.o
 obj-$(CONFIG_DMA_SUN6I) += sun6i-dma.o

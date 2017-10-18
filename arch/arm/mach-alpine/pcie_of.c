@@ -559,11 +559,10 @@ static int al_pcie_scan_bus(int nr, struct pci_host_bridge *bridge)
  * are set based on host bridge Max capabilities.
  */
 
-extern int pcie_bus_configure_set(struct pci_dev *dev, void *data);
 static void al_pci_fixup(struct pci_dev *dev)
 {
-	u8 smpss = 0;
-	pcie_bus_configure_set(dev, &smpss);
+	dev->pcie_mpss = 0;
+	pcie_bus_configure_settings( dev->bus );
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_ANY_ID, PCI_ANY_ID, al_pci_fixup);
 

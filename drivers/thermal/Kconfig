@@ -192,13 +192,14 @@ config THERMAL_EMULATION
 	  because userland can easily disable the thermal policy by simply
 	  flooding this sysfs node with low temperature values.
 
-config AL_THERMAL
-	bool "Annapurna Labs thermal sensor driver"
-	depends on ARCH_ALPINE
-	depends on OF
-	help
-	  Enable this to plug the Annapurna Labs thermal sensor driver into the
-	  Linux thermal framework
+#XXX: @CF: 20171017: Does not compile yet
+#config AL_THERMAL
+#	bool "Annapurna Labs thermal sensor driver"
+#	depends on ARCH_ALPINE
+#	depends on OF
+#	help
+#	  Enable this to plug the Annapurna Labs thermal sensor driver into the
+#	  Linux thermal framework
 
 config HISI_THERMAL
 	tristate "Hisilicon thermal driver"

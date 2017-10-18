@@ -324,14 +324,15 @@ config MMP_PDMA
 	help
 	  Support the MMP PDMA engine for PXA and MMP platform.
 
-config AL_DMA
-	bool "Annapurna Labs DMA support"
-	depends on ARCH_ALPINE
-	select DMA_ENGINE
-	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
-	help
-	  Enable support for the Annapurna Labs DMA and RAID acceleration 
-	  engine.
+#XXX: @CF: 20171017: Does not compile yet
+#config AL_DMA
+#	bool "Annapurna Labs DMA support"
+#	depends on ARCH_ALPINE
+#	select DMA_ENGINE
+#	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
+#	help
+#	  Enable support for the Annapurna Labs DMA and RAID acceleration 
+#	  engine.
 
 config AL_DMA_STATS
 	bool "Annapurna Labs DMA statistics enabled"
