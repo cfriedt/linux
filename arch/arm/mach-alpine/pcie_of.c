@@ -26,6 +26,14 @@
  *	- The driver assumes the controller link is initialized by the
  *	  bootloader.
  */
+
+#define DEBUG 1
+#ifdef DEBUG
+#define D() printk( KERN_INFO "al-pcie: %s(): %d\n", __func__, __LINE__ )
+#else
+#define D()
+#endif
+
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <linux/module.h>
@@ -453,19 +461,16 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 				err);
 			return err;
 		}
-
 		dev_dbg(pcie->dev, " regs %pR\n",  &pcie->regs);
-		pcie->regs_base = of_io_request_and_map( np, 0,
-							pcie->regs.name );
-		if ( IS_ERR( pcie->regs_base ) )
-			return PTR_ERR( pcie->regs_base );
-
+		pcie->regs_base = devm_ioremap_resource(pcie->dev,
+							   &pcie->regs);
+		if (IS_ERR(pcie->regs_base))
+			return PTR_ERR(pcie->regs_base);
 		/* set the base address of the configuration space of the local
 		 * bridge
 		 */
 		pcie->local_bridge_config_space = pcie->regs_base + 0x2000;
 	}
-
 	/* Get the ECAM, I/O and memory ranges from DT */
 	for_each_of_pci_range(&parser, &iter) {
 		unsigned long restype = iter.flags & IORESOURCE_TYPE_BITS;
@@ -491,11 +496,9 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 
 	/* map ecam space */
 	dev_dbg(pcie->dev, " ecam %pr\n",  &pcie->ecam);
-
-	pcie->ecam_base = of_io_request_and_map(np, 0,
-						pcie->ecam.name);
-	if ( IS_ERR( pcie->ecam_base ) )
-		return PTR_ERR( pcie->ecam_base );
+	pcie->ecam_base = devm_ioremap_resource(pcie->dev, &pcie->ecam);
+	if (IS_ERR(pcie->ecam_base))
+		return PTR_ERR(pcie->ecam_base);
 
 	err = of_pci_parse_bus_range(np, &pcie->busn);
 	if (err < 0) {
@@ -508,7 +511,8 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 	}
 	pcie->index = index++;
 
-#if defined(CONFIG_MACH_QNAPTS) && (defined(TSX31XU) || defined(TSX31X) || defined(TSX35))
+//#if defined(CONFIG_MACH_QNAPTS) && (defined(TSX31XU) || defined(TSX31X) || defined(TSX35))
+#if 1
     if (!strncmp(dev_name(pcie->dev), "fd800000.pcie-external0", strlen("fd800000.pcie-external0")))
         pcie->index = 1;
 
@@ -532,7 +536,7 @@ static int al_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 	if (ret)
 		return ret;
 
-	return irq_create_of_mapping( & oirq );
+	return irq_create_of_mapping(&oirq);
 }
 
 static int al_pcie_scan_bus(int nr, struct pci_host_bridge *bridge)
@@ -575,11 +579,13 @@ static int al_pcie_add_host_bridge(struct al_pcie_pd *pcie)
 	memset(&hw, 0, sizeof(hw));
 
 	hw.nr_controllers = 1;
+	//hw.domain = pcie->index;
 	hw.private_data = (void **)&pcie;
 	hw.setup = al_pcie_setup;
 	hw.scan = al_pcie_scan_bus;
 	hw.map_irq = al_pcie_map_irq;
 
+	D(); return -EADDRNOTAVAIL;
 	pci_common_init(&hw);
 
 	return 0;
@@ -630,9 +636,10 @@ static int al_pcie_probe(struct platform_device *pdev)
 	al_pcie_cfg_prepare(pcie);
 
 	al_pcie_io_prepare(pcie);
-
-#ifdef AL_PCIE_RMN_1010
+#if 0
+//#ifdef AL_PCIE_RMN_1010
 	al_pcie_mem_prepare(pcie);
+
 	if (pcie->type != AL_PCI_TYPE_INTERNAL) {
 
 		al_pcie_read_addr_start[pcie->index] =
@@ -674,6 +681,7 @@ static int al_pcie_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, pcie);
+
 	return 0;
 enable_err:
 err:
