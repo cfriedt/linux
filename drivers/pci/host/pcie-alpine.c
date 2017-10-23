@@ -10,18 +10,45 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
-enum {
+#define DEBUG
+
+#ifndef range_iter_fill_resource
+#define range_iter_fill_resource(iter, np, res) \
+        do { \
+                (res)->flags = (iter).flags; \
+                (res)->start = (iter).cpu_addr; \
+                (res)->end = (iter).cpu_addr + (iter).size - 1; \
+                (res)->parent = (res)->child = (res)->sibling = NULL; \
+                (res)->name = (np)->full_name; \
+        } while (0)
+#endif
+
+enum al_pci_type {
 	AL_PCI_TYPE_INTERNAL,
 	AL_PCI_TYPE_EXTERNAL,
 };
 
 struct al_pcie_pd {
-	struct platform_device	*pdev;
-	void __iomem		*base;
-	int			irq;
-	u8			root_bus_nr;
-	struct irq_domain	*irq_domain;
-	struct resource		bus_range;
+	struct platform_device *pdev;
+
+//	struct resource ecam;
+//	struct resource mem;
+//	struct resource io;
+//	struct resource realio;
+//	struct resource regs;
+//	struct resource busn;
+//
+	enum al_pci_type type;
+
+	void __iomem	 *ecam_base;
+	void __iomem	 *regs_base;
+	// base address of the configuration space of the local bridge
+	void __iomem	 *bcfg_base;
+
+	int irq;
+	u8 root_bus_nr;
+	struct irq_domain *irq_domain;
+	struct resource bus_range;
 	struct list_head	resources;
 };
 
@@ -129,30 +156,123 @@ static const struct irq_domain_ops intx_domain_ops = {
 	.xlate = pci_irqd_intx_xlate,
 };
 
-static void al_pcie_isr(struct irq_desc *desc) {
-	struct irq_chip *chip = irq_desc_get_chip(desc);
-	chained_irq_exit(chip, desc);
+static irqreturn_t al_pcie_isr( int irq, void *data ) {
+
+	struct al_pcie_pd *pcie = (struct al_pcie_pd *) data;
+	struct platform_device *pdev = pcie->pdev;
+	struct device *dev = & pdev->dev;
+
+	dev_dbg( dev, "interrupt received\n" );
+
+	return IRQ_HANDLED;
 }
 
-static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
+static int al_pice_get_ecam_resource( struct platform_device *pdev, struct resource *res ) {
+
+	struct of_pci_range_parser parser;
+	struct of_pci_range iter;
+
+	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
+
+	int r, i;
+
+	dev_info( dev, "In %s()\n", __func__ );
+
+	r = of_pci_range_parser_init( & parser, np );
+	if ( r ) {
+		dev_err( dev, "of_pci_range_parser_init() %d\n", r );
+		return r;
+	}
+
+	i = 0;
+	r = -ENXIO;
+	for_each_of_pci_range( & parser, & iter ) {
+		dev_info( dev,
+			"pci_range[ %d ]: pci_space: %x pci_addr: %llx cpu_addr: %llx size: %llx flags: %x\n",
+			i,
+			iter.pci_space,
+			iter.pci_addr,
+			iter.cpu_addr,
+			iter.size,
+			iter.flags
+		);
+		if ( 0 == ( iter.flags & IORESOURCE_TYPE_BITS ) ) {
+			dev_info( dev, "found ecam resource\n" );
+			range_iter_fill_resource( iter, np, res );
+			res->flags = IORESOURCE_MEM;
+			res->name = "ECAM";
+			r = 0;
+		}
+		i++;
+	}
+
+	return r;
+}
+
+static int al_pcie_parse_dt( struct al_pcie_pd *pcie )
 {
-	struct device *dev = &pcie->pdev->dev;
+	enum al_pci_type type;
+	struct resource res;
+
 	struct platform_device *pdev = pcie->pdev;
-	struct resource *res;
+	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "Cra");
-	pcie->base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(pcie->base))
-		return PTR_ERR(pcie->base);
+	int r;
 
-	/* setup IRQ */
+	dev_info( dev, "In %s()\n", __func__ );
+
+	/* map resources */
+
+	type = (enum al_pci_type) np->data;
+
+	if ( AL_PCI_TYPE_EXTERNAL == type ) {
+
+		r = of_address_to_resource( np, 0, & res );
+		if ( r < 0 ) {
+			dev_err( dev, "of_address_to_resource(): %d\n", r );
+			return r;
+		}
+
+		pcie->regs_base = devm_ioremap_resource( dev, & res );
+		if ( IS_ERR( pcie->regs_base ) ) {
+			return PTR_ERR( pcie->regs_base );
+		}
+
+		pcie->bcfg_base = pcie->regs_base + 0x2000;
+
+		dev_info( dev, "regs_base: %p, bcfg_base: %p\n", pcie->regs_base, pcie->bcfg_base );
+	}
+
+	r = al_pice_get_ecam_resource( pdev, & res );
+	if ( r ) {
+		dev_err( dev, "failed to get ecam resource\n" );
+		return r;
+	}
+
+	pcie->ecam_base = devm_ioremap_resource( dev, & res );
+	if ( IS_ERR( pcie->ecam_base ) ) {
+		return PTR_ERR( pcie->ecam_base );
+	}
+
+	dev_info( dev, "ecam_base: %p\n", pcie->ecam_base );
+
+	/* setup irq */
+/*
 	pcie->irq = platform_get_irq(pdev, 0);
 	if (pcie->irq < 0) {
 		dev_err(dev, "failed to get IRQ: %d\n", pcie->irq);
 		return pcie->irq;
 	}
 
-	irq_set_chained_handler_and_data(pcie->irq, al_pcie_isr, pcie);
+	r = devm_request_irq( dev, pcie->irq, al_pcie_isr, IRQF_SHARED, "pcie-sys", pcie );
+	if ( r ) {
+		dev_err(dev, "failed to request PCIe subsystem IRQ\n");
+		return r;
+	}
+*/
+
 	return 0;
 }
 
