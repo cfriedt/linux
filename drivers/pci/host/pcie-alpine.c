@@ -1,414 +1,841 @@
+/*
+ * Annapurna Labs PCI host bridge device tree driver
+ *
+ * Copyright (c) 2017 Christopher Friedt <chrisfriedt@gmail.com>
+ *
+ * This file adapted from pcie-mediatek.c.
+ *
+ * Copyright (c) 2017 MediaTek Inc.
+ * Author: Ryder Lee <ryder.lee@mediatek.com>
+ *	   Honghui Zhang <honghui.zhang@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*
+ * - This driver for both internal PCIe bus and for external PCIe ports
+ *   (in Root-Complex mode).
+ * - The driver requires PCI_DOMAINS as each port registered as a pci domain
+ * - for the external PCIe ports, the following applies:
+ *	- Configuration access to bus 0 device 0 are routed to the configuration
+ *	  space header register that found in the host bridge.
+ *	- The driver assumes the controller link is initialized by the
+ *	  bootloader.
+ */
+
+#include <linux/clk.h>
 #include <linux/delay.h>
-#include <linux/interrupt.h>
-#include <linux/irqchip/chained_irq.h>
-#include <linux/init.h>
-#include <linux/module.h>
+#include <linux/iopoll.h>
+#include <linux/irq.h>
+#include <linux/irqdomain.h>
+#include <linux/kernel.h>
 #include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_pci.h>
+#include <linux/of_platform.h>
 #include <linux/pci.h>
+#include <linux/phy/phy.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
+#include <linux/pm_runtime.h>
+#include <linux/reset.h>
 
-#define DEBUG
-
-#ifndef range_iter_fill_resource
-#define range_iter_fill_resource(iter, np, res) \
-        do { \
-                (res)->flags = (iter).flags; \
-                (res)->start = (iter).cpu_addr; \
-                (res)->end = (iter).cpu_addr + (iter).size - 1; \
-                (res)->parent = (res)->child = (res)->sibling = NULL; \
-                (res)->name = (np)->full_name; \
-        } while (0)
-#endif
+// defines
 
 enum al_pci_type {
-	AL_PCI_TYPE_INTERNAL,
-	AL_PCI_TYPE_EXTERNAL,
+	AL_PCI_TYPE_INTERNAL = 0,
+	AL_PCI_TYPE_EXTERNAL = 1,
 };
 
-struct al_pcie_pd {
-	struct platform_device *pdev;
+struct al_pcie_port;
 
-//	struct resource ecam;
-//	struct resource mem;
-//	struct resource io;
-//	struct resource realio;
-//	struct resource regs;
-//	struct resource busn;
-//
+/**
+ * struct al_pcie_port - PCIe port information
+ * @base: IO mapped register base
+ * @list: port list
+ * @pcie: pointer to PCIe host info
+ * @reset: pointer to port reset control
+ * @sys_ck: pointer to transaction/data link layer clock
+ * @ahb_ck: pointer to AHB slave interface operating clock for CSR access
+ *          and RC initiated MMIO access
+ * @axi_ck: pointer to application layer MMIO channel operating clock
+ * @aux_ck: pointer to pe2_mac_bridge and pe2_mac_core operating clock
+ *          when pcie_mac_ck/pcie_pipe_ck is turned off
+ * @obff_ck: pointer to OBFF functional block operating clock
+ * @pipe_ck: pointer to LTSSM and PHY/MAC layer operating clock
+ * @phy: pointer to PHY control block
+ * @lane: lane count
+ * @slot: port slot
+ * @irq_domain: legacy INTx IRQ domain
+ * @msi_domain: MSI IRQ domain
+ * @msi_irq_in_use: bit map for assigned MSI IRQ
+ */
+struct al_pcie_port {
+	void __iomem *base;
+	struct list_head list;
+	struct al_pcie *pcie;
+	struct reset_control *reset;
+	struct clk *sys_ck;
+	struct clk *ahb_ck;
+	struct clk *axi_ck;
+	struct clk *aux_ck;
+	struct clk *obff_ck;
+	struct clk *pipe_ck;
+	struct phy *phy;
+	u32 lane;
+	u32 slot;
+	struct irq_domain *irq_domain;
+	struct irq_domain *msi_domain;
+#ifndef MTK_MSI_IRQS_NUM
+#define MTK_MSI_IRQS_NUM 1
+#endif
+	DECLARE_BITMAP(msi_irq_in_use, MTK_MSI_IRQS_NUM);
+};
+
+struct al_pcie {
+	struct device *dev;
+	void __iomem *base;
+	struct clk *free_ck;
+
+	struct resource io;
+	struct resource pio;
+	struct resource mem;
+	struct resource busn;
+	struct {
+		resource_size_t mem;
+		resource_size_t io;
+	} offset;
+	struct list_head ports;
 	enum al_pci_type type;
 
-	void __iomem	 *ecam_base;
-	void __iomem	 *regs_base;
-	// base address of the configuration space of the local bridge
-	void __iomem	 *bcfg_base;
-
-	int irq;
-	u8 root_bus_nr;
-	struct irq_domain *irq_domain;
-	struct resource bus_range;
-	struct list_head	resources;
+	// old fields
+	void __iomem *regs_base;
+	struct resource regs;
+	void __iomem *ecam_base;
+	struct resource ecam;
+	void __iomem *local_bridge_config_space;
 };
 
-static bool al_pcie_link_is_up(struct al_pcie_pd *pcie)
+static void al_pcie_subsys_powerdown(struct al_pcie *pcie)
 {
-	return false;
-	//return !!((cra_readl(pcie, RP_LTSSM) & RP_LTSSM_MASK) == LTSSM_L0);
+	struct device *dev = pcie->dev;
+
+	clk_disable_unprepare(pcie->free_ck);
+
+	if (dev->pm_domain) {
+		pm_runtime_put_sync(dev);
+		pm_runtime_disable(dev);
+	}
 }
 
-static bool al_pcie_valid_device(struct al_pcie_pd *pcie,
-				     struct pci_bus *bus, int dev)
+static void al_pcie_port_free(struct al_pcie_port *port)
 {
-	/* If there is no link, then there is no device */
-	if (bus->number != pcie->root_bus_nr) {
-		if (!al_pcie_link_is_up(pcie))
-			return false;
+	struct al_pcie *pcie = port->pcie;
+	struct device *dev = pcie->dev;
+
+	devm_iounmap(dev, port->base);
+	list_del(&port->list);
+	devm_kfree(dev, port);
+}
+
+static void al_pcie_put_resources(struct al_pcie *pcie)
+{
+	struct al_pcie_port *port, *tmp;
+
+	list_for_each_entry_safe(port, tmp, &pcie->ports, list) {
+		phy_power_off(port->phy);
+		phy_exit(port->phy);
+		clk_disable_unprepare(port->pipe_ck);
+		clk_disable_unprepare(port->obff_ck);
+		clk_disable_unprepare(port->axi_ck);
+		clk_disable_unprepare(port->aux_ck);
+		clk_disable_unprepare(port->ahb_ck);
+		clk_disable_unprepare(port->sys_ck);
+		al_pcie_port_free(port);
 	}
 
-	/* access only one slot on each root port */
-	if (bus->number == pcie->root_bus_nr && dev > 0)
-		return false;
-
-	 return true;
+	al_pcie_subsys_powerdown(pcie);
 }
 
-static int al_pcie_cfg_read(struct pci_bus *bus, unsigned int devfn,
-				int where, int size, u32 *value)
+static int al_pcie_hw_rd_cfg(struct al_pcie_port *port, u32 bus, u32 devfn,
+			      int where, int size, u32 *val)
 {
-	struct al_pcie_pd *pcie = bus->sysdata;
+	return PCIBIOS_SUCCESSFUL;
+}
 
-//	if (al_pcie_hide_rc_bar(bus, devfn, where))
-//		return PCIBIOS_BAD_REGISTER_NUMBER;
+static int al_pcie_hw_wr_cfg(struct al_pcie_port *port, u32 bus, u32 devfn,
+			      int where, int size, u32 val)
+{
+	return PCIBIOS_SUCCESSFUL;
+}
 
-	if (!al_pcie_valid_device(pcie, bus, PCI_SLOT(devfn))) {
-		*value = 0xffffffff;
+static struct al_pcie_port *al_pcie_find_port(struct pci_bus *bus,
+						unsigned int devfn)
+{
+	struct al_pcie *pcie = bus->sysdata;
+	struct al_pcie_port *port;
+
+	list_for_each_entry(port, &pcie->ports, list)
+		if (port->slot == PCI_SLOT(devfn))
+			return port;
+
+	return NULL;
+}
+
+static int al_pcie_config_read(struct pci_bus *bus, unsigned int devfn,
+				int where, int size, u32 *val)
+{
+	struct al_pcie_port *port;
+	u32 bn = bus->number;
+	int ret;
+
+	port = al_pcie_find_port(bus, devfn);
+	if (!port) {
+		*val = ~0;
 		return PCIBIOS_DEVICE_NOT_FOUND;
 	}
 
-//	return _al_pcie_cfg_read(pcie, bus->number, devfn, where, size,
-//				     value);
-	return PCIBIOS_DEVICE_NOT_FOUND;
+	ret = al_pcie_hw_rd_cfg(port, bn, devfn, where, size, val);
+	if (ret)
+		*val = ~0;
+
+	return ret;
 }
 
-static int al_pcie_cfg_write(struct pci_bus *bus, unsigned int devfn,
-				 int where, int size, u32 value)
+static int al_pcie_config_write(struct pci_bus *bus, unsigned int devfn,
+				 int where, int size, u32 val)
 {
-	struct al_pcie_pd *pcie = bus->sysdata;
+	struct al_pcie_port *port;
+	u32 bn = bus->number;
 
-//	if (al_pcie_hide_rc_bar(bus, devfn, where))
-//		return PCIBIOS_BAD_REGISTER_NUMBER;
-
-	if (!al_pcie_valid_device(pcie, bus, PCI_SLOT(devfn)))
+	port = al_pcie_find_port(bus, devfn);
+	if (!port)
 		return PCIBIOS_DEVICE_NOT_FOUND;
 
-	return PCIBIOS_DEVICE_NOT_FOUND;
-//	return _al_pcie_cfg_write(pcie, bus->number, devfn, where, size,
-//				     value);
+	return al_pcie_hw_wr_cfg(port, bn, devfn, where, size, val);
 }
 
-static struct pci_ops al_pcie_ops = {
-	.read = al_pcie_cfg_read,
-	.write = al_pcie_cfg_write,
+static struct pci_ops al_pcie_ops_v2 = {
+	.read  = al_pcie_config_read,
+	.write = al_pcie_config_write,
 };
 
-static void al_pcie_retrain(struct al_pcie_pd *pcie)
+static int al_pcie_startup_port_v2(struct al_pcie_port *port)
 {
-	u16 linkcap, linkstat, linkctl;
+	return 0;
+}
 
-	if (!al_pcie_link_is_up(pcie))
+static int al_pcie_msi_alloc(struct al_pcie_port *port)
+{
+	int msi;
+
+	msi = find_first_zero_bit(port->msi_irq_in_use, MTK_MSI_IRQS_NUM);
+	if (msi < MTK_MSI_IRQS_NUM)
+		set_bit(msi, port->msi_irq_in_use);
+	else
+		return -ENOSPC;
+
+	return msi;
+}
+
+static void al_pcie_msi_free(struct al_pcie_port *port, unsigned long hwirq)
+{
+	clear_bit(hwirq, port->msi_irq_in_use);
+}
+
+static int al_pcie_msi_setup_irq(struct msi_controller *chip,
+				  struct pci_dev *pdev, struct msi_desc *desc)
+{
+	return 0;
+}
+
+static void al_msi_teardown_irq(struct msi_controller *chip, unsigned int irq)
+{
+	struct pci_dev *pdev = to_pci_dev(chip->dev);
+	struct irq_data *d = irq_get_irq_data(irq);
+	irq_hw_number_t hwirq = irqd_to_hwirq(d);
+	struct al_pcie_port *port;
+
+	port = al_pcie_find_port(pdev->bus, pdev->devfn);
+	if (!port)
 		return;
 
-	/*
-	 * Set the retrain bit if the PCIe rootport support > 2.5GB/s, but
-	 * current speed is 2.5 GB/s.
-	 */
-//	al_read_cap_word(pcie, pcie->root_bus_nr, RP_DEVFN, PCI_EXP_LNKCAP,
-//			     &linkcap);
-//	if ((linkcap & PCI_EXP_LNKCAP_SLS) <= PCI_EXP_LNKCAP_SLS_2_5GB)
-//		return;
-
-//	al_read_cap_word(pcie, pcie->root_bus_nr, RP_DEVFN, PCI_EXP_LNKSTA,
-//			     &linkstat);
-//	if ((linkstat & PCI_EXP_LNKSTA_CLS) == PCI_EXP_LNKSTA_CLS_2_5GB) {
-//		al_read_cap_word(pcie, pcie->root_bus_nr, RP_DEVFN,
-//				     PCI_EXP_LNKCTL, &linkctl);
-//		linkctl |= PCI_EXP_LNKCTL_RL;
-//		al_write_cap_word(pcie, pcie->root_bus_nr, RP_DEVFN,
-//				      PCI_EXP_LNKCTL, linkctl);
-//
-//		al_wait_link_retrain(pcie);
-//	}
+	irq_dispose_mapping(irq);
+	al_pcie_msi_free(port, hwirq);
 }
 
+static struct msi_controller al_pcie_msi_chip = {
+	.setup_irq = al_pcie_msi_setup_irq,
+	.teardown_irq = al_msi_teardown_irq,
+};
+
+static struct irq_chip al_msi_irq_chip = {
+	.name = "MTK PCIe MSI",
+	.irq_enable = pci_msi_unmask_irq,
+	.irq_disable = pci_msi_mask_irq,
+	.irq_mask = pci_msi_mask_irq,
+	.irq_unmask = pci_msi_unmask_irq,
+};
+
+static int al_pcie_msi_map(struct irq_domain *domain, unsigned int irq,
+			    irq_hw_number_t hwirq)
+{
+	irq_set_chip_and_handler(irq, &al_msi_irq_chip, handle_simple_irq);
+	irq_set_chip_data(irq, domain->host_data);
+
+	return 0;
+}
+
+static const struct irq_domain_ops msi_domain_ops = {
+	.map = al_pcie_msi_map,
+};
+
+static void al_pcie_enable_msi(struct al_pcie_port *port)
+{
+}
 
 static int al_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
-				irq_hw_number_t hwirq)
+			     irq_hw_number_t hwirq)
 {
 	irq_set_chip_and_handler(irq, &dummy_irq_chip, handle_simple_irq);
 	irq_set_chip_data(irq, domain->host_data);
+
 	return 0;
 }
 
 static const struct irq_domain_ops intx_domain_ops = {
 	.map = al_pcie_intx_map,
-	.xlate = pci_irqd_intx_xlate,
 };
 
-static irqreturn_t al_pcie_isr( int irq, void *data ) {
+static int al_pcie_init_irq_domain(struct al_pcie_port *port,
+				    struct device_node *node)
+{
+	struct device *dev = port->pcie->dev;
+	struct device_node *pcie_intc_node;
 
-	struct al_pcie_pd *pcie = (struct al_pcie_pd *) data;
-	struct platform_device *pdev = pcie->pdev;
-	struct device *dev = & pdev->dev;
+	/* Setup INTx */
+	pcie_intc_node = of_get_next_child(node, NULL);
+	if (!pcie_intc_node) {
+		dev_err(dev, "no PCIe Intc node found\n");
+		return -ENODEV;
+	}
 
-	dev_dbg( dev, "interrupt received\n" );
+	port->irq_domain = irq_domain_add_linear(pcie_intc_node, PCI_NUM_INTX,
+						 &intx_domain_ops, port);
+	if (!port->irq_domain) {
+		dev_err(dev, "failed to get INTx IRQ domain\n");
+		return -ENODEV;
+	}
+
+	if (IS_ENABLED(CONFIG_PCI_MSI)) {
+		port->msi_domain = irq_domain_add_linear(node, MTK_MSI_IRQS_NUM,
+							 &msi_domain_ops,
+							 &al_pcie_msi_chip);
+		if (!port->msi_domain) {
+			dev_err(dev, "failed to create MSI IRQ domain\n");
+			return -ENODEV;
+		}
+		al_pcie_enable_msi(port);
+	}
+
+	return 0;
+}
+
+static irqreturn_t al_pcie_intr_handler(int irq, void *data)
+{
+	struct al_pcie *pcie = (struct al_pcie *) data;
+	struct device *dev = pcie->dev;
 
 	return IRQ_HANDLED;
 }
 
-static int al_pice_get_ecam_resource( struct platform_device *pdev, struct resource *res ) {
-
-	struct of_pci_range_parser parser;
-	struct of_pci_range iter;
-
-	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
-
-	int r, i;
-
-	dev_info( dev, "In %s()\n", __func__ );
-
-	r = of_pci_range_parser_init( & parser, np );
-	if ( r ) {
-		dev_err( dev, "of_pci_range_parser_init() %d\n", r );
-		return r;
-	}
-
-	i = 0;
-	r = -ENXIO;
-	for_each_of_pci_range( & parser, & iter ) {
-		dev_info( dev,
-			"pci_range[ %d ]: pci_space: %x pci_addr: %llx cpu_addr: %llx size: %llx flags: %x\n",
-			i,
-			iter.pci_space,
-			iter.pci_addr,
-			iter.cpu_addr,
-			iter.size,
-			iter.flags
-		);
-		if ( 0 == ( iter.flags & IORESOURCE_TYPE_BITS ) ) {
-			dev_info( dev, "found ecam resource\n" );
-			range_iter_fill_resource( iter, np, res );
-			res->flags = IORESOURCE_MEM;
-			res->name = "ECAM";
-			r = 0;
-		}
-		i++;
-	}
-
-	return r;
-}
-
-static int al_pcie_parse_dt( struct al_pcie_pd *pcie )
+static int al_pcie_setup_irq(struct al_pcie_port *port,
+			      struct device_node *node)
 {
-	enum al_pci_type type;
-	struct resource res;
+	struct al_pcie *pcie = port->pcie;
+	struct device *dev = pcie->dev;
+	struct platform_device *pdev = to_platform_device(dev);
+	int err, irq;
 
-	struct platform_device *pdev = pcie->pdev;
-	struct device *dev = &pdev->dev;
-	struct device_node *np = dev->of_node;
-
-	int r;
-
-	dev_info( dev, "In %s()\n", __func__ );
-
-	/* map resources */
-
-	type = (enum al_pci_type) np->data;
-
-	if ( AL_PCI_TYPE_EXTERNAL == type ) {
-
-		r = of_address_to_resource( np, 0, & res );
-		if ( r < 0 ) {
-			dev_err( dev, "of_address_to_resource(): %d\n", r );
-			return r;
-		}
-
-		pcie->regs_base = devm_ioremap_resource( dev, & res );
-		if ( IS_ERR( pcie->regs_base ) ) {
-			return PTR_ERR( pcie->regs_base );
-		}
-
-		pcie->bcfg_base = pcie->regs_base + 0x2000;
-
-		dev_info( dev, "regs_base: %p, bcfg_base: %p\n", pcie->regs_base, pcie->bcfg_base );
+	irq = platform_get_irq(pdev, port->slot);
+	err = devm_request_irq(dev, irq, al_pcie_intr_handler,
+			       IRQF_SHARED, "al-pcie", port);
+	if (err) {
+		dev_err(dev, "unable to request IRQ %d\n", irq);
+		return err;
 	}
 
-	r = al_pice_get_ecam_resource( pdev, & res );
-	if ( r ) {
-		dev_err( dev, "failed to get ecam resource\n" );
-		return r;
+	err = al_pcie_init_irq_domain(port, node);
+	if (err) {
+		dev_err(dev, "failed to init PCIe IRQ domain\n");
+		return err;
 	}
-
-	pcie->ecam_base = devm_ioremap_resource( dev, & res );
-	if ( IS_ERR( pcie->ecam_base ) ) {
-		return PTR_ERR( pcie->ecam_base );
-	}
-
-	dev_info( dev, "ecam_base: %p\n", pcie->ecam_base );
-
-	/* setup irq */
-/*
-	pcie->irq = platform_get_irq(pdev, 0);
-	if (pcie->irq < 0) {
-		dev_err(dev, "failed to get IRQ: %d\n", pcie->irq);
-		return pcie->irq;
-	}
-
-	r = devm_request_irq( dev, pcie->irq, al_pcie_isr, IRQF_SHARED, "pcie-sys", pcie );
-	if ( r ) {
-		dev_err(dev, "failed to request PCIe subsystem IRQ\n");
-		return r;
-	}
-*/
 
 	return 0;
 }
 
-static int al_pcie_parse_request_of_pci_ranges(struct al_pcie_pd *pcie)
+static int al_pcie_startup_port(struct al_pcie_port *port)
 {
-	int err, res_valid = 0;
-	struct device *dev = &pcie->pdev->dev;
-	struct device_node *np = dev->of_node;
-	struct resource_entry *win;
+	return 0;
+}
 
-	err = of_pci_get_host_bridge_resources(np, 0, 0xff, &pcie->resources,
-					       NULL);
+static void al_pcie_enable_port(struct al_pcie_port *port)
+{
+	struct al_pcie *pcie = port->pcie;
+	struct device *dev = pcie->dev;
+	int err;
+
+/*
+	err = clk_prepare_enable(port->sys_ck);
+	if (err) {
+		dev_err(dev, "failed to enable sys_ck%d clock\n", port->slot);
+		goto err_sys_clk;
+	}
+
+	err = clk_prepare_enable(port->ahb_ck);
+	if (err) {
+		dev_err(dev, "failed to enable ahb_ck%d\n", port->slot);
+		goto err_ahb_clk;
+	}
+
+	err = clk_prepare_enable(port->aux_ck);
+	if (err) {
+		dev_err(dev, "failed to enable aux_ck%d\n", port->slot);
+		goto err_aux_clk;
+	}
+
+	err = clk_prepare_enable(port->axi_ck);
+	if (err) {
+		dev_err(dev, "failed to enable axi_ck%d\n", port->slot);
+		goto err_axi_clk;
+	}
+
+	err = clk_prepare_enable(port->obff_ck);
+	if (err) {
+		dev_err(dev, "failed to enable obff_ck%d\n", port->slot);
+		goto err_obff_clk;
+	}
+
+	err = clk_prepare_enable(port->pipe_ck);
+	if (err) {
+		dev_err(dev, "failed to enable pipe_ck%d\n", port->slot);
+		goto err_pipe_clk;
+	}
+
+	reset_control_assert(port->reset);
+	reset_control_deassert(port->reset);
+
+	err = phy_init(port->phy);
+	if (err) {
+		dev_err(dev, "failed to initialize port%d phy\n", port->slot);
+		goto err_phy_init;
+	}
+
+	err = phy_power_on(port->phy);
+	if (err) {
+		dev_err(dev, "failed to power on port%d phy\n", port->slot);
+		goto err_phy_on;
+	}
+
+	if (!al_pcie_startup_port_v2(port))
+		return;
+
+	dev_info(dev, "Port%d link down\n", port->slot);
+
+	phy_power_off(port->phy);
+err_phy_on:
+	phy_exit(port->phy);
+err_phy_init:
+	clk_disable_unprepare(port->pipe_ck);
+err_pipe_clk:
+	clk_disable_unprepare(port->obff_ck);
+err_obff_clk:
+	clk_disable_unprepare(port->axi_ck);
+err_axi_clk:
+	clk_disable_unprepare(port->aux_ck);
+err_aux_clk:
+	clk_disable_unprepare(port->ahb_ck);
+err_ahb_clk:
+	clk_disable_unprepare(port->sys_ck);
+err_sys_clk:
+	al_pcie_port_free(port);
+	*/
+}
+
+static int al_pcie_parse_port(struct al_pcie *pcie,
+			       struct device_node *node,
+			       int slot)
+{
+	struct al_pcie_port *port;
+	struct resource *regs;
+	struct device *dev = pcie->dev;
+	struct platform_device *pdev = to_platform_device(dev);
+	char name[10];
+	int err;
+
+/*
+	port = devm_kzalloc(dev, sizeof(*port), GFP_KERNEL);
+	if (!port)
+		return -ENOMEM;
+
+	err = of_property_read_u32(node, "num-lanes", &port->lane);
+	if (err) {
+		dev_err(dev, "missing num-lanes property\n");
+		return err;
+	}
+
+	snprintf(name, sizeof(name), "port%d", slot);
+	regs = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+	port->base = devm_ioremap_resource(dev, regs);
+	if (IS_ERR(port->base)) {
+		dev_err(dev, "failed to map port%d base\n", slot);
+		return PTR_ERR(port->base);
+	}
+
+	snprintf(name, sizeof(name), "sys_ck%d", slot);
+	port->sys_ck = devm_clk_get(dev, name);
+	if (IS_ERR(port->sys_ck)) {
+		dev_err(dev, "failed to get sys_ck%d clock\n", slot);
+		return PTR_ERR(port->sys_ck);
+	}
+
+	// sys_ck might be divided into the following parts in some chips
+	snprintf(name, sizeof(name), "ahb_ck%d", slot);
+	port->ahb_ck = devm_clk_get(dev, name);
+	if (IS_ERR(port->ahb_ck)) {
+		if (PTR_ERR(port->ahb_ck) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+
+		port->ahb_ck = NULL;
+	}
+
+	snprintf(name, sizeof(name), "axi_ck%d", slot);
+	port->axi_ck = devm_clk_get(dev, name);
+	if (IS_ERR(port->axi_ck)) {
+		if (PTR_ERR(port->axi_ck) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+
+		port->axi_ck = NULL;
+	}
+
+	snprintf(name, sizeof(name), "aux_ck%d", slot);
+	port->aux_ck = devm_clk_get(dev, name);
+	if (IS_ERR(port->aux_ck)) {
+		if (PTR_ERR(port->aux_ck) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+
+		port->aux_ck = NULL;
+	}
+
+	snprintf(name, sizeof(name), "obff_ck%d", slot);
+	port->obff_ck = devm_clk_get(dev, name);
+	if (IS_ERR(port->obff_ck)) {
+		if (PTR_ERR(port->obff_ck) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+
+		port->obff_ck = NULL;
+	}
+
+	snprintf(name, sizeof(name), "pipe_ck%d", slot);
+	port->pipe_ck = devm_clk_get(dev, name);
+	if (IS_ERR(port->pipe_ck)) {
+		if (PTR_ERR(port->pipe_ck) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+
+		port->pipe_ck = NULL;
+	}
+
+	snprintf(name, sizeof(name), "pcie-rst%d", slot);
+	port->reset = devm_reset_control_get_optional_exclusive(dev, name);
+	if (PTR_ERR(port->reset) == -EPROBE_DEFER)
+		return PTR_ERR(port->reset);
+
+	// some platforms may use default PHY setting
+	snprintf(name, sizeof(name), "pcie-phy%d", slot);
+	port->phy = devm_phy_optional_get(dev, name);
+	if (IS_ERR(port->phy))
+		return PTR_ERR(port->phy);
+
+	port->slot = slot;
+	port->pcie = pcie;
+
+	err = al_pcie_setup_irq(port, node);
 	if (err)
 		return err;
 
-	err = devm_request_pci_bus_resources(dev, &pcie->resources);
-	if (err)
-		goto out_release_res;
+	INIT_LIST_HEAD(&port->list);
+	list_add_tail(&port->list, &pcie->ports);
+*/
+	return 0;
+}
 
-	resource_list_for_each_entry(win, &pcie->resources) {
-		struct resource *res = win->res;
+static int al_pcie_subsys_powerup(struct al_pcie *pcie)
+{
+	struct device *dev = pcie->dev;
+	struct platform_device *pdev = to_platform_device(dev);
+	struct resource *regs;
+	int err;
 
-		if (resource_type(res) == IORESOURCE_MEM)
-			res_valid |= !(res->flags & IORESOURCE_PREFETCH);
+	/* get shared registers, which are optional */
+	regs = platform_get_resource_byname(pdev, IORESOURCE_MEM, "subsys");
+	if (regs) {
+		pcie->base = devm_ioremap_resource(dev, regs);
+		if (IS_ERR(pcie->base)) {
+			dev_err(dev, "failed to map shared register\n");
+			return PTR_ERR(pcie->base);
+		}
 	}
 
-	if (res_valid)
-		return 0;
+	pcie->free_ck = devm_clk_get(dev, "free_ck");
+	if (IS_ERR(pcie->free_ck)) {
+		if (PTR_ERR(pcie->free_ck) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
 
-	dev_err(dev, "non-prefetchable memory resource required\n");
-	err = -EINVAL;
+		pcie->free_ck = NULL;
+	}
 
-out_release_res:
-	pci_free_resource_list(&pcie->resources);
+	if (dev->pm_domain) {
+		pm_runtime_enable(dev);
+		pm_runtime_get_sync(dev);
+	}
+
+	/* enable top level clock */
+	err = clk_prepare_enable(pcie->free_ck);
+	if (err) {
+		dev_err(dev, "failed to enable free_ck\n");
+		goto err_free_ck;
+	}
+
+	return 0;
+
+err_free_ck:
+	if (dev->pm_domain) {
+		pm_runtime_put_sync(dev);
+		pm_runtime_disable(dev);
+	}
+
 	return err;
 }
 
-static int al_pcie_init_irq_domain(struct al_pcie_pd *pcie)
+static int al_pcie_setup(struct al_pcie *pcie)
 {
-	struct device *dev = &pcie->pdev->dev;
-	struct device_node *node = dev->of_node;
+	struct device *dev = pcie->dev;
+	struct device_node *node = dev->of_node, *child;
+	struct of_pci_range_parser parser;
+	struct of_pci_range range;
+	struct resource res;
+	struct al_pcie_port *port, *tmp;
+	int err;
 
-	/* Setup INTx */
-	pcie->irq_domain = irq_domain_add_linear(node, PCI_NUM_INTX,
-					&intx_domain_ops, pcie);
-	if (!pcie->irq_domain) {
-		dev_err(dev, "Failed to get a INTx IRQ domain\n");
-		return -ENOMEM;
+	if (of_pci_range_parser_init(&parser, node)) {
+		dev_err(dev, "missing \"ranges\" property\n");
+		return -EINVAL;
 	}
+
+	if (pcie->type == AL_PCI_TYPE_EXTERNAL) {
+		/* Get registers resources */
+		err = of_address_to_resource(node, 0, &pcie->regs);
+		if (err < 0) {
+			dev_err(pcie->dev, "of_address_to_resource(): %d\n",
+				err);
+			return err;
+		}
+		dev_info(pcie->dev, " regs %pR\n",  &pcie->regs);
+		pcie->regs_base = devm_ioremap_resource(pcie->dev,
+							   &pcie->regs);
+		if (IS_ERR(pcie->regs_base))
+			return PTR_ERR(pcie->regs_base);
+		/* set the base address of the configuration space of the local
+		 * bridge
+		 */
+		pcie->local_bridge_config_space = pcie->regs_base + 0x2000;
+	}
+
+	for_each_of_pci_range(&parser, &range) {
+		err = of_pci_range_to_resource(&range, node, &res);
+		if (err < 0)
+			return err;
+
+		switch (res.flags & IORESOURCE_TYPE_BITS) {
+		case 0:
+
+			memcpy(&pcie->ecam, &res, sizeof(res));
+
+			pcie->ecam.start = range.cpu_addr;
+			pcie->ecam.end = range.cpu_addr + range.size - 1;
+			pcie->ecam.flags = IORESOURCE_MEM;
+			pcie->ecam.name = "ECAM";
+			break;
+
+		case IORESOURCE_IO:
+			pcie->offset.io = res.start - range.pci_addr;
+
+			memcpy(&pcie->pio, &res, sizeof(res));
+			pcie->pio.name = node->full_name;
+
+			pcie->io.start = range.cpu_addr;
+			pcie->io.end = range.cpu_addr + range.size - 1;
+			pcie->io.flags = IORESOURCE_MEM;
+			pcie->io.name = "I/O";
+
+			memcpy(&res, &pcie->io, sizeof(res));
+			break;
+
+		case IORESOURCE_MEM:
+			pcie->offset.mem = res.start - range.pci_addr;
+
+			memcpy(&pcie->mem, &res, sizeof(res));
+			pcie->mem.name = "non-prefetchable";
+			break;
+		}
+	}
+
+	err = of_pci_parse_bus_range(node, &pcie->busn);
+	if (err < 0) {
+		dev_err(dev, "failed to parse bus ranges property: %d\n", err);
+		pcie->busn.name = node->name;
+		pcie->busn.start = 0;
+		pcie->busn.end = 0xff;
+		pcie->busn.flags = IORESOURCE_BUS;
+	}
+
+	for_each_available_child_of_node(node, child) {
+		int slot;
+
+		err = of_pci_get_devfn(child);
+		if (err < 0) {
+			dev_err(dev, "failed to parse devfn: %d\n", err);
+			return err;
+		}
+
+		slot = PCI_SLOT(err);
+
+		err = al_pcie_parse_port(pcie, child, slot);
+		if (err)
+			return err;
+	}
+
+	err = al_pcie_subsys_powerup(pcie);
+	if (err)
+		return err;
+
+	/* enable each port, and then check link status */
+	list_for_each_entry_safe(port, tmp, &pcie->ports, list)
+		al_pcie_enable_port(port);
+
+	/* power down PCIe subsys if slots are all empty (link down) */
+	if (list_empty(&pcie->ports))
+		al_pcie_subsys_powerdown(pcie);
 
 	return 0;
 }
 
-static void al_pcie_host_init(struct al_pcie_pd *pcie)
+static int al_pcie_request_resources(struct al_pcie *pcie)
 {
-	al_pcie_retrain(pcie);
+	struct pci_host_bridge *host = pci_host_bridge_from_priv(pcie);
+	struct list_head *windows = &host->windows;
+	struct device *dev = pcie->dev;
+	int err;
+
+	pci_add_resource_offset(windows, &pcie->pio, pcie->offset.io);
+	pci_add_resource_offset(windows, &pcie->mem, pcie->offset.mem);
+	pci_add_resource(windows, &pcie->busn);
+
+	err = devm_request_pci_bus_resources(dev, windows);
+	if (err < 0)
+		return err;
+
+	pci_remap_iospace(&pcie->pio, pcie->io.start);
+
+	return 0;
+}
+
+static int al_pcie_register_host(struct pci_host_bridge *host)
+{
+	struct al_pcie *pcie = pci_host_bridge_priv(host);
+	struct pci_bus *child;
+	int err;
+
+	host->busnr = pcie->busn.start;
+	host->dev.parent = pcie->dev;
+	host->ops = & al_pcie_ops_v2;
+	host->map_irq = of_irq_parse_and_map_pci;
+	host->swizzle_irq = pci_common_swizzle;
+	host->sysdata = pcie;
+//	if (IS_ENABLED(CONFIG_PCI_MSI) && pcie->type->has_msi)
+//		host->msi = &al_pcie_msi_chip;
+
+	err = pci_scan_root_bus_bridge(host);
+	if (err < 0)
+		return err;
+
+	pci_bus_size_bridges(host->bus);
+	pci_bus_assign_resources(host->bus);
+
+	list_for_each_entry(child, &host->bus->children, node)
+		pcie_bus_configure_settings(child);
+
+	pci_bus_add_devices(host->bus);
+
+	return 0;
 }
 
 static int al_pcie_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct al_pcie_pd *pcie;
-	struct pci_bus *bus;
-	struct pci_bus *child;
-	struct pci_host_bridge *bridge;
-	int ret;
+	struct al_pcie *pcie;
+	struct pci_host_bridge *host;
+	int err;
 
-	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
-	if (!bridge)
+	host = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
+	if (!host)
 		return -ENOMEM;
 
-	pcie = pci_host_bridge_priv(bridge);
-	pcie->pdev = pdev;
+	pcie = pci_host_bridge_priv(host);
 
-	ret = al_pcie_parse_dt(pcie);
-	if (ret) {
-		dev_err(dev, "Parsing DT failed\n");
-		return ret;
-	}
+	pcie->dev = dev;
+	pcie->type = (enum al_pci_type) of_device_get_match_data(dev);
+	platform_set_drvdata(pdev, pcie);
+	INIT_LIST_HEAD(&pcie->ports);
 
-	INIT_LIST_HEAD(&pcie->resources);
+	err = al_pcie_setup(pcie);
+	if (err)
+		return err;
 
-	ret = al_pcie_parse_request_of_pci_ranges(pcie);
-	if (ret) {
-		dev_err(dev, "Failed add resources\n");
-		return ret;
-	}
+	err = al_pcie_request_resources(pcie);
+	if (err)
+		goto put_resources;
 
-	ret = al_pcie_init_irq_domain(pcie);
-	if (ret) {
-		dev_err(dev, "Failed creating IRQ Domain\n");
-		return ret;
-	}
+	err = al_pcie_register_host(host);
+	if (err)
+		goto put_resources;
 
-	/* clear all interrupts */
-	//cra_writel(pcie, P2A_INT_STS_ALL, P2A_INT_STATUS);
-	/* enable all interrupts */
-	//cra_writel(pcie, P2A_INT_ENA_ALL, P2A_INT_ENABLE);
-	al_pcie_host_init(pcie);
+	return 0;
 
-	list_splice_init(&pcie->resources, &bridge->windows);
-	bridge->dev.parent = dev;
-	bridge->sysdata = pcie;
-	bridge->busnr = pcie->root_bus_nr;
-	bridge->ops = &al_pcie_ops;
-	bridge->map_irq = of_irq_parse_and_map_pci;
-	bridge->swizzle_irq = pci_common_swizzle;
+put_resources:
+	if (!list_empty(&pcie->ports))
+		al_pcie_put_resources(pcie);
 
-	ret = pci_scan_root_bus_bridge(bridge);
-	if (ret < 0)
-		return ret;
-
-	bus = bridge->bus;
-
-	pci_assign_unassigned_bus_resources(bus);
-
-	/* Configure PCI Express setting. */
-	list_for_each_entry(child, &bus->children, node)
-		pcie_bus_configure_settings(child);
-
-	pci_bus_add_devices(bus);
-	return ret;
+	return err;
 }
 
-static const struct of_device_id al_pcie_of_match[] = {
+static const struct of_device_id al_pcie_ids[] = {
 	{ .compatible = "annapurna-labs,al-pci", .data = (void *)AL_PCI_TYPE_EXTERNAL },
 	{ .compatible = "annapurna-labs,al-internal-pcie", .data = (void *)AL_PCI_TYPE_INTERNAL },
 	{ },
 };
 
 static struct platform_driver al_pcie_driver = {
+	.probe = al_pcie_probe,
 	.driver = {
 		.name = "al-pcie",
-		.owner = THIS_MODULE,
-		.of_match_table = of_match_ptr(al_pcie_of_match),
+		.of_match_table = al_pcie_ids,
+		.suppress_bind_attrs = true,
 	},
-	.probe = al_pcie_probe,
 };
-module_platform_driver(al_pcie_driver);
+builtin_platform_driver(al_pcie_driver);
