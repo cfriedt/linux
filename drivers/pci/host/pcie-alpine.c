@@ -390,6 +390,8 @@ static void al_pcie_enable_port(struct al_pcie_port *port)
 	struct device *dev = pcie->dev;
 	int err;
 
+	//dev_info( dev, "%s(): %d\n", __func__, __LINE__ );
+
 /*
 	err = clk_prepare_enable(port->sys_ck);
 	if (err) {
@@ -477,6 +479,8 @@ static int al_pcie_parse_port(struct al_pcie *pcie,
 	struct platform_device *pdev = to_platform_device(dev);
 	char name[10];
 	int err;
+
+//	dev_info( dev, "%s(): %d\n", __func__, __LINE__ );
 
 /*
 	port = devm_kzalloc(dev, sizeof(*port), GFP_KERNEL);
@@ -581,7 +585,9 @@ static int al_pcie_subsys_powerup(struct al_pcie *pcie)
 	struct resource *regs;
 	int err;
 
-	/* get shared registers, which are optional */
+	dev_info( dev, "%s(): %d\n", __func__, __LINE__ );
+/*
+	// get shared registers, which are optional
 	regs = platform_get_resource_byname(pdev, IORESOURCE_MEM, "subsys");
 	if (regs) {
 		pcie->base = devm_ioremap_resource(dev, regs);
@@ -604,7 +610,7 @@ static int al_pcie_subsys_powerup(struct al_pcie *pcie)
 		pm_runtime_get_sync(dev);
 	}
 
-	/* enable top level clock */
+	// enable top level clock
 	err = clk_prepare_enable(pcie->free_ck);
 	if (err) {
 		dev_err(dev, "failed to enable free_ck\n");
@@ -618,7 +624,8 @@ err_free_ck:
 		pm_runtime_put_sync(dev);
 		pm_runtime_disable(dev);
 	}
-
+*/
+	err = 0;
 	return err;
 }
 
@@ -716,13 +723,17 @@ static int al_pcie_setup(struct al_pcie *pcie)
 		slot = PCI_SLOT(err);
 
 		err = al_pcie_parse_port(pcie, child, slot);
-		if (err)
+		if (err) {
+			dev_err( dev, "%s(): %d: al_pcie_parse_port() failed %d\n", __func__, __LINE__, err );
 			return err;
+		}
 	}
 
 	err = al_pcie_subsys_powerup(pcie);
-	if (err)
+	if (err) {
+		dev_err( dev, "%s(): %d: al_pcie_subsys_powerup() failed %d\n", __func__, __LINE__, err );
 		return err;
+	}
 
 	/* enable each port, and then check link status */
 	list_for_each_entry_safe(port, tmp, &pcie->ports, list)
@@ -731,6 +742,8 @@ static int al_pcie_setup(struct al_pcie *pcie)
 	/* power down PCIe subsys if slots are all empty (link down) */
 	if (list_empty(&pcie->ports))
 		al_pcie_subsys_powerdown(pcie);
+
+	dev_err( dev, "%s(): %d: return %d\n", __func__, __LINE__, 0 );
 
 	return 0;
 }
@@ -747,10 +760,14 @@ static int al_pcie_request_resources(struct al_pcie *pcie)
 	pci_add_resource(windows, &pcie->busn);
 
 	err = devm_request_pci_bus_resources(dev, windows);
-	if (err < 0)
+	if (err < 0) {
+		dev_err( dev, "%s(): %d: pci_scan_root_bus_bridge() failed %d\n", __func__, __LINE__, err );
 		return err;
+	}
 
 	pci_remap_iospace(&pcie->pio, pcie->io.start);
+
+	dev_err( dev, "%s(): %d: return %d\n", __func__, __LINE__, 0 );
 
 	return 0;
 }
@@ -770,9 +787,13 @@ static int al_pcie_register_host(struct pci_host_bridge *host)
 //	if (IS_ENABLED(CONFIG_PCI_MSI) && pcie->type->has_msi)
 //		host->msi = &al_pcie_msi_chip;
 
+	struct device *dev = pcie->dev;
+
 	err = pci_scan_root_bus_bridge(host);
-	if (err < 0)
+	if (err < 0) {
+		dev_err( dev, "%s(): %d: pci_scan_root_bus_bridge() failed %d\n", __func__, __LINE__, err );
 		return err;
+	}
 
 	pci_bus_size_bridges(host->bus);
 	pci_bus_assign_resources(host->bus);
@@ -781,6 +802,8 @@ static int al_pcie_register_host(struct pci_host_bridge *host)
 		pcie_bus_configure_settings(child);
 
 	pci_bus_add_devices(host->bus);
+
+	dev_err( dev, "%s(): %d: return %d\n", __func__, __LINE__, 0 );
 
 	return 0;
 }
@@ -804,22 +827,32 @@ static int al_pcie_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&pcie->ports);
 
 	err = al_pcie_setup(pcie);
-	if (err)
+	if (err) {
+		dev_err( dev, "%s(): %d: al_pcie_setup() failed\n", __func__, __LINE__ );
 		return err;
+	}
 
 	err = al_pcie_request_resources(pcie);
-	if (err)
+	if (err) {
+		dev_err( dev, "%s(): %d: al_pcie_request_resources() failed\n", __func__, __LINE__ );
 		goto put_resources;
+	}
 
 	err = al_pcie_register_host(host);
-	if (err)
+	if (err) {
+		dev_err( dev, "%s(): %d: al_pcie_register_host() failed\n", __func__, __LINE__ );
 		goto put_resources;
+	}
+
+	dev_info( dev, "%s(): %d: returning %d\n", __func__, __LINE__, 0 );
 
 	return 0;
 
 put_resources:
 	if (!list_empty(&pcie->ports))
 		al_pcie_put_resources(pcie);
+
+	dev_err( dev, "%s(): %d: returning %d\n", __func__, __LINE__, err );
 
 	return err;
 }
