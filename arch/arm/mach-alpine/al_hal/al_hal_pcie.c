@@ -669,6 +669,7 @@ int al_pcie_handle_init(struct al_pcie_port 	*pcie_port,
 	       port_id, pcie_reg_base);
 	return 0;
 }
+EXPORT_SYMBOL( al_pcie_handle_init );
 
 /** configure function mode (root complex or endpoint) */
 int
@@ -768,6 +769,7 @@ al_pcie_function_type_get(struct al_pcie_port *pcie_port)
 {
 	return al_pcie_function_mode_get(pcie_port);
 }
+EXPORT_SYMBOL( al_pcie_function_type_get );
 
 /** configure pcie port (link params, etc..) */
 int al_pcie_port_config(struct al_pcie_port *pcie_port,
