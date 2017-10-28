@@ -411,16 +411,12 @@ re_probe:
 
 	if (dev->bus->probe) {
 		ret = dev->bus->probe(dev);
-		if (ret) {
-			pr_err( "%s(): %d: %s() failed: %d\n", __func__, __LINE__, "dev->bus->probe", ret );
+		if (ret)
 			goto probe_failed;
-		}
 	} else if (drv->probe) {
 		ret = drv->probe(dev);
-		if (ret) {
-			pr_err( "%s(): %d: %s() failed: %d\n", __func__, __LINE__, "drv->probe", ret );
+		if (ret)
 			goto probe_failed;
-		}
 	}
 
 	if (test_remove) {
