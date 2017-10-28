@@ -432,7 +432,7 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 	struct of_pci_range range;
 	struct resource res;
 	int err;
-	static int index;
+	//static int index;
 
 	if (of_pci_range_parser_init(&parser, np)) {
 		return -EINVAL;
@@ -528,17 +528,29 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 	return 0;
 }
 
+// XXX: @CF: 20171027: can be replaced by of_irq_parse_and_map_pci()
 /* map the specified device/slot/pin to an IRQ */
 static int al_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 {
 	struct of_phandle_args oirq;
 	int ret;
 
-	ret = of_irq_parse_pci( dev, & oirq );
-	if (ret)
-		return ret;
+	dev_info( & dev->dev, "%s(): %d: Trying to get IRQ for slot %u pin %u\n", __func__, __LINE__, slot, pin );
 
-	return irq_create_of_mapping(&oirq);
+	ret = of_irq_parse_pci( dev, & oirq );
+	if (ret) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed %d\n", __func__, __LINE__, "of_irq_parse_pci", ret );
+		goto out;
+	}
+
+	ret = irq_create_of_mapping( & oirq );
+	if ( 0 == ret ) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed %d\n", __func__, __LINE__, "irq_create_of_mapping", ret );
+		goto out;
+	}
+
+out:
+	return ret;
 }
 
 static int al_pcie_scan_bus(int nr, struct pci_host_bridge *host )
@@ -589,6 +601,7 @@ static int al_pcie_add_host_bridge(struct al_pcie_pd *pcie)
 	memset(&hw, 0, sizeof(hw));
 
 	hw.nr_controllers = 1;
+	// XXX: @CF: 20171027: need to use new, generic pci irq domains
 	//hw.domain = pcie->index;
 	hw.private_data = (void **)&pcie;
 	hw.setup = al_pcie_setup;
