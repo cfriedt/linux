@@ -432,7 +432,8 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 	struct of_pci_range range;
 	struct resource res;
 	int err;
-	//static int index;
+	// XXX: @CF: 20171027: need to use new, generic pci irq domains
+	static int index;
 
 	if (of_pci_range_parser_init(&parser, np)) {
 		return -EINVAL;
@@ -511,7 +512,9 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 		pcie->busn.end = 0xff;
 		pcie->busn.flags = IORESOURCE_BUS;
 	}
-	pcie->index = pci_get_new_domain_nr();
+	pcie->index = index++;
+	// XXX: @CF: 20171027: need to use new, generic pci irq domains
+	//pcie->index = pci_get_new_domain_nr();
 
 //#if defined(CONFIG_MACH_QNAPTS) && (defined(TSX31XU) || defined(TSX31X) || defined(TSX35))
 #if 0

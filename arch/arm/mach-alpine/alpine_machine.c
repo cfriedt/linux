@@ -120,8 +120,8 @@ static void __init al_init_irq(void)
 {
 	irqchip_init();
 
-//	if (al_msix_init() != 0)
-//		pr_err("%s: al_msix_init() failed!\n", __func__);
+	if (al_msix_init() != 0)
+		pr_err("%s: al_msix_init() failed!\n", __func__);
 }
 
 static void __init al_serdes_resource_init(void)

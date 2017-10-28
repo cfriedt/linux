@@ -1575,8 +1575,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* acquire resources */
 	rc = pcim_enable_device(pdev);
-	if (rc)
+	if (rc) {
+		dev_err(&pdev->dev, "%s(): %d: %s(): failed: %d\n", __func__, __LINE__, "pcim_enable_device", rc );
 		return rc;
+	}
 
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL &&
 	    (pdev->device == 0x2652 || pdev->device == 0x2653)) {
@@ -1600,8 +1602,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	rc = pcim_iomap_regions_request_all(pdev, 1 << ahci_pci_bar, DRV_NAME);
 	if (rc == -EBUSY)
 		pcim_pin_device(pdev);
-	if (rc)
+	if (rc) {
+		dev_err(&pdev->dev, "%s(): %d: %s(): failed: %d\n", __func__, __LINE__, "pcim_iomap_regions_request_all", rc );
 		return rc;
+	}
 
 	hpriv = devm_kzalloc(dev, sizeof(*hpriv), GFP_KERNEL);
 	if (!hpriv)
@@ -1737,12 +1741,16 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* initialize adapter */
 	rc = ahci_configure_dma_masks(pdev, hpriv->cap & HOST_CAP_64);
-	if (rc)
+	if (rc) {
+		dev_err(&pdev->dev, "%s(): %d: %s(): failed: %d\n", __func__, __LINE__, "ahci_configure_dma_masks", rc );
 		return rc;
+	}
 
 	rc = ahci_pci_reset_controller(host);
-	if (rc)
+	if (rc) {
+		dev_err(&pdev->dev, "%s(): %d: %s(): failed: %d\n", __func__, __LINE__, "ahci_pci_reset_controller", rc );
 		return rc;
+	}
 
 	ahci_pci_init_controller(host);
 	ahci_pci_print_info(host);
@@ -1750,8 +1758,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	pci_set_master(pdev);
 
 	rc = ahci_host_activate(host, &ahci_sht);
-	if (rc)
+	if (rc) {
+		dev_err(&pdev->dev, "%s(): %d: %s(): failed: %d\n", __func__, __LINE__, "ahci_host_activate", rc );
 		return rc;
+	}
 
 	pm_runtime_put_noidle(&pdev->dev);
 	return 0;
