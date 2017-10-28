@@ -147,7 +147,8 @@ static int al_pcie_io_prepare(struct al_pcie_pd *pcie)
 	return 0;
 }
 
-#ifdef AL_PCIE_RMN_1010
+#if 1
+//#ifdef AL_PCIE_RMN_1010
 /* prepare controller for issuing mem transactions */
 static int al_pcie_mem_prepare(struct al_pcie_pd *pcie)
 {
@@ -510,10 +511,10 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 		pcie->busn.end = 0xff;
 		pcie->busn.flags = IORESOURCE_BUS;
 	}
-	pcie->index = index++;
+	pcie->index = pci_get_new_domain_nr();
 
 //#if defined(CONFIG_MACH_QNAPTS) && (defined(TSX31XU) || defined(TSX31X) || defined(TSX35))
-#if 1
+#if 0
     if (!strncmp(dev_name(pcie->dev), "fd800000.pcie-external0", strlen("fd800000.pcie-external0")))
         pcie->index = 1;
 
@@ -544,6 +545,7 @@ static int al_pcie_scan_bus(int nr, struct pci_host_bridge *host )
 {
 	struct pci_sys_data *sys = pci_host_bridge_priv(host);
 	struct al_pcie_pd *pcie = sys_to_pcie(sys);
+	struct device *dev = pcie->dev;
 	struct pci_bus *bus;
 
 	if (pcie->type == AL_PCI_TYPE_INTERNAL)
@@ -556,6 +558,7 @@ static int al_pcie_scan_bus(int nr, struct pci_host_bridge *host )
 					 sys, &sys->resources);
 
 	if ( NULL == bus ) {
+		dev_err( dev, "pci_scan_root_bus() failed\n" );
 		return -EINVAL;
 	}
 
@@ -603,11 +606,11 @@ static const struct of_device_id al_pcie_of_match[] = {
 	{ },
 };
 
-extern u64	al_pcie_read_addr_start[AL_SB_PCIE_NUM];
-extern u64	al_pcie_read_addr_end[AL_SB_PCIE_NUM];
-extern u64	al_pcie_write_addr_start[AL_SB_PCIE_NUM];
-extern u64	al_pcie_write_addr_end[AL_SB_PCIE_NUM];
-extern bool	al_pcie_address_valid[AL_SB_PCIE_NUM];
+u64	al_pcie_read_addr_start[AL_SB_PCIE_NUM];
+u64	al_pcie_read_addr_end[AL_SB_PCIE_NUM];
+u64	al_pcie_write_addr_start[AL_SB_PCIE_NUM];
+u64	al_pcie_write_addr_end[AL_SB_PCIE_NUM];
+bool al_pcie_address_valid[AL_SB_PCIE_NUM];
 
 static int al_pcie_probe(struct platform_device *pdev)
 {
@@ -642,7 +645,7 @@ static int al_pcie_probe(struct platform_device *pdev)
 	al_pcie_cfg_prepare(pcie);
 
 	al_pcie_io_prepare(pcie);
-#if 0
+#if 1
 //#ifdef AL_PCIE_RMN_1010
 	al_pcie_mem_prepare(pcie);
 
