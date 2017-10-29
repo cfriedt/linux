@@ -42,7 +42,7 @@
 
 #include "al_hal_eth.h"
 #include "al_init_eth_lm.h"
-#include "mach/alpine_machine.h"
+#include "../../../../arch/arm/mach-alpine/include/mach/alpine_machine.h"
 
 #include "al_eth.h"
 #include "al_hal_udma_iofic.h"
@@ -95,12 +95,10 @@ static struct {
 	{ "AnnapurnaLabs unified 1Gbe/10Gbe" },
 	};
 
-static DEFINE_PCI_DEVICE_TABLE(al_eth_pci_tbl) = {
-	{ PCI_VENDOR_ID_ANNAPURNA_LABS, PCI_DEVICE_ID_AL_ETH,
-	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, ALPINE},
-	{ PCI_VENDOR_ID_ANNAPURNA_LABS, PCI_DEVICE_ID_AL_ETH_ADVANCED,
-	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, ALPINE},
-	{ 0, }
+static const struct pci_device_id al_eth_pci_tbl[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_ANNAPURNA_LABS, PCI_DEVICE_ID_AL_ETH), },
+	{ PCI_DEVICE(PCI_VENDOR_ID_ANNAPURNA_LABS, PCI_DEVICE_ID_AL_ETH_ADVANCED), },
+	{ }
 };
 
 MODULE_DEVICE_TABLE(pci, al_eth_pci_tbl);
@@ -180,7 +178,7 @@ static int al_eth_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 			mdio->phy_id, mdio->reg_num, mdio->val_in);
 
 	if (adapter->mdio_bus) {
-		phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+		phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 		if (phydev)
 			return phy_mii_ioctl(phydev, ifr, cmd);
 	}
@@ -262,14 +260,14 @@ static void al_eth_adjust_link(struct net_device *dev)
 
 static int al_eth_phy_init(struct al_eth_adapter *adapter)
 {
-	struct phy_device *phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+	struct phy_device *phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 
 	adapter->link_config.old_link = 0;
 	adapter->link_config.active_duplex = DUPLEX_UNKNOWN;
 	adapter->link_config.active_speed = SPEED_UNKNOWN;
 
 	/* Attach the MAC to the PHY. */
-	phydev = phy_connect(adapter->netdev, dev_name(&phydev->dev), al_eth_adjust_link,
+	phydev = phy_connect(adapter->netdev, dev_name(&phydev->mdio.dev), al_eth_adjust_link,
 			     PHY_INTERFACE_MODE_RGMII);
 	if (IS_ERR(phydev)) {
 		netdev_err(adapter->netdev, "Could not attach to PHY\n");
@@ -277,7 +275,7 @@ static int al_eth_phy_init(struct al_eth_adapter *adapter)
 	}
 
 	netdev_info(adapter->netdev, "phy[%d]: device %s, driver %s\n",
-			phydev->addr, dev_name(&phydev->dev),
+			phydev->mdio.addr, dev_name(&phydev->mdio.dev),
 			phydev->drv ? phydev->drv->name : "unknown");
 
 	/* Mask with MAC supported features. */
@@ -288,7 +286,7 @@ static int al_eth_phy_init(struct al_eth_adapter *adapter)
 	phydev->advertising = phydev->supported;
 
 	netdev_info(adapter->netdev, "phy[%d]:supported %x adv %x\n",
-			phydev->addr, phydev->supported, phydev->advertising);
+			phydev->mdio.addr, phydev->supported, phydev->advertising);
 
 	adapter->phydev = phydev;
 	/* Bring the PHY up */
@@ -320,12 +318,6 @@ static int al_eth_mdiobus_setup(struct al_eth_adapter *adapter)
 	adapter->mdio_bus->write    = &al_mdio_write;
 	adapter->mdio_bus->phy_mask = ~(1 << adapter->phy_addr);
 
-	adapter->mdio_bus->irq = kmalloc(sizeof(int) * PHY_MAX_ADDR, GFP_KERNEL);
-	if (!adapter->mdio_bus->irq) {
-		mdiobus_free(adapter->mdio_bus);
-		return -ENOMEM;
-	}
-
 	for (i = 0; i < PHY_MAX_ADDR; i++)
 		adapter->mdio_bus->irq[i] = PHY_POLL;
 
@@ -336,7 +328,7 @@ static int al_eth_mdiobus_setup(struct al_eth_adapter *adapter)
 		return i;
 	}
 
-	phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+	phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 
 	if (!phydev || !phydev->drv) {
 		netdev_warn(adapter->netdev, "No PHY devices\n");
@@ -605,7 +597,7 @@ al_eth_flow_ctrl_init(struct al_eth_adapter *adapter)
 static uint8_t
 al_eth_flow_ctrl_mutual_cap_get(struct al_eth_adapter *adapter)
 {
-	struct phy_device *phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+	struct phy_device *phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 	struct al_eth_link_config *link_config = &adapter->link_config;
 	uint8_t peer_flow_ctrl = AL_ETH_FLOW_CTRL_AUTONEG;
 	uint8_t new_flow_ctrl = AL_ETH_FLOW_CTRL_AUTONEG;
@@ -1735,10 +1727,10 @@ al_eth_rx_poll(struct napi_struct *napi, int budget)
 
 		al_eth_rx_checksum(adapter, hal_pkt, skb);
 		if (likely(adapter->netdev->features & NETIF_F_RXHASH)) {
-			skb->rxhash = hal_pkt->rxhash;
+			skb->hash = hal_pkt->rxhash;
 			if (likely((hal_pkt->l4_proto_idx == AL_ETH_PROTO_ID_TCP) ||
 				   (hal_pkt->l4_proto_idx == AL_ETH_PROTO_ID_UDP)))
-				skb->l4_rxhash = 1;
+				skb->l4_hash = 1;
 		}
 
 		skb_record_rx_queue(skb, qid);
@@ -1928,7 +1920,7 @@ al_eth_enable_msix(struct al_eth_adapter *adapter)
 
 	rc = -ENOSPC;
 	while (msix_vecs >= 1) {
-		rc = pci_enable_msix(adapter->pdev, adapter->msix_entries, msix_vecs);
+		rc = pci_enable_msix_exact(adapter->pdev, adapter->msix_entries, msix_vecs);
 		if (rc <= 0)
 			break;
 		if (rc > 0)
@@ -1975,7 +1967,7 @@ al_eth_setup_int_mode(struct al_eth_adapter *adapter, int dis_msi)
 		adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].vector = adapter->pdev->irq;
 		adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].data = adapter;
 
-		cpu = first_cpu(*cpu_online_mask);
+		cpu = cpumask_first(cpu_online_mask);
 		cpumask_set_cpu(cpu, &adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].affinity_hint_mask);
 
 		return 0;
@@ -1989,7 +1981,7 @@ al_eth_setup_int_mode(struct al_eth_adapter *adapter, int dis_msi)
 		adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].vector = adapter->msix_entries[AL_ETH_MGMT_IRQ_IDX].vector;
 		adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].data = adapter;
 
-		cpu = first_cpu(*cpu_online_mask);
+		cpu = cpumask_first(cpu_online_mask);
 		cpumask_set_cpu(cpu, &adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].affinity_hint_mask);
 
 		return 0;
@@ -2001,7 +1993,7 @@ al_eth_setup_int_mode(struct al_eth_adapter *adapter, int dis_msi)
 
 	adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].data = adapter;
 	adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].vector = adapter->msix_entries[AL_ETH_MGMT_IRQ_IDX].vector;
-	cpu = first_cpu(*cpu_online_mask);
+	cpu = cpumask_first(cpu_online_mask);
 	cpumask_set_cpu(cpu, &adapter->irq_tbl[AL_ETH_MGMT_IRQ_IDX].affinity_hint_mask);
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
@@ -2015,7 +2007,7 @@ al_eth_setup_int_mode(struct al_eth_adapter *adapter, int dis_msi)
 		adapter->irq_tbl[irq_idx].data = &adapter->al_napi[napi_idx];
 		adapter->irq_tbl[irq_idx].vector = adapter->msix_entries[irq_idx].vector;
 
-		cpu = next_cpu((i % num_online_cpus() - 1), *cpu_online_mask);
+		cpu = cpumask_next((i % num_online_cpus() - 1), cpu_online_mask);
 		cpumask_set_cpu(cpu, &adapter->irq_tbl[irq_idx].affinity_hint_mask);
 	}
 
@@ -2030,7 +2022,7 @@ al_eth_setup_int_mode(struct al_eth_adapter *adapter, int dis_msi)
 		adapter->irq_tbl[irq_idx].data = &adapter->al_napi[napi_idx];
 		adapter->irq_tbl[irq_idx].vector = adapter->msix_entries[irq_idx].vector;
 
-		cpu = next_cpu((i % num_online_cpus() - 1), *cpu_online_mask);
+		cpu = cpumask_next((i % num_online_cpus() - 1), cpu_online_mask);
 		cpumask_set_cpu(cpu, &adapter->irq_tbl[irq_idx].affinity_hint_mask);
 	}
 
@@ -3064,8 +3056,8 @@ al_eth_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
 	struct al_eth_adapter *adapter = netdev_priv(netdev);
 	struct phy_device *phydev = adapter->phydev;
 
-	if (phydev)
-		return phy_ethtool_gset(phydev, ecmd);
+//	if (phydev)
+//		return phy_ethtool_gset(phydev, ecmd);
 
     if (adapter->mac_mode == AL_ETH_MAC_MODE_10GbE_Serial) {
         ecmd->speed = SPEED_10000;
@@ -3204,14 +3196,14 @@ static void al_eth_set_msglevel(struct net_device *netdev, u32 value)
 	adapter->msg_enable = value;
 }
 
-static struct rtnl_link_stats64 *al_eth_get_stats64(struct net_device *netdev,
+static void al_eth_get_stats64(struct net_device *netdev,
 						    struct rtnl_link_stats64 *stats)
 {
 	struct al_eth_adapter *adapter = netdev_priv(netdev);
 	struct al_eth_mac_stats *mac_stats = &adapter->mac_stats;
 
 	if (!adapter->up)
-		return NULL;
+		return;
 
 	al_eth_mac_stats_get(&adapter->hal_adapter, mac_stats);
 
@@ -3236,7 +3228,7 @@ static struct rtnl_link_stats64 *al_eth_get_stats64(struct net_device *netdev,
 	stats->rx_errors = mac_stats->ifInErrors;
 	stats->tx_errors = mac_stats->ifOutErrors;
 
-	return stats;
+	return;
 
 }
 
@@ -3312,7 +3304,7 @@ al_eth_set_pauseparam(struct net_device *netdev,
 		struct phy_device *phydev;
 		uint32_t oldadv;
 
-		phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+		phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 		oldadv = phydev->advertising &
 				     (ADVERTISED_Pause | ADVERTISED_Asym_Pause);
 		link_config->flow_ctrl_supported |= AL_ETH_FLOW_CTRL_AUTONEG;
@@ -3357,10 +3349,13 @@ static u32 al_eth_get_rxfh_indir_size(struct net_device *netdev)
 	return AL_ETH_RX_RSS_TABLE_SIZE;
 }
 
-static int al_eth_get_rxfh_indir(struct net_device *netdev, u32 *indir)
+static int al_eth_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key, u8 *hfunc)
 {
 	struct al_eth_adapter *adapter = netdev_priv(netdev);
 	int i;
+
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP;
 
 	for (i = 0; i < AL_ETH_RX_RSS_TABLE_SIZE; i++)
 		indir[i] = adapter->rss_ind_tbl[i];
@@ -3368,10 +3363,15 @@ static int al_eth_get_rxfh_indir(struct net_device *netdev, u32 *indir)
 	return 0;
 }
 
-static int al_eth_set_rxfh_indir(struct net_device *netdev, const u32 *indir)
+static int al_eth_set_rxfh(struct net_device *netdev, const u32 *indir, const u8 *key,
+        const u8 hfunc)
 {
 	struct al_eth_adapter *adapter = netdev_priv(netdev);
 	size_t i;
+
+	if (key ||
+		(hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP))
+			return -EOPNOTSUPP;
 
 	for (i = 0; i < AL_ETH_RX_RSS_TABLE_SIZE; i++) {
 		adapter->rss_ind_tbl[i] = indir[i];
@@ -3427,7 +3427,7 @@ static int al_eth_set_eee(struct net_device *netdev,
 	if (!adapter->phy_exist)
 		return -EOPNOTSUPP;
 
-	phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+	phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 
 	phy_init_eee(phydev, 1);
 
@@ -3447,7 +3447,7 @@ static void al_eth_get_wol(struct net_device *netdev,
 	struct phy_device *phydev;
 
 	if ((adapter) && (adapter->phy_exist) && (adapter->mdio_bus)) {
-		phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+		phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 		if (phydev) {
 			phy_ethtool_get_wol(phydev, wol);
 			wol->supported |= WAKE_PHY;
@@ -3470,7 +3470,7 @@ static int al_eth_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol
 		return -EOPNOTSUPP;
 
 	if ((adapter) && (adapter->phy_exist) && (adapter->mdio_bus)) {
-		phydev = adapter->mdio_bus->phy_map[adapter->phy_addr];
+		phydev = mdiobus_get_phy(adapter->mdio_bus, adapter->phy_addr);
 		if (phydev)
 		{
 #if defined(QNAP_HAL)
@@ -3515,8 +3515,8 @@ static const struct ethtool_ops al_eth_ethtool_ops = {
 	.get_rxnfc		= al_eth_get_rxnfc,
 /*	.get_sset_count		= al_eth_get_sset_count,*/
 	.get_rxfh_indir_size    = al_eth_get_rxfh_indir_size,
-	.get_rxfh_indir		= al_eth_get_rxfh_indir,
-	.set_rxfh_indir		= al_eth_set_rxfh_indir,
+	.get_rxfh		= al_eth_get_rxfh,
+	.set_rxfh		= al_eth_set_rxfh,
 	.get_channels		= al_eth_get_channels,
 /*	.set_channels		= al_eth_set_channels,*/
 
@@ -3682,7 +3682,8 @@ dma_error:
 }
 
 /* Return subqueue id on this core (one per core). */
-static u16 al_eth_select_queue(struct net_device *dev, struct sk_buff *skb)
+static u16 al_eth_select_queue(struct net_device *dev, struct sk_buff *skb,
+	void *accel_priv, select_queue_fallback_t fallback)
 {
 	return smp_processor_id();
 }
@@ -3933,7 +3934,7 @@ al_eth_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	netdev->netdev_ops = &al_eth_netdev_ops;
 	netdev->watchdog_timeo = TX_TIMEOUT;
-	SET_ETHTOOL_OPS(netdev, &al_eth_ethtool_ops);
+	netdev->ethtool_ops = &al_eth_ethtool_ops;
 
 	if (!is_valid_ether_addr(adapter->mac_addr)) {
 		eth_hw_addr_random(netdev);
@@ -4008,7 +4009,6 @@ al_eth_remove(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 }
 
-
 static struct pci_driver al_eth_pci_driver = {
 	.name	   = DRV_MODULE_NAME,
 	.id_table       = al_eth_pci_tbl,
@@ -4016,15 +4016,4 @@ static struct pci_driver al_eth_pci_driver = {
 	.remove	 = al_eth_remove,
 };
 
-static int __init al_eth_init(void)
-{
-	return pci_register_driver(&al_eth_pci_driver);
-}
-
-static void __exit al_eth_cleanup(void)
-{
-	pci_unregister_driver(&al_eth_pci_driver);
-}
-
-module_init(al_eth_init);
-module_exit(al_eth_cleanup);
+module_pci_driver(al_eth_pci_driver);

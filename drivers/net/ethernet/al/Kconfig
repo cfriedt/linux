@@ -3,7 +3,7 @@
 #
 
 config NET_AL_ETH
-	tristate "Annapurna Labs unified 1G/10G Ethernet driver"
+	bool "Annapurna Labs unified 1G/10G Ethernet driver"
 	depends on PCI && INET
 	select PHYLIB
 	help

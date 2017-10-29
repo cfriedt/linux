@@ -147,8 +147,7 @@ static int al_pcie_io_prepare(struct al_pcie_pd *pcie)
 	return 0;
 }
 
-#if 1
-//#ifdef AL_PCIE_RMN_1010
+#ifdef AL_PCIE_RMN_1010
 /* prepare controller for issuing mem transactions */
 static int al_pcie_mem_prepare(struct al_pcie_pd *pcie)
 {
@@ -661,8 +660,8 @@ static int al_pcie_probe(struct platform_device *pdev)
 	al_pcie_cfg_prepare(pcie);
 
 	al_pcie_io_prepare(pcie);
-#if 1
-//#ifdef AL_PCIE_RMN_1010
+
+#ifdef AL_PCIE_RMN_1010
 	al_pcie_mem_prepare(pcie);
 
 	if (pcie->type != AL_PCI_TYPE_INTERNAL) {

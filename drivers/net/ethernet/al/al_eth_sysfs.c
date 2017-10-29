@@ -57,7 +57,7 @@ static ssize_t al_eth_show_small_copy_len(struct device *dev,
 }
 
 static struct device_attribute dev_attr_small_copy_len = {
-	.attr = {.name = "small_copy_len", .mode = (S_IRUGO | S_IWUSR)},
+	.attr = {.name = "small_copy_len", .mode = 0660},
 	.show = al_eth_show_small_copy_len,
 	.store = al_eth_store_small_copy_len,
 };
@@ -88,7 +88,7 @@ static ssize_t al_eth_show_link_poll_interval(struct device *dev,
 }
 
 static struct device_attribute dev_attr_link_poll_interval = {
-	.attr = {.name = "link_poll_interval", .mode = (S_IRUGO | S_IWUSR)},
+	.attr = {.name = "link_poll_interval", .mode = 0660},
 	.show = al_eth_show_link_poll_interval,
 	.store = al_eth_store_link_poll_interval,
 };
@@ -148,7 +148,7 @@ static ssize_t al_eth_show_link_training_enable(struct device *dev,
 }
 
 static struct device_attribute dev_attr_link_training_enable = {
-	.attr = {.name = "link_training_enable", .mode = (S_IRUGO | S_IWUSR)},
+	.attr = {.name = "link_training_enable", .mode = 0660},
 	.show = al_eth_show_link_training_enable,
 	.store = al_eth_store_link_training_enable,
 };
@@ -185,7 +185,7 @@ static ssize_t al_eth_show_force_1000_base_x(struct device *dev,
 }
 
 static struct device_attribute dev_attr_force_1000_base_x = {
-	.attr = {.name = "force_1000_base_x", .mode = (S_IRUGO | S_IWUSR)},
+	.attr = {.name = "force_1000_base_x", .mode = 0660},
 	.show = al_eth_show_force_1000_base_x,
 	.store = al_eth_store_force_1000_base_x,
 };
@@ -285,12 +285,12 @@ static ssize_t al_eth_show_serdes_rx_param(struct device *dev,
 }
 
 #define AL_ETH_SERDES_TX_PARAMS_ATTR(_name) {				    \
-	__ATTR(serdes_tx_##_name, (S_IRUGO | S_IWUSR),			    \
+	__ATTR(serdes_tx_##_name, 0660,			    \
 		al_eth_show_serdes_tx_param, al_eth_store_serdes_tx_param), \
 	(void*)offsetof(struct al_serdes_adv_tx_params, _name) }
 
 #define AL_ETH_SERDES_RX_PARAMS_ATTR(_name) {				    \
-	__ATTR(serdes_rx_##_name, (S_IRUGO | S_IWUSR),			    \
+	__ATTR(serdes_rx_##_name, 0660,			    \
 		al_eth_show_serdes_rx_param, al_eth_store_serdes_rx_param), \
 	(void*)offsetof(struct al_serdes_adv_rx_params, _name) }
 
@@ -339,7 +339,7 @@ static ssize_t al_eth_show_max_rx_buff_alloc_size(struct device *dev,
 }
 
 static struct device_attribute dev_attr_max_rx_buff_alloc_size = {
-	.attr = {.name = "max_rx_buff_alloc_size", .mode = (S_IRUGO | S_IWUSR)},
+	.attr = {.name = "max_rx_buff_alloc_size", .mode = 0660},
 	.show = al_eth_show_max_rx_buff_alloc_size,
 	.store = al_eth_store_max_rx_buff_alloc_size,
 };
@@ -347,7 +347,7 @@ static struct device_attribute dev_attr_max_rx_buff_alloc_size = {
 
 
 #define UDMA_DUMP_PREP_ATTR(_name, _type) {\
-        __ATTR(udma_dump_##_name, S_IRUGO|S_IWUGO, rd_udma_dump, wr_udma_dump),\
+        __ATTR(udma_dump_##_name, 0660, rd_udma_dump, wr_udma_dump),\
         (void*)_type }
 
 enum udma_dump_type {
