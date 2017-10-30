@@ -10,8 +10,6 @@ usbcore-y += port.o
 usbcore-$(CONFIG_OF)		+= of.o
 usbcore-$(CONFIG_USB_PCI)		+= hcd-pci.o
 usbcore-$(CONFIG_ACPI)		+= usb-acpi.o
-# XXX: @CF: 20171029: Does not compile yet
-#usbcore-$(CONFIG_USB_ETRON_HUB) += ethub.o
 
 obj-$(CONFIG_USB)		+= usbcore.o
 

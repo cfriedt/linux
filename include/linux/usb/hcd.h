@@ -202,14 +202,6 @@ struct usb_hcd {
 #	define	HC_STATE_RESUMING	(__SUSPEND|__TRANSIENT)
 #	define	HC_STATE_SUSPENDED	(__SUSPEND)
 
-	u8			chip_id;
-#define HCD_CHIP_ID_UNKNOWN 0x00
-#define HCD_CHIP_ID_ETRON_EJ168 0x10
-#define HCD_CHIP_ID_ETRON_EJ188 0x20
-
-	unsigned int		chip_quirks;
-#define HCD_BATTERY_CHARGE_QUIRK (1 << 0)
-
 #define	HC_IS_RUNNING(state) ((state) & __ACTIVE)
 #define	HC_IS_SUSPENDED(state) ((state) & __SUSPEND)
 
@@ -406,9 +398,7 @@ struct hc_driver {
 	int	(*find_raw_port_number)(struct usb_hcd *, int);
 	/* Call for power on/off the port if necessary */
 	int	(*port_power)(struct usb_hcd *hcd, int portnum, bool enable);
-	int	(*update_uas_device)(struct usb_hcd *, struct usb_device *, int);
-	void	(*stop_endpoint)(struct usb_hcd *, struct usb_device *,
-			struct usb_host_endpoint *);
+
 };
 
 static inline int hcd_giveback_urb_in_bh(struct usb_hcd *hcd)

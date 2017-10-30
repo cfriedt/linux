@@ -41,7 +41,6 @@ struct usb_hub {
 	int			error;		/* last reported error */
 	int			nerrors;	/* track consecutive errors */
 
-	struct list_head        event_list;
 	unsigned long		event_bits[1];	/* status change bitmask */
 	unsigned long		change_bits[1];	/* ports with logical connect
 							status change */
@@ -49,7 +48,6 @@ struct usb_hub {
 							device present */
 	unsigned long		wakeup_bits[1];	/* ports that have signaled
 							remote wakeup */
-	unsigned long           bot_mode_bits[1];
 	unsigned long		power_bits[1]; /* ports that are powered */
 	unsigned long		child_usage_bits[1]; /* ports powered on for
 							children */
