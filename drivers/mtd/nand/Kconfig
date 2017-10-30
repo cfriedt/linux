@@ -535,12 +535,11 @@ config MTD_NAND_XWAY
 	  Enables support for NAND Flash chips on Lantiq XWAY SoCs. NAND is attached
 	  to the External Bus Unit (EBU).
 
-#XXX: @CF: 20171017: Does not compile yet
-#config MTD_NAND_AL
-#	tristate "NAND support for Annapurna Labs NAND controller"
-#	depends on MTD_NAND
-#	help
-#	  Enable support for NAND Flash chips on Annapurna Labs NAND controllers.
+config MTD_NAND_AL
+	tristate "NAND support for Annapurna Labs NAND controller"
+	depends on MTD_NAND
+	help
+	  Enable support for NAND Flash chips on Annapurna Labs NAND controllers.
 
 config MTD_NAND_SUNXI
 	tristate "Support for NAND on Allwinner SoCs"
