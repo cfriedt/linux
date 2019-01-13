@@ -46,6 +46,20 @@
 #include <dt-bindings/mfd/stm32f7-rcc.h>
 
 / {
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		linux,dma {
+			compatible = "shared-dma-pool";
+			linux,dma-default;
+			no-map;
+			reg = <0x20010000 0x3bfff>; /* sram1 240kb */
+		};
+	};
+
 	clocks {
 		clk_hse: clk-hse {
 			#clock-cells = <0>;
@@ -73,6 +87,63 @@
 	};
 
 	soc {
+
+
+		mtl_rx_setup: rx-queues-config {
+			snps,rx-queues-to-use = <1>;
+			snps,rx-sched-sp;
+			queue0 {
+				snps,dcb-algorithm;
+				snps,priority = <0x0>;
+			};
+		};
+
+		mtl_tx_setup: tx-queues-config {
+			snps,tx-queues-to-use = <1>;
+			snps,tx-sched-sp;
+			queue0 {
+				snps,dcb-algorithm;
+				snps,priority = <0x0>;
+			};
+		};
+		mac: ethernet@40028000 {
+			compatible = "st,stm32-dwmac", "snps,dwmac-3.50a", "snps,dwmac";
+			reg = <0x40028000 0x8000>;
+			reg-names = "stmmaceth";
+
+			resets = <&rcc STM32F7_AHB1_RESET(ETHMAC)>;
+			reset-names = "stmmaceth";
+
+			clocks = <&rcc 0 STM32F7_AHB1_CLOCK(ETHMAC)>,
+				 <&rcc 0 STM32F7_AHB1_CLOCK(ETHMACTX)>,
+				 <&rcc 0 STM32F7_AHB1_CLOCK(ETHMACRX)>;
+			clock-names = "stmmaceth", "mac-clk-tx", "mac-clk-rx";
+
+			/*
+			interrupts = <61>, <62>;
+			interrupt-names = "macirq", "eth_wake_irq";
+			*/
+			interrupts = <61>;
+			interrupt-names = "macirq";
+
+			st,syscon = <&syscfg 0x4>;
+
+                        snps,pbl = <8>;
+                        snps,mixed-burst;
+                        dma-ranges;
+
+			snps,mtl-rx-config = <&mtl_rx_setup>;
+			snps,mtl-tx-config = <&mtl_tx_setup>;
+			mdio0 {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				compatible = "snps,dwmac-mdio";
+				phy0: ethernet-phy@0 {
+					reg = <0>;
+				};
+			};
+		};
+
 		timer2: timer@40000000 {
 			compatible = "st,stm32-timer";
 			reg = <0x40000000 0x400>;
@@ -587,6 +658,8 @@
 			clocks = <&rcc 0 STM32F7_AHB1_CLOCK(DMA1)>;
 			#dma-cells = <4>;
 			status = "disabled";
+			dma-channels = <8>;
+			dma-requests = <8>;
 		};
 
 		dma2: dma@40026400 {
@@ -604,6 +677,8 @@
 			#dma-cells = <4>;
 			st,mem2mem;
 			status = "disabled";
+			dma-channels = <8>;
+			dma-requests = <8>;
 		};
 
 		usbotg_hs: usb@40040000 {

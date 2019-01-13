@@ -28,6 +28,79 @@ int dwmac_dma_reset(void __iomem *ioaddr)
 	u32 value = readl(ioaddr + DMA_BUS_MODE);
 	int err;
 
+#define UNUSED(X) (void)X      /* To avoid gcc/g++ warnings */
+	typedef struct
+	{
+	  volatile u32 CR;            /*!< RCC clock control register,                                  Address offset: 0x00 */
+	  volatile u32 PLLCFGR;       /*!< RCC PLL configuration register,                              Address offset: 0x04 */
+	  volatile u32 CFGR;          /*!< RCC clock configuration register,                            Address offset: 0x08 */
+	  volatile u32 CIR;           /*!< RCC clock interrupt register,                                Address offset: 0x0C */
+	  volatile u32 AHB1RSTR;      /*!< RCC AHB1 peripheral reset register,                          Address offset: 0x10 */
+	  volatile u32 AHB2RSTR;      /*!< RCC AHB2 peripheral reset register,                          Address offset: 0x14 */
+	  volatile u32 AHB3RSTR;      /*!< RCC AHB3 peripheral reset register,                          Address offset: 0x18 */
+	  u32      RESERVED0;     /*!< Reserved, 0x1C                                                                    */
+	  volatile u32 APB1RSTR;      /*!< RCC APB1 peripheral reset register,                          Address offset: 0x20 */
+	  volatile u32 APB2RSTR;      /*!< RCC APB2 peripheral reset register,                          Address offset: 0x24 */
+	  u32      RESERVED1[2];  /*!< Reserved, 0x28-0x2C                                                               */
+	  volatile u32 AHB1ENR;       /*!< RCC AHB1 peripheral clock register,                          Address offset: 0x30 */
+	  volatile u32 AHB2ENR;       /*!< RCC AHB2 peripheral clock register,                          Address offset: 0x34 */
+	  volatile u32 AHB3ENR;       /*!< RCC AHB3 peripheral clock register,                          Address offset: 0x38 */
+	  u32      RESERVED2;     /*!< Reserved, 0x3C                                                                    */
+	  volatile u32 APB1ENR;       /*!< RCC APB1 peripheral clock enable register,                   Address offset: 0x40 */
+	  volatile u32 APB2ENR;       /*!< RCC APB2 peripheral clock enable register,                   Address offset: 0x44 */
+	  u32      RESERVED3[2];  /*!< Reserved, 0x48-0x4C                                                               */
+	  volatile u32 AHB1LPENR;     /*!< RCC AHB1 peripheral clock enable in low power mode register, Address offset: 0x50 */
+	  volatile u32 AHB2LPENR;     /*!< RCC AHB2 peripheral clock enable in low power mode register, Address offset: 0x54 */
+	  volatile u32 AHB3LPENR;     /*!< RCC AHB3 peripheral clock enable in low power mode register, Address offset: 0x58 */
+	  u32      RESERVED4;     /*!< Reserved, 0x5C                                                                    */
+	  volatile u32 APB1LPENR;     /*!< RCC APB1 peripheral clock enable in low power mode register, Address offset: 0x60 */
+	  volatile u32 APB2LPENR;     /*!< RCC APB2 peripheral clock enable in low power mode register, Address offset: 0x64 */
+	  u32      RESERVED5[2];  /*!< Reserved, 0x68-0x6C                                                               */
+	  volatile u32 BDCR;          /*!< RCC Backup domain control register,                          Address offset: 0x70 */
+	  volatile u32 CSR;           /*!< RCC clock control & status register,                         Address offset: 0x74 */
+	  u32      RESERVED6[2];  /*!< Reserved, 0x78-0x7C                                                               */
+	  volatile u32 SSCGR;         /*!< RCC spread spectrum clock generation register,               Address offset: 0x80 */
+	  volatile u32 PLLI2SCFGR;    /*!< RCC PLLI2S configuration register,                           Address offset: 0x84 */
+	  volatile u32 PLLSAICFGR;    /*!< RCC PLLSAI configuration register,                           Address offset: 0x88 */
+	  volatile u32 DCKCFGR1;      /*!< RCC Dedicated Clocks configuration register1,                 Address offset: 0x8C */
+	  volatile u32 DCKCFGR2;      /*!< RCC Dedicated Clocks configuration register 2,               Address offset: 0x90 */
+	} RCC_TypeDef;
+
+#define SET_BIT(REG, BIT)     ((REG) |= (BIT))
+#define READ_BIT(REG, BIT)    ((REG) & (BIT))
+#define RCC                 ((RCC_TypeDef *) ((0x40000000U + 0x00020000U) + 0x3800U))
+#define RCC_APB2ENR_SYSCFGEN_Pos           (14U)
+#define RCC_APB2ENR_SYSCFGEN_Msk           (0x1U << RCC_APB2ENR_SYSCFGEN_Pos)  /*!< 0x00004000 */
+#define RCC_APB2ENR_SYSCFGEN               RCC_APB2ENR_SYSCFGEN_Msk
+#define __HAL_RCC_SYSCFG_CLK_ENABLE() \
+	do { \
+	volatile u32 tmpreg; \
+	SET_BIT(RCC->APB2ENR, RCC_APB2ENR_SYSCFGEN); \
+	/* Delay after an RCC peripheral clock enabling */ \
+	tmpreg = READ_BIT(RCC->APB2ENR, RCC_APB2ENR_SYSCFGEN); \
+	UNUSED(tmpreg); \
+  } while(0)
+
+	__HAL_RCC_SYSCFG_CLK_ENABLE();
+
+	typedef struct
+	{
+		volatile u32 MEMRMP;       /*!< SYSCFG memory remap register,                      Address offset: 0x00      */
+		volatile u32 PMC;          /*!< SYSCFG peripheral mode configuration register,     Address offset: 0x04      */
+		volatile u32 EXTICR[4];    /*!< SYSCFG external interrupt configuration registers, Address offset: 0x08-0x14 */
+		u32      RESERVED[2];  /*!< Reserved, 0x18-0x1C                                                          */
+		volatile u32 CMPCR;        /*!< SYSCFG Compensation cell control register,         Address offset: 0x20      */
+	} SYSCFG_TypeDef;
+
+#define SYSCFG              ((SYSCFG_TypeDef *) ((0x40000000U + 0x00010000U) + 0x3800U))
+#define SYSCFG_PMC_MII_RMII_SEL_Pos     (23U)
+#define SYSCFG_PMC_MII_RMII_SEL_Msk     (0x1U << SYSCFG_PMC_MII_RMII_SEL_Pos)  /*!< 0x00800000 */
+#define SYSCFG_PMC_MII_RMII_SEL         SYSCFG_PMC_MII_RMII_SEL_Msk            /*!<Ethernet PHY interface selection */
+#define ETH_MEDIA_INTERFACE_RMII      ((u32)SYSCFG_PMC_MII_RMII_SEL)
+	/* Select MII or RMII Mode*/
+	SYSCFG->PMC &= ~(SYSCFG_PMC_MII_RMII_SEL);
+	SYSCFG->PMC |= ETH_MEDIA_INTERFACE_RMII;
+
 	/* DMA SW reset */
 	value |= DMA_BUS_MODE_SFT_RESET;
 	writel(value, ioaddr + DMA_BUS_MODE);
