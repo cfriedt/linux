@@ -136,10 +136,13 @@
 		};
 
 		/* MSIX Configuration */
-		msix {
-			compatible = "annapurna-labs,al-msix";
+		msix: msix@fbe00000 {
+			compatible = "annapurna-labs,al-msix", "al,alpine-msix";
 			reg = <0x0 0xfbe00000 0x0 0x100000>;
-			interrupts = <0 96 1 0 159 1>;
+			interrupt-controller;
+			msi-controller;
+			al,msi-base-spi = <96>;
+			al,msi-num-spis = <64>;
 		};
 
 		/* Performance Monitor Unit */
@@ -356,11 +359,12 @@
 
 		/* Internal PCIe Controller */
 		pcie-internal {
-			compatible = "annapurna-labs,al-internal-pcie";
+			compatible = "annapurna-labs,al-internal-pcie", "pci-host-ecam-generic";
 			device_type = "pci";
 			#size-cells = <2>;
 			#address-cells = <3>;
 			#interrupt-cells = <1>;
+			reg = <0x0 0xfbc00000 0x0 0x100000>;
 			interrupt-parent = <&gic_main>;
 			interrupt-map-mask = <0xf800 0 0 7>;
 			interrupt-map = <0x3000 0 0 1 &gic_main 0 32 4>,
@@ -387,10 +391,12 @@
 				  0x02000000 0x0 0xfe000000 0x0 0xfe000000 0x0 0x1000000>;
 
 			bus-range = <0x00 0x00>;
+			msi-parent = <&msix>;
 		};
 
 		/* External PCIe Controller 0*/
 		pcie-external0 {
+			//compatible = "annapurna-labs,al-pci", "pci-host-ecam-generic";
 			compatible = "annapurna-labs,al-pci";
 			reg = <0x0 0xfd800000 0x0 0x00020000>; /* controller 0 registers */
 			device_type = "pci";
@@ -413,10 +419,12 @@
 				  0x02000000 0x0 0xe0010000 0x0 0xe0010000 0x0 0x07ff0000>;
 
 			bus-range = <0x00 0xff>;
+			msi-parent = <&msix>;
 		};
 
 		/* External PCIe Controllers 1*/
 		pcie-external1 {
+			//compatible = "annapurna-labs,al-pci", "pci-host-ecam-generic";
 			compatible = "annapurna-labs,al-pci";
 			reg = <0x0 0xfd820000 0x0 0x00020000>; /* controller 1 registers */
 			device_type = "pci";
@@ -438,10 +446,12 @@
 				  0x02000000 0x0 0xe8010000 0x0 0xe8010000 0x0 0x03ff0000>;
 
 			bus-range = <0x00 0xff>;
+			msi-parent = <&msix>;
 		};
 
 		/* External PCIe Controllers 2*/
 		pcie-external2 {
+			//compatible = "annapurna-labs,al-pci", "pci-host-ecam-generic";
 			compatible = "annapurna-labs,al-pci";
 			reg = <0x0 0xfd840000 0x0 0x00020000>; /* controller 2 registers */
 			device_type = "pci";
@@ -463,6 +473,7 @@
 				  0x02000000 0x0 0xec010000 0x0 0xec010000 0x0 0x03ff0000>;
 
 			bus-range = <0x00 0xff>;
+			msi-parent = <&msix>;
 		};
 
 		/* Thermal sensor */

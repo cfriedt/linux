@@ -169,6 +169,7 @@ met:
  * initialized by the al_pcie_handle_init() that should be called before any
  * other function of this API. later, this handle passed to the API functions.
  */
+struct irq_domain;
 struct al_pcie_port {
 	struct al_pcie_regs __iomem *regs;
 

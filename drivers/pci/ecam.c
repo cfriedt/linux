@@ -44,6 +44,8 @@ struct pci_config_window *pci_ecam_create(struct device *dev,
 	struct resource *conflict;
 	int i, err;
 
+	dev_info( dev, "%s(): %d\n", __func__, __LINE__ );
+
 	if (busr->start > busr->end)
 		return ERR_PTR(-EINVAL);
 

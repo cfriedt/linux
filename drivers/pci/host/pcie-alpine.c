@@ -43,6 +43,14 @@
 #include "../../../../arch/arm/mach-alpine/include/mach/al_hal_iomap.h"
 #include "../../../../arch/arm/mach-alpine/core.h"
 
+#ifndef AL_PCIE_CORE_CONF_BASE_OFFSET
+#define AL_PCIE_CORE_CONF_BASE_OFFSET 0x2000
+#endif
+
+#ifndef AL_MSI_IRQS_NUM
+#define AL_MSI_IRQS_NUM 64
+#endif
+
 enum al_pci_type {
 	AL_PCI_TYPE_INTERNAL = 0,
 	AL_PCI_TYPE_EXTERNAL = 1,
@@ -70,6 +78,9 @@ struct al_pcie_pd {
 	struct al_pcie_port	pcie_port;
 	struct al_pcie_link_status status;
 	u8	target_bus;
+
+	struct	irq_domain *irq_domain;
+	struct	irq_domain *msi_domain;
 };
 
 
@@ -80,6 +91,8 @@ static inline struct al_pcie_pd *sys_to_pcie(struct pci_sys_data *sys)
 
 static int al_pcie_enable_controller(struct al_pcie_pd *pcie)
 {
+	dev_info( pcie->dev, "%s()\n", __func__ );
+
 	if (pcie->type == AL_PCI_TYPE_INTERNAL)
 		return 0;
 
@@ -454,7 +467,7 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 		/* set the base address of the configuration space of the local
 		 * bridge
 		 */
-		pcie->local_bridge_config_space = pcie->regs_base + 0x2000;
+		pcie->local_bridge_config_space = pcie->regs_base + AL_PCIE_CORE_CONF_BASE_OFFSET;
 	}
 	/* Get the ECAM, I/O and memory ranges from DT */
 	for_each_of_pci_range(&parser, &range) {
@@ -512,6 +525,7 @@ static int al_pcie_parse_dt(struct al_pcie_pd *pcie)
 		pcie->busn.flags = IORESOURCE_BUS;
 	}
 	pcie->index = index++;
+
 	// XXX: @CF: 20171027: need to use new, generic pci irq domains
 	//pcie->index = pci_get_new_domain_nr();
 
@@ -627,25 +641,106 @@ u64	al_pcie_write_addr_start[AL_SB_PCIE_NUM];
 u64	al_pcie_write_addr_end[AL_SB_PCIE_NUM];
 bool al_pcie_address_valid[AL_SB_PCIE_NUM];
 
+static int al_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
+				  irq_hw_number_t hwirq)
+{
+	irq_set_chip_and_handler(irq, &dummy_irq_chip, handle_simple_irq);
+	irq_set_chip_data(irq, domain->host_data);
+
+	return 0;
+}
+
+static const struct irq_domain_ops intx_domain_ops = {
+	.map = al_pcie_intx_map,
+};
+
+static int al_pcie_msi_map(struct irq_domain *domain, unsigned int irq,
+				  irq_hw_number_t hwirq)
+{
+//	irq_set_chip_and_handler(irq, &dummy_irq_chip, handle_simple_irq);
+//	irq_set_chip_data(irq, domain->host_data);
+
+	pr_info( "%s()\n", __func__ );
+
+	return -ENOSYS;
+}
+
+static const struct irq_domain_ops msi_domain_ops = {
+	.map = al_pcie_msi_map,
+};
+
+static void al_pcie_enable_msi(struct al_pcie_pd *pcie) {
+	struct device *dev = pcie->dev;
+	dev_info( dev, "%s()\n", __func__ );
+}
+
+static int al_pcie_msi_setup_irq(struct msi_controller *chip,
+				     struct pci_dev *pdev,
+				     struct msi_desc *desc)
+{
+	pr_info( "%s()\n", __func__ );
+	return 0;
+}
+
+static void al_msi_teardown_irq(struct msi_controller *chip,
+				    unsigned int irq)
+{
+	pr_info( "%s()\n", __func__ );
+}
+
+/* MSI Chip Descriptor */
+static struct msi_controller al_pcie_msi_chip = {
+	.setup_irq = al_pcie_msi_setup_irq,
+	.teardown_irq = al_msi_teardown_irq,
+};
+
+static int al_pcie_init_irq_domain(struct al_pcie_pd *pcie)
+{
+	struct device *dev = pcie->dev;
+	struct device_node *node = dev->of_node;
+
+	/* Setup INTx */
+	pcie->irq_domain = irq_domain_add_linear(node, PCI_NUM_INTX,
+						 &intx_domain_ops,
+						 pcie);
+	if (!pcie->irq_domain) {
+		dev_err(dev, "Failed to get a INTx IRQ domain\n");
+		return -ENODEV;
+	}
+
+	/* Setup MSI */
+	if (IS_ENABLED(CONFIG_PCI_MSI)) {
+		pcie->msi_domain = irq_domain_add_linear(node,
+							 AL_MSI_IRQS_NUM,
+							 &msi_domain_ops,
+							 &al_pcie_msi_chip);
+		if (!pcie->msi_domain) {
+			dev_err(dev, "Failed to get a MSI IRQ domain\n");
+			return -ENODEV;
+		}
+
+		al_pcie_enable_msi(pcie);
+	}
+
+	return 0;
+}
+
 static int al_pcie_probe(struct platform_device *pdev)
 {
-	enum al_pci_type type;
-	const struct of_device_id *of_id;
 	struct al_pcie_pd *pcie;
+	struct pci_host_bridge *host;
+	struct device *dev = &pdev->dev;
 	int err;
 
-	of_id = of_match_device(al_pcie_of_match, &pdev->dev);
-	if (of_id)
-		type = (enum al_pci_type) of_id->data;
-	else
-		BUG();
-
-	pcie = devm_kzalloc(&pdev->dev, sizeof(*pcie), GFP_KERNEL);
-	if (!pcie)
+	host = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
+	if (!host)
 		return -ENOMEM;
 
-	pcie->type = type;
-	pcie->dev = &pdev->dev;
+	pcie = pci_host_bridge_priv(host);
+
+	pcie->dev = dev;
+	pcie->type = (enum al_pci_type) of_device_get_match_data(dev);
+	platform_set_drvdata(pdev, pcie);
 
 	err = al_pcie_parse_dt(pcie);
 	if (err < 0)
@@ -678,11 +773,11 @@ static int al_pcie_probe(struct platform_device *pdev)
 
 		al_pcie_address_valid[pcie->index] = true;
 
-		dev_dbg(&pdev->dev, "%s: [pcie %d] use DMA for read from %llx to %llx\n",
+		dev_dbg(dev, "%s: [pcie %d] use DMA for read from %llx to %llx\n",
 			__func__, pcie->index, al_pcie_read_addr_start[pcie->index],
 			al_pcie_read_addr_end[pcie->index]);
 
-		dev_dbg(&pdev->dev, "%s: [pcie %d] use DMA for write from %llx to %llx\n",
+		dev_dbg(dev, "%s: [pcie %d] use DMA for write from %llx to %llx\n",
 			__func__, pcie->index, al_pcie_write_addr_start[pcie->index],
 			al_pcie_write_addr_end[pcie->index]);
 
@@ -699,12 +794,14 @@ static int al_pcie_probe(struct platform_device *pdev)
 
 	err = al_pcie_add_host_bridge(pcie);
 	if (err < 0) {
-		dev_err(&pdev->dev, "failed to enable PCIe controller: %d\n",
-			err);
+		dev_err(dev, "failed to enable PCIe controller: %d\n", err);
 		goto enable_err;
 	}
 
-	platform_set_drvdata(pdev, pcie);
+	err = al_pcie_init_irq_domain(pcie);
+	if (err < 0) {
+		goto enable_err;
+	}
 
 	return 0;
 enable_err:

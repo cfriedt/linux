@@ -135,7 +135,7 @@ extern "C" {
  *
  * @param format
  */
-#define al_dbg(...)			pr_debug(__VA_ARGS__)
+#define al_dbg(...)			pr_info(__VA_ARGS__)
 
 /**
  * Assertion

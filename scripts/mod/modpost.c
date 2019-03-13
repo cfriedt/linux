@@ -23,6 +23,19 @@
 #include "../../include/linux/license.h"
 #include "../../include/linux/export.h"
 
+#ifdef __APPLE__
+#define R_386_32        1
+#define R_386_PC32      2
+
+#define R_ARM_ABS32     2
+#define R_ARM_PC24      1
+
+#define R_MIPS_32               2
+#define R_MIPS_26               4
+#define R_MIPS_HI16             5
+#define R_MIPS_LO16             6
+#endif
+
 /* Are we using CONFIG_MODVERSIONS? */
 static int modversions = 0;
 /* Warn about undefined symbols? (do so if we have vmlinux) */

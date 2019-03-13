@@ -37,9 +37,15 @@ static int pci_msi_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	struct irq_domain *domain;
 
 	domain = dev_get_msi_domain(&dev->dev);
-	if (domain && irq_domain_is_hierarchy(domain))
+	if ( ! domain ) {
+		dev_err( & dev->dev, "%s(): %d: dev_get_msi_domain() failed\n", __func__, __LINE__ );
+	}
+	if (domain && irq_domain_is_hierarchy(domain)) {
+		dev_err( & dev->dev, "%s(): %d: calling msi_domain_alloc_irqs()\n", __func__, __LINE__ );
 		return msi_domain_alloc_irqs(domain, &dev->dev, nvec);
+	}
 
+	dev_err( & dev->dev, "%s(): %d: calling arch_setup_msi_irqs( %d, %d )\n", __func__, __LINE__, nvec, type );
 	return arch_setup_msi_irqs(dev, nvec, type);
 }
 
@@ -659,11 +665,15 @@ static void __iomem *msix_map_region(struct pci_dev *dev, unsigned nr_entries)
 			      &table_offset);
 	bir = (u8)(table_offset & PCI_MSIX_TABLE_BIR);
 	flags = pci_resource_flags(dev, bir);
-	if (!flags || (flags & IORESOURCE_UNSET))
+	if (!flags || (flags & IORESOURCE_UNSET)) {
+		dev_err( & dev->dev, "%s(): %d: flags: %x\n", __func__, __LINE__, flags );
 		return NULL;
+	}
 
 	table_offset &= PCI_MSIX_TABLE_OFFSET;
 	phys_addr = pci_resource_start(dev, bir) + table_offset;
+
+	dev_err( & dev->dev, "%s(): %d: table_offset: %x, phys_addr: %x\n", __func__, __LINE__, table_offset, phys_addr );
 
 	return ioremap_nocache(phys_addr, nr_entries * PCI_MSIX_ENTRY_SIZE);
 }
@@ -749,21 +759,29 @@ static int msix_capability_init(struct pci_dev *dev, struct msix_entry *entries,
 	pci_read_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, &control);
 	/* Request & Map MSI-X table region */
 	base = msix_map_region(dev, msix_table_size(control));
-	if (!base)
+	if (!base) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed\n", __func__, __LINE__, "msix_map_region" );
 		return -ENOMEM;
+	}
 
 	ret = msix_setup_entries(dev, base, entries, nvec, affd);
-	if (ret)
+	if (ret) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed: %d\n", __func__, __LINE__, "msix_setup_entries", ret );
 		return ret;
+	}
 
 	ret = pci_msi_setup_msi_irqs(dev, nvec, PCI_CAP_ID_MSIX);
-	if (ret)
+	if (ret) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed: %d\n", __func__, __LINE__, "pci_msi_setup_msi_irqs", ret );
 		goto out_avail;
+	}
 
 	/* Check if all MSI entries honor device restrictions */
 	ret = msi_verify_entries(dev);
-	if (ret)
+	if (ret) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed: %d\n", __func__, __LINE__, "msi_verify_entries", ret );
 		goto out_free;
+	}
 
 	/*
 	 * Some devices require MSI-X to be enabled before we can touch the
@@ -776,8 +794,10 @@ static int msix_capability_init(struct pci_dev *dev, struct msix_entry *entries,
 	msix_program_entries(dev, entries);
 
 	ret = populate_msi_sysfs(dev);
-	if (ret)
+	if (ret) {
+		dev_err( & dev->dev, "%s(): %d: %s() failed: %d\n", __func__, __LINE__, "populate_msi_sysfs", ret );
 		goto out_free;
+	}
 
 	/* Set MSI-X enabled bits and unmask the function */
 	pci_intx_for_msi(dev, 0);
@@ -807,6 +827,7 @@ out_avail:
 out_free:
 	free_msi_irqs(dev);
 
+	dev_err( & dev->dev, "%s(): %d: ret: %d\n", __func__, __LINE__, ret );
 	return ret;
 }
 
@@ -938,23 +959,38 @@ static int __pci_enable_msix(struct pci_dev *dev, struct msix_entry *entries,
 	int nr_entries;
 	int i, j;
 
-	if (!pci_msi_supported(dev, nvec))
+	if ( ! dev ) {
+		pr_err( "device is null!\n" );
 		return -EINVAL;
+	}
+
+	if (!pci_msi_supported(dev, nvec)) {
+		dev_err( & dev->dev, "%s(): %d: pci_msi_supported() was false\n", __func__, __LINE__);
+		return -EINVAL;
+	}
 
 	nr_entries = pci_msix_vec_count(dev);
-	if (nr_entries < 0)
+	if (nr_entries < 0) {
+		dev_err( & dev->dev, "%s(): %d: nr_entries (%d) < 0\n", __func__, __LINE__, nr_entries );
 		return nr_entries;
-	if (nvec > nr_entries)
+	}
+	if (nvec > nr_entries) {
+		dev_err( & dev->dev, "%s(): %d: nvec (%d) > nr_entries (%d)\n", __func__, __LINE__, nvec, nr_entries );
 		return nr_entries;
+	}
 
 	if (entries) {
 		/* Check for any invalid entries */
 		for (i = 0; i < nvec; i++) {
-			if (entries[i].entry >= nr_entries)
+			if (entries[i].entry >= nr_entries) {
+				dev_err( & dev->dev, "invalid entry\n" );
 				return -EINVAL;		/* invalid entry */
+			}
 			for (j = i + 1; j < nvec; j++) {
-				if (entries[i].entry == entries[j].entry)
+				if (entries[i].entry == entries[j].entry) {
+					dev_err( & dev->dev, "duplicate entry\n" );
 					return -EINVAL;	/* duplicate entry */
+				}
 			}
 		}
 	}
@@ -1091,18 +1127,28 @@ static int __pci_enable_msix_range(struct pci_dev *dev,
 	for (;;) {
 		if (affd) {
 			nvec = irq_calc_affinity_vectors(minvec, nvec, affd);
-			if (nvec < minvec)
+			if (nvec < minvec) {
+				dev_err( & dev->dev, "%s(): %d: irq_calc_affinity_vectors() failed %d\n", __func__, __LINE__, nvec );
 				return -ENOSPC;
+			}
 		}
 
 		rc = __pci_enable_msix(dev, entries, nvec, affd);
-		if (rc == 0)
+		if (rc == 0) {
+			dev_err( & dev->dev, "%s(): %d: __pci_enable_msix() failed %d\n", __func__, __LINE__, rc );
 			return nvec;
+		}
 
-		if (rc < 0)
+		dev_err( & dev->dev, "%s(): %d: __pci_enable_msix() returned %d\n", __func__, __LINE__, rc );
+
+		if (rc < 0) {
+			dev_err( & dev->dev, "%s(): %d: rc < 0\n", __func__, __LINE__ );
 			return rc;
-		if (rc < minvec)
+		}
+		if (rc < minvec) {
+			dev_err( & dev->dev, "%s(): %d: rc < minvec\n", __func__, __LINE__);
 			return -ENOSPC;
+		}
 
 		nvec = rc;
 	}
@@ -1163,6 +1209,8 @@ int pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
 			affd = NULL;
 	}
 
+	dev_info( & dev->dev, "%s(): %d: min_vecs: %d, max_vecs: %d, flags: %x, affd: %p\n", __func__, __LINE__, min_vecs, max_vecs, flags, affd );
+
 	if (flags & PCI_IRQ_MSIX) {
 		vecs = __pci_enable_msix_range(dev, NULL, min_vecs, max_vecs,
 				affd);
@@ -1170,11 +1218,15 @@ int pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
 			return vecs;
 	}
 
+	dev_info( & dev->dev, "%s(): %d: __pci_enable_msix_range() failed: %d\n", __func__, __LINE__, vecs );
+
 	if (flags & PCI_IRQ_MSI) {
 		vecs = __pci_enable_msi_range(dev, min_vecs, max_vecs, affd);
 		if (vecs > 0)
 			return vecs;
 	}
+
+	dev_info( & dev->dev, "%s(): %d: __pci_enable_msi_range() failed: %d\n", __func__, __LINE__, vecs );
 
 	/* use legacy irq if allowed */
 	if (flags & PCI_IRQ_LEGACY) {
@@ -1182,7 +1234,10 @@ int pci_alloc_irq_vectors_affinity(struct pci_dev *dev, unsigned int min_vecs,
 			pci_intx(dev, 1);
 			return 1;
 		}
+		dev_info( & dev->dev, "%s(): %d: legacy irq not present\n", __func__, __LINE__ );
 	}
+
+	dev_info( & dev->dev, "%s(): %d: vecs: %d\n", __func__, __LINE__, vecs );
 
 	return vecs;
 }

@@ -179,6 +179,12 @@ int main(int argc, char **argv)
 
 	e_flags = read_elf_word(inhdr->e_flags, swap);
 
+#ifndef EF_ARM_EABI_VERSION
+#ifndef EF_ARM_EABIMASK
+#define EF_ARM_EABIMASK 0xFF000000
+#endif
+#define EF_ARM_EABI_VERSION(flags) ((flags) & EF_ARM_EABIMASK)
+#endif
 	if (EF_ARM_EABI_VERSION(e_flags) != EF_ARM_EABI_VER5) {
 		fail("Unsupported EABI version %#x\n",
 		     EF_ARM_EABI_VERSION(e_flags));

@@ -585,7 +585,7 @@ static int mtk_pcie_init_irq_domain(struct mtk_pcie_port *port,
 	if (IS_ENABLED(CONFIG_PCI_MSI)) {
 		port->msi_domain = irq_domain_add_linear(node, MTK_MSI_IRQS_NUM,
 							 &msi_domain_ops,
-							 &mtk_pcie_msi_chip);
+							 &al_pcie_msi_chip);
 		if (!port->msi_domain) {
 			dev_err(dev, "failed to create MSI IRQ domain\n");
 			return -ENODEV;

@@ -234,6 +234,8 @@ static int alpine_msix_init(struct device_node *node,
 	struct resource res;
 	int ret;
 
+	pr_info( "%s()\n", __func__ );
+
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -275,12 +277,14 @@ static int alpine_msix_init(struct device_node *node,
 		goto err_priv;
 	}
 
-	pr_debug("Registering %d msixs, starting at %d\n",
+	pr_info("Registering %d msixs, starting at %d\n",
 		 priv->num_spis, priv->spi_first);
 
 	ret = alpine_msix_init_domains(priv, node);
 	if (ret)
 		goto err_map;
+
+	pr_info( "%s() success!\n", __func__ );
 
 	return 0;
 
