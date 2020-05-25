@@ -127,3 +127,18 @@ config IEEE802154_HWSIM
 
 	  This driver can also be built as a module. To do so say M here.
 	  The module will be called 'mac802154_hwsim'.
+
+config IEEE802154_WPANUSB
+	tristate "WPANUSB transceiver driver"
+	depends on IEEE802154_DRIVERS && MAC802154 && USB
+	help
+	  Say Y here to enable the WPANUSB IEEE 802.15.4 wireless
+	  controller from the Zephyr RTOS. For more information, see
+	  https://docs.zephyrproject.org/latest/samples/net/wpanusb/README.html.
+
+	  Most of the boards in Zephyr that support IEEE 802.15.4 will work with
+	  this driver. For a full list of supported boards, see
+	  https://docs.zephyrproject.org/latest/boards/index.html#boards.
+
+	  This driver can also be built as a module. To do so say M here.
+	  The module will be called 'wpanusb'.
